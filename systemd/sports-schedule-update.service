@@ -1,0 +1,16 @@
+[Unit]
+Description=Sports Data Schedule Updater
+After=network.target
+
+[Service]
+Type=oneshot
+User=sports
+Group=sports
+WorkingDirectory=/app
+Environment=PYTHONPATH=/app:/app/dependencies/nba_api/src:/app/dependencies/mlb-statsapi
+ExecStart=/usr/local/bin/python3 /app/scripts/update_schedules.py
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
