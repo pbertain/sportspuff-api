@@ -178,6 +178,35 @@
         sudo docker-compose exec -T sports-service python scripts/update_schedules.py || true
       ignore_errors: yes
     
+    - name: Copy systemd service and timer files
+      copy:
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - "{{ deployment_dir }}/sports-data-service/systemd/sports-schedule-update.service"
+        - "{{ deployment_dir }}/sports-data-service/systemd/sports-schedule-update.timer"
+        - "{{ deployment_dir }}/sports-data-service/systemd/sports-live-poller.service"
+        - "{{ deployment_dir }}/sports-data-service/systemd/sports-live-poller.timer"
+    
+    - name: Reload systemd daemon
+      systemd:
+        daemon_reload: yes
+    
+    - name: Enable and start schedule update timer
+      systemd:
+        name: sports-schedule-update.timer
+        enabled: yes
+        state: started
+    
+    - name: Enable and start live poller service
+      systemd:
+        name: sports-live-poller.service
+        enabled: yes
+        state: started
+    
     - name: Show deployment summary
       debug:
         msg:
