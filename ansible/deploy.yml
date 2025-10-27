@@ -108,14 +108,17 @@
           apt:
             update_cache: yes
             cache_valid_time: 3600
+        
+        - name: Install Docker
+          apt:
+            name: docker.io
             state: present
         
-        - name: Install Docker and Docker Compose plugin
-          apt:
-            name:
-              - docker.io
-              - docker-compose-plugin
-            state: present
+        - name: Download Docker Compose
+          get_url:
+            url: https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
+            dest: /usr/local/bin/docker-compose
+            mode: '0755'
         
         - name: Start Docker service
           systemd:
@@ -146,15 +149,15 @@
     - name: Stop existing containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        sudo docker compose down 2>/dev/null || true
+        sudo docker-compose down 2>/dev/null || true
       ignore_errors: yes
       register: stop_result
     
     - name: Build and start containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        sudo docker compose build --no-cache
-        sudo docker compose up -d
+        sudo docker-compose build --no-cache
+        sudo docker-compose up -d
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
@@ -169,7 +172,7 @@
     - name: Initialize database (first time only)
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        sudo docker compose exec -T sports-service python scripts/update_schedules.py || true
+        sudo docker-compose exec -T sports-service python scripts/update_schedules.py || true
       ignore_errors: yes
     
     - name: Show deployment summary
