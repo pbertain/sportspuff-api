@@ -129,7 +129,6 @@
             groups: docker
             append: yes
       when: docker_which.rc != 0
-      register: docker_installed
     
     - name: Check if ansible user is in docker group
       shell: groups
