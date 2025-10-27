@@ -102,22 +102,47 @@
       changed_when: false
       failed_when: false
     
-    - name: Fail if Docker is not installed
-      fail:
-        msg: "Docker is not installed on the server. Please install Docker first."
+    - name: Install Docker if not present
+      block:
+        - name: Update apt cache
+          apt:
+            update_cache: yes
+            cache_valid_time: 3600
+            state: present
+        
+        - name: Install Docker and Docker Compose plugin
+          apt:
+            name:
+              - docker.io
+              - docker-compose-plugin
+            state: present
+        
+        - name: Start Docker service
+          systemd:
+            name: docker
+            enabled: yes
+            state: started
+        
+        - name: Add ansible user to docker group (Docker just installed)
+          user:
+            name: ansible
+            groups: docker
+            append: yes
       when: docker_which.rc != 0
+      register: docker_installed
     
     - name: Check if ansible user is in docker group
       shell: groups
       register: ansible_groups
       become: no
+      when: docker_which.rc == 0
     
-    - name: Add ansible user to docker group if needed
+    - name: Add ansible user to docker group if needed (Docker already installed)
       user:
         name: ansible
         groups: docker
         append: yes
-      when: "'docker' not in ansible_groups.stdout"
+      when: docker_which.rc == 0 and "'docker' not in ansible_groups.stdout"
     
     - name: Stop existing containers
       shell: |
