@@ -165,8 +165,10 @@
     - name: Build and start containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        sudo docker-compose build --no-cache
-        sudo docker-compose up -d
+        export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
+        export API_PORT="{{ api_port }}"
+        sudo -E docker-compose build --no-cache
+        sudo -E docker-compose up -d
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
