@@ -96,18 +96,41 @@
         group: "{{ app_user }}"
         mode: '0644'
     
+    - name: Check Docker installation
+      command: which docker
+      register: docker_which
+      changed_when: false
+      failed_when: false
+    
+    - name: Fail if Docker is not installed
+      fail:
+        msg: "Docker is not installed on the server. Please install Docker first."
+      when: docker_which.rc != 0
+    
+    - name: Check if ansible user is in docker group
+      shell: groups
+      register: ansible_groups
+      become: no
+    
+    - name: Add ansible user to docker group if needed
+      user:
+        name: ansible
+        groups: docker
+        append: yes
+      when: "'docker' not in ansible_groups.stdout"
+    
     - name: Stop existing containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        docker compose down 2>/dev/null || true
+        sudo docker compose down 2>/dev/null || true
       ignore_errors: yes
       register: stop_result
     
     - name: Build and start containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        docker compose build --no-cache
-        docker compose up -d
+        sudo docker compose build --no-cache
+        sudo docker compose up -d
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
@@ -122,7 +145,7 @@
     - name: Initialize database (first time only)
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        docker compose exec -T sports-service python scripts/update_schedules.py || true
+        sudo docker compose exec -T sports-service python scripts/update_schedules.py || true
       ignore_errors: yes
     
     - name: Show deployment summary
