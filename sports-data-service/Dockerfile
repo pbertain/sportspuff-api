@@ -17,9 +17,13 @@ COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
+COPY docker-entrypoint.sh ./docker-entrypoint.sh
 
 # Set Python path
 ENV PYTHONPATH="/app"
+
+# Make entrypoint executable
+RUN chmod +x docker-entrypoint.sh
 
 # Create non-root user
 RUN useradd -m -u 1000 sports && chown -R sports:sports /app
@@ -33,4 +37,4 @@ EXPOSE 34180
 
 # Default command - run API server
 # Port can be overridden via API_PORT environment variable
-CMD ["uvicorn", "src.api:app", "--host", "0.0.0.0", "--port", "${API_PORT:-34180}"]
+ENTRYPOINT ["./docker-entrypoint.sh"]
