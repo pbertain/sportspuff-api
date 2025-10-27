@@ -184,21 +184,18 @@
         sudo docker-compose exec -T sports-service python scripts/update_schedules.py || true
       ignore_errors: yes
     
-    - name: Find systemd files
-      find:
-        paths: "{{ deployment_dir }}/sports-data-service/systemd"
-        patterns: "*.{service,timer}"
-      register: systemd_files
-    
     - name: Copy systemd files to systemd directory
       copy:
-        src: "{{ item.path }}"
-        dest: "/etc/systemd/system/{{ item.path | basename }}"
+        src: "{{ item }}"
+        dest: "/etc/systemd/system/"
         owner: root
         group: root
         mode: '0644'
-      loop: "{{ systemd_files.files }}"
-      when: systemd_files.files | length > 0
+      loop:
+        - "../sports-data-service/systemd/sports-schedule-update.service"
+        - "../sports-data-service/systemd/sports-schedule-update.timer"
+        - "../sports-data-service/systemd/sports-live-poller.service"
+        - "../sports-data-service/systemd/sports-live-poller.timer"
     
     - name: Reload systemd daemon
       systemd:
