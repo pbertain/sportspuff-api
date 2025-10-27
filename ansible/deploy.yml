@@ -144,7 +144,10 @@
         name: ansible
         groups: docker
         append: yes
-      when: docker_which.rc == 0 and "'docker' not in ansible_groups.stdout"
+      when: 
+        - docker_which.rc == 0
+        - ansible_groups.stdout is defined
+        - "'docker' not in ansible_groups.stdout"
     
     - name: Stop existing containers
       shell: |
