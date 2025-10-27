@@ -186,18 +186,22 @@
         sudo docker-compose exec -T sports-service python scripts/update_schedules.py || true
       ignore_errors: yes
     
-    - name: Copy systemd files to systemd directory
-      copy:
-        src: "{{ item }}"
-        dest: "/etc/systemd/system/"
+    - name: Create systemd service and timer files for environment
+      template:
+        src: "{{ item.src }}"
+        dest: "/etc/systemd/system/{{ item.dest }}"
         owner: root
         group: root
         mode: '0644'
       loop:
-        - "../sports-data-service/systemd/sports-schedule-update.service"
-        - "../sports-data-service/systemd/sports-schedule-update.timer"
-        - "../sports-data-service/systemd/sports-live-poller.service"
-        - "../sports-data-service/systemd/sports-live-poller.timer"
+        - src: templates/sports-schedule-update.service.j2
+          dest: "sports-schedule-update-{{ deployment_env }}.service"
+        - src: templates/sports-schedule-update.timer.j2
+          dest: "sports-schedule-update-{{ deployment_env }}.timer"
+        - src: templates/sports-live-poller.service.j2
+          dest: "sports-live-poller-{{ deployment_env }}.service"
+        - src: templates/sports-live-poller.timer.j2
+          dest: "sports-live-poller-{{ deployment_env }}.timer"
     
     - name: Reload systemd daemon
       systemd:
@@ -205,13 +209,13 @@
     
     - name: Enable and start schedule update timer
       systemd:
-        name: sports-schedule-update.timer
+        name: "sports-schedule-update-{{ deployment_env }}.timer"
         enabled: yes
         state: started
     
     - name: Enable and start live poller service
       systemd:
-        name: sports-live-poller.service
+        name: "sports-live-poller-{{ deployment_env }}.service"
         enabled: yes
         state: started
     

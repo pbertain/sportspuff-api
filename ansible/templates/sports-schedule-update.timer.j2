@@ -1,0 +1,12 @@
+[Unit]
+Description=Sports Data Schedule Updater Timer ({{ deployment_env }})
+Requires=sports-schedule-update-{{ deployment_env }}.service
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+OnCalendar=*-*-* 18:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+

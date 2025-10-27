@@ -1,15 +1,16 @@
 [Unit]
-Description=Sports Data Live Score Poller
+Description=Sports Data Live Score Poller ({{ deployment_env }})
 After=docker.service
 Requires=docker.service
 
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/docker-compose exec -T sports-service python scripts/poll_live_scores.py
-WorkingDirectory=/opt/sportspuff-api/sports-data-service
+WorkingDirectory={{ deployment_dir }}/sports-data-service
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal
 
 [Install]
 WantedBy=multi-user.target
+
