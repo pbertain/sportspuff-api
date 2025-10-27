@@ -56,9 +56,9 @@ Go to your repository Settings → Secrets and variables → Actions, and add:
 Ensure the following are installed on your server:
 
 ```bash
-# Install Docker and Docker Compose
+# Install Docker (includes docker compose)
 sudo apt-get update
-sudo apt-get install -y docker.io docker-compose
+sudo apt-get install -y docker.io docker-compose-plugin
 
 # Add ansible user to docker group (if using docker)
 sudo usermod -aG docker ansible
@@ -107,7 +107,7 @@ ansible-playbook \
 3. Copies application files from repository
 4. Creates environment-specific configuration
 5. Stops existing containers
-6. Builds and starts new containers with docker-compose
+6. Builds and starts new containers with docker compose
 7. Waits for services to be healthy
 8. Initializes database (first time only)
 
@@ -118,22 +118,22 @@ ansible-playbook \
 ```bash
 ssh ansible@your-server
 cd /opt/sportspuff-api/sports-data-service
-docker-compose logs -f
+docker compose logs -f
 ```
 
 ### Check service status
 
 ```bash
 cd /opt/sportspuff-api/sports-data-service
-docker-compose ps
-docker-compose exec sports-service ps aux
+docker compose ps
+docker compose exec sports-service ps aux
 ```
 
 ### Manual database initialization
 
 ```bash
 cd /opt/sportspuff-api/sports-data-service
-docker-compose exec sports-service python scripts/update_schedules.py
+docker compose exec sports-service python scripts/update_schedules.py
 ```
 
 ### Check API health
@@ -158,7 +158,7 @@ ssh ansible@your-server
 
 # Stop current deployment
 cd /opt/sportspuff-api/sports-data-service
-docker-compose down
+docker compose down
 
 # Restore from backup
 rm -rf /opt/sportspuff-api/sports-data-service
@@ -166,7 +166,7 @@ cp -r /opt/sportspuff-api-backups/backup-TIMESTAMP /opt/sportspuff-api/sports-da
 
 # Restart
 cd /opt/sportspuff-api/sports-data-service
-docker-compose up -d
+docker compose up -d
 ```
 
 ## File Structure on Server
@@ -188,7 +188,7 @@ After deployment, your server will have:
 
 ## Notes
 
-- The playbook uses `docker-compose` for container management
+- The playbook uses `docker compose` for container management
 - PostgreSQL data is persisted in Docker volumes
 - Each environment (dev/prod) has its own port and database instance
 - The deployment is idempotent and can be run multiple times safely
