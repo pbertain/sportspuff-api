@@ -12,18 +12,14 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy NBA and MLB API dependencies from parent project
-COPY ../dependencies/nba_api /app/dependencies/nba_api
-COPY ../dependencies/mlb-statsapi /app/dependencies/mlb-statsapi
-
 # Copy application code
 COPY src/ ./src/
 COPY scripts/ ./scripts/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 
-# Set Python path to include dependencies
-ENV PYTHONPATH="/app:/app/dependencies/nba_api/src:/app/dependencies/mlb-statsapi"
+# Set Python path
+ENV PYTHONPATH="/app"
 
 # Create non-root user
 RUN useradd -m -u 1000 sports && chown -R sports:sports /app
