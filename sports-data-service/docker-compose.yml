@@ -11,8 +11,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init.sql:/docker-entrypoint-initdb.d/init.sql
-    ports:
-      - "5432:5432"
+    # Don't expose PostgreSQL port to host - only accessible from containers
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U sports_user -d sports_data"]
       interval: 10s
