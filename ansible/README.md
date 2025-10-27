@@ -11,6 +11,7 @@ This directory contains the Ansible playbooks for deploying SportsPuff API to th
 ## Files
 
 - `deploy.yml` - Main deployment playbook
+- `hosts` - Inventory file (manages server hosts)
 - `templates/env.j2` - Environment configuration template
 - `templates/docker-compose.override.yml.j2` - Docker Compose override template
 - `ansible.cfg` - Ansible configuration
@@ -20,12 +21,25 @@ This directory contains the Ansible playbooks for deploying SportsPuff API to th
 The following secrets must be configured in GitHub repository settings:
 
 1. **SSH_PRIVATE_KEY** - Your SSH private key (content of `~/.ssh/keys/nirdclub__id_ed25519`)
-2. **HOST_IP** - Your server IP address
-3. **POSTGRES_PASSWORD** - PostgreSQL password
+2. **POSTGRES_PASSWORD** - PostgreSQL password
+
+**Note**: Host configuration is managed in `ansible/hosts` file. Update the hostname there if needed.
 
 ## Setup
 
-### 1. Add GitHub Secrets
+### 1. Configure Hosts
+
+Edit `ansible/hosts` to add or modify server hosts:
+
+```ini
+[prod]
+host74.nird.club
+
+[dev]
+host74.nird.club
+```
+
+### 2. Add GitHub Secrets
 
 Go to your repository Settings → Secrets and variables → Actions, and add:
 
@@ -33,15 +47,11 @@ Go to your repository Settings → Secrets and variables → Actions, and add:
    - Name: `SSH_PRIVATE_KEY`
    - Value: Contents of `~/.ssh/keys/nirdclub__id_ed25519` file
 
-2. **HOST_IP**
-   - Name: `HOST_IP`
-   - Value: Your server IP address (e.g., `192.168.1.100`)
-
-3. **POSTGRES_PASSWORD**
+2. **POSTGRES_PASSWORD**
    - Name: `POSTGRES_PASSWORD`
    - Value: Your PostgreSQL password (e.g., generate with `openssl rand -base64 32`)
 
-### 2. Server Preparation
+### 3. Server Preparation
 
 Ensure the following are installed on your server:
 
@@ -71,25 +81,23 @@ Deployments are triggered automatically when you push to:
 You can also run the playbook manually from your local machine:
 
 ```bash
+cd ansible
+
 # Production
 ansible-playbook \
-  -i "your-server-ip," \
-  -u ansible \
-  --private-key ~/.ssh/keys/nirdclub__id_ed25519 \
+  --limit prod \
   -e "deployment_env=prod" \
   -e "api_port=34180" \
   -e "vault_postgres_password=your-password" \
-  ansible/deploy.yml
+  deploy.yml
 
 # Development
 ansible-playbook \
-  -i "your-server-ip," \
-  -u ansible \
-  --private-key ~/.ssh/keys/nirdclub__id_ed25519 \
+  --limit dev \
   -e "deployment_env=dev" \
   -e "api_port=34181" \
   -e "vault_postgres_password=your-password" \
-  ansible/deploy.yml
+  deploy.yml
 ```
 
 ## What the Deployment Does
