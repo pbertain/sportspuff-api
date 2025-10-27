@@ -62,10 +62,10 @@
         dest: "{{ deployment_dir }}/sports-data-service/"
         mode: preserve
       loop:
-        - sports-data-service/src/
-        - sports-data-service/scripts/
-        - sports-data-service/systemd/
-        - sports-data-service/alembic/
+        - ../sports-data-service/src/
+        - ../sports-data-service/scripts/
+        - ../sports-data-service/systemd/
+        - ../sports-data-service/alembic/
     
     - name: Copy configuration files
       copy:
@@ -73,12 +73,12 @@
         dest: "{{ deployment_dir }}/sports-data-service/"
         mode: preserve
       loop:
-        - sports-data-service/requirements.txt
-        - sports-data-service/Dockerfile
-        - sports-data-service/docker-compose.yml
-        - sports-data-service/alembic.ini
-        - sports-data-service/init.sql
-        - sports-data-service/env.example
+        - ../sports-data-service/requirements.txt
+        - ../sports-data-service/Dockerfile
+        - ../sports-data-service/docker-compose.yml
+        - ../sports-data-service/alembic.ini
+        - ../sports-data-service/init.sql
+        - ../sports-data-service/env.example
     
     - name: Create environment file
       template:
