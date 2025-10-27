@@ -1,0 +1,6 @@
+# Ignore vault files
+vault.yml
+*.vault
+vault_*
+!vault.yml.example
+

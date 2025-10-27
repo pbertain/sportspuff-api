@@ -1,0 +1,137 @@
+---
+- name: Deploy SportsPuff API
+  hosts: all
+  become: yes
+  vars:
+    deployment_dir: /opt/sportspuff-api
+    app_user: ansible
+    backup_dir: /opt/sportspuff-api-backups
+  
+  tasks:
+    - name: Ensure deployment directory exists
+      file:
+        path: "{{ deployment_dir }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+    
+    - name: Ensure backup directory exists
+      file:
+        path: "{{ backup_dir }}"
+        state: directory
+        mode: '0755'
+    
+    - name: Create timestamp
+      set_fact:
+        timestamp: "{{ ansible_date_time.epoch }}"
+    
+    - name: Backup current deployment (if exists)
+      shell: |
+        if [ -d "{{ deployment_dir }}/sports-data-service" ]; then
+          cp -r {{ deployment_dir }}/sports-data-service {{ backup_dir }}/backup-{{ timestamp }}
+        fi
+      ignore_errors: yes
+    
+    - name: Clean deployment directory
+      file:
+        path: "{{ deployment_dir }}/sports-data-service"
+        state: absent
+    
+    - name: Create deployment structure
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0755'
+      loop:
+        - "{{ deployment_dir }}/sports-data-service"
+        - "{{ deployment_dir }}/sports-data-service/src"
+        - "{{ deployment_dir }}/sports-data-service/src/collectors"
+        - "{{ deployment_dir }}/sports-data-service/src/services"
+        - "{{ deployment_dir }}/sports-data-service/src/utils"
+        - "{{ deployment_dir }}/sports-data-service/scripts"
+        - "{{ deployment_dir }}/sports-data-service/systemd"
+        - "{{ deployment_dir }}/sports-data-service/alembic"
+        - "{{ deployment_dir }}/sports-data-service/alembic/versions"
+    
+    - name: Copy application files
+      copy:
+        src: "{{ item }}"
+        dest: "{{ deployment_dir }}/sports-data-service/"
+        mode: preserve
+      loop:
+        - sports-data-service/src/
+        - sports-data-service/scripts/
+        - sports-data-service/systemd/
+        - sports-data-service/alembic/
+    
+    - name: Copy configuration files
+      copy:
+        src: "{{ item }}"
+        dest: "{{ deployment_dir }}/sports-data-service/"
+        mode: preserve
+      loop:
+        - sports-data-service/requirements.txt
+        - sports-data-service/Dockerfile
+        - sports-data-service/docker-compose.yml
+        - sports-data-service/alembic.ini
+        - sports-data-service/init.sql
+        - sports-data-service/env.example
+    
+    - name: Create environment file
+      template:
+        src: templates/env.j2
+        dest: "{{ deployment_dir }}/sports-data-service/.env"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+    
+    - name: Create environment-specific docker-compose override
+      template:
+        src: templates/docker-compose.override.yml.j2
+        dest: "{{ deployment_dir }}/sports-data-service/docker-compose.override.yml"
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: '0644'
+    
+    - name: Stop existing containers
+      shell: |
+        cd {{ deployment_dir }}/sports-data-service
+        docker-compose down 2>/dev/null || true
+      ignore_errors: yes
+      register: stop_result
+    
+    - name: Build and start containers
+      shell: |
+        cd {{ deployment_dir }}/sports-data-service
+        docker-compose build --no-cache
+        docker-compose up -d
+      environment:
+        POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
+        API_PORT: "{{ api_port }}"
+    
+    - name: Wait for services to be healthy
+      wait_for:
+        host: localhost
+        port: "{{ api_port }}"
+        delay: 10
+        timeout: 120
+    
+    - name: Initialize database (first time only)
+      shell: |
+        cd {{ deployment_dir }}/sports-data-service
+        docker-compose exec -T sports-service python scripts/update_schedules.py || true
+      ignore_errors: yes
+    
+    - name: Show deployment summary
+      debug:
+        msg:
+          - "Deployment completed successfully!"
+          - "Environment: {{ deployment_env }}"
+          - "Port: {{ api_port }}"
+          - "Deployment directory: {{ deployment_dir }}"
+          - "Backup location: {{ backup_dir }}/backup-{{ timestamp }}"
+          - "Commit: {{ github_sha }}"
+

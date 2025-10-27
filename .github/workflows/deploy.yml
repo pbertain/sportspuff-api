@@ -1,0 +1,52 @@
+name: Deploy to Server
+
+on:
+  push:
+    branches:
+      - main
+      - dev
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Ansible
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ansible sshpass
+      
+      - name: Save SSH key
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H ${{ secrets.HOST_IP }} >> ~/.ssh/known_hosts || true
+      
+      - name: Set deployment environment
+        id: env
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "environment=prod" >> $GITHUB_OUTPUT
+            echo "port=34180" >> $GITHUB_OUTPUT
+          else
+            echo "environment=dev" >> $GITHUB_OUTPUT
+            echo "port=34181" >> $GITHUB_OUTPUT
+          fi
+      
+      - name: Deploy with Ansible
+        run: |
+          ansible-playbook \
+            -i "${{ secrets.HOST_IP }}," \
+            -u ansible \
+            --private-key ~/.ssh/id_ed25519 \
+            -e "deployment_env=${{ steps.env.outputs.environment }}" \
+            -e "api_port=${{ steps.env.outputs.port }}" \
+            -e "github_ref=${{ github.ref }}" \
+            -e "github_sha=${{ github.sha }}" \
+            -e "vault_postgres_password=${{ secrets.POSTGRES_PASSWORD }}" \
+            ansible/deploy.yml
+
