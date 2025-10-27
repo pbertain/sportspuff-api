@@ -44,9 +44,10 @@ jobs:
       
       - name: Deploy with Ansible
         run: |
+          cd ansible
           ansible-playbook \
             --limit ${{ steps.env.outputs.inventory_group }} \
-            ansible/deploy.yml \
+            deploy.yml \
             -e "deployment_env=${{ steps.env.outputs.environment }}" \
             -e "api_port=${{ steps.env.outputs.port }}" \
             -e "github_ref=${{ github.ref }}" \
