@@ -68,7 +68,14 @@
         dest: "{{ deployment_dir }}/sports-data-service/"
         mode: preserve
       loop:
-        - ../sports-data-service/src/
+        - ../sports-data-service/src/__init__.py
+        - ../sports-data-service/src/api.py
+        - ../sports-data-service/src/config.py
+        - ../sports-data-service/src/database.py
+        - ../sports-data-service/src/models.py
+        - ../sports-data-service/src/collectors/
+        - ../sports-data-service/src/services/
+        - ../sports-data-service/src/utils/
         - ../sports-data-service/scripts/
         - ../sports-data-service/systemd/
         - ../sports-data-service/alembic/
