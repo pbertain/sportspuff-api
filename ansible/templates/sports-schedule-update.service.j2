@@ -5,7 +5,7 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/docker-compose exec -T sports-service python scripts/update_schedules.py
+ExecStart=/usr/local/bin/docker-compose exec -T sports-service python scripts/update_schedules.py
 WorkingDirectory={{ deployment_dir }}/sports-data-service
 StandardOutput=journal
 StandardError=journal
