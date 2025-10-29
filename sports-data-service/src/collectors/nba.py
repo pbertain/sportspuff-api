@@ -19,7 +19,7 @@ from nba_api.stats.endpoints import scoreboardv2, scheduleleaguev2
 from sqlalchemy.orm import Session
 
 from .base import BaseCollector
-from ..models import Game
+from models import Game
 
 logger = logging.getLogger(__name__)
 

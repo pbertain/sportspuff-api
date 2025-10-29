@@ -9,8 +9,8 @@ import logging
 import time
 from sqlalchemy.orm import Session
 
-from ..models import Game, ApiUsage
-from ..config import settings
+from models import Game, ApiUsage
+from config import settings
 
 logger = logging.getLogger(__name__)
 
