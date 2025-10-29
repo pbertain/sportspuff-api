@@ -229,6 +229,126 @@ def root():
     return {"message": "Sports Data Service API", "version": "1.0.0"}
 
 
+@app.get("/api/v1/schedules/{date}")
+def get_schedules_all_sports_api_v1(
+    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+):
+    """Get schedules for all sports in JSON format."""
+    try:
+        target_date = parse_date_param(date)
+        result = {}
+        
+        with get_db_session() as db:
+            for sport_key, league in SPORT_MAPPINGS.items():
+                games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date
+                ).order_by(Game.game_time).all()
+                
+                result[sport_key] = [
+                    {
+                        "game_id": game.game_id,
+                        "game_date": game.game_date.isoformat(),
+                        "game_time": game.game_time.isoformat() if game.game_time else None,
+                        "home_team": game.home_team,
+                        "home_team_abbrev": game.home_team_abbrev,
+                        "visitor_team": game.visitor_team,
+                        "visitor_team_abbrev": game.visitor_team_abbrev,
+                        "game_status": game.game_status,
+                        "game_type": game.game_type
+                    }
+                    for game in games
+                ]
+        
+        return {
+            "date": target_date.isoformat(),
+            "sports": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/curl/v1/schedules/{date}", response_class=PlainTextResponse)
+def get_schedules_all_sports_curl_v1(
+    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+):
+    """Get schedules for all sports in curl-style text format."""
+    try:
+        target_date = parse_date_param(date)
+        all_games = []
+        
+        with get_db_session() as db:
+            for sport_key, league in SPORT_MAPPINGS.items():
+                games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date
+                ).order_by(Game.game_time).all()
+                all_games.extend(games)
+        
+        return format_schedule_curl(all_games, target_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/v1/scores/{date}")
+def get_scores_all_sports_api_v1(
+    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+):
+    """Get scores for all sports in JSON format."""
+    try:
+        target_date = parse_date_param(date)
+        result = {}
+        
+        with get_db_session() as db:
+            for sport_key, league in SPORT_MAPPINGS.items():
+                games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date,
+                    Game.is_final == True
+                ).all()
+                
+                result[sport_key] = [
+                    {
+                        "game_id": game.game_id,
+                        "home_team": game.home_team,
+                        "home_score": game.home_score_total,
+                        "visitor_team": game.visitor_team,
+                        "visitor_score": game.visitor_score_total,
+                        "is_final": game.is_final
+                    }
+                    for game in games
+                ]
+        
+        return {
+            "date": target_date.isoformat(),
+            "sports": result
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/curl/v1/scores/{date}", response_class=PlainTextResponse)
+def get_scores_all_sports_curl_v1(
+    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+):
+    """Get scores for all sports in curl-style text format."""
+    try:
+        target_date = parse_date_param(date)
+        all_games = []
+        
+        with get_db_session() as db:
+            for sport_key, league in SPORT_MAPPINGS.items():
+                games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date
+                ).all()
+                all_games.extend(games)
+        
+        return format_scores_curl(all_games, target_date)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/v1/schedule/{sport}/{date}")
 def get_schedule_api_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
