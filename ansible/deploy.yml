@@ -227,9 +227,15 @@
         enabled: yes
         state: started
     
-    - name: Enable and start live poller service
+    - name: Enable live poller service (oneshot, triggered by timer)
       systemd:
         name: "sports-live-poller-{{ deployment_env }}.service"
+        enabled: yes
+        state: stopped
+    
+    - name: Enable and start live poller timer
+      systemd:
+        name: "sports-live-poller-{{ deployment_env }}.timer"
         enabled: yes
         state: started
     
