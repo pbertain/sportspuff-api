@@ -8,7 +8,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 from typing import Generator
 
-from .config import settings
+from config import settings
 
 # Create database engine
 engine = create_engine(
