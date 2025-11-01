@@ -70,9 +70,13 @@ def parse_date_param(date_param: Optional[str]) -> date:
 
 def format_game_for_curl(game: Game, sport: str) -> str:
     """Format a single game for curl-style output."""
-    # Format team names with wins/losses
-    away_team = f"{game.visitor_team_abbrev} [{game.visitor_wins:3d}-{game.visitor_losses:2d}]"
-    home_team = f"{game.home_team_abbrev} [{game.home_wins:3d}-{game.home_losses:2d}]"
+    # Format team names with wins/losses (handle None values)
+    visitor_wins = game.visitor_wins or 0
+    visitor_losses = game.visitor_losses or 0
+    home_wins = game.home_wins or 0
+    home_losses = game.home_losses or 0
+    away_team = f"{game.visitor_team_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}]"
+    home_team = f"{game.home_team_abbrev} [{home_wins:3d}-{home_losses:2d}]"
     
     # Format time/status
     if game.is_final:
