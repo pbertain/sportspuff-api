@@ -180,13 +180,11 @@
       shell: |
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
-        export API_HOST="127.0.0.1"
         cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose build --no-cache
         cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose up -d
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
-        API_HOST: "127.0.0.1"
       args:
         chdir: "{{ deployment_dir }}/sports-data-service"
     
