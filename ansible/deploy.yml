@@ -178,14 +178,17 @@
     
     - name: Build and start containers
       shell: |
-        cd {{ deployment_dir }}/sports-data-service
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
-        sudo -E docker-compose build --no-cache
-        sudo -E docker-compose up -d
+        export API_HOST="127.0.0.1"
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose build --no-cache
+        cd "{{ deployment_dir}/sports-data-service" && sudo -E docker-compose up -d
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
+        API_HOST: "127.0.0.1"
+      args:
+        chdir: "{{ deployment_dir }}/sports-data-service"
     
     - name: Wait for services to be healthy
       wait_for:
