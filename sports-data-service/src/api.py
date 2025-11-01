@@ -342,6 +342,24 @@ def get_scores_all_sports_curl_v1(
                     Game.league == league,
                     Game.game_date == target_date
                 ).all()
+                # Access all needed attributes while session is open
+                for game in games:
+                    # Trigger lazy loading of all attributes
+                    _ = game.league
+                    _ = game.game_id
+                    _ = game.game_date
+                    _ = game.game_time
+                    _ = game.game_type
+                    _ = game.home_team
+                    _ = game.home_team_abbrev
+                    _ = game.home_score_total
+                    _ = game.visitor_team
+                    _ = game.visitor_team_abbrev
+                    _ = game.visitor_score_total
+                    _ = game.game_status
+                    _ = game.current_period
+                    _ = game.time_remaining
+                    _ = game.is_final
                 all_games.extend(games)
         
         return format_scores_curl(all_games, target_date)
