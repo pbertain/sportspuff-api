@@ -275,15 +275,44 @@ def get_schedules_all_sports_curl_v1(
     """Get schedules for all sports in curl-style text format."""
     try:
         target_date = parse_date_param(date)
-        all_games = []
         
+        # Convert Game objects to dicts while session is open
+        games_data = []
         with get_db_session() as db:
             for sport_key, league in SPORT_MAPPINGS.items():
                 games = db.query(Game).filter(
                     Game.league == league,
                     Game.game_date == target_date
                 ).order_by(Game.game_time).all()
-                all_games.extend(games)
+                # Convert to dicts while session is open
+                for game in games:
+                    games_data.append({
+                        'league': game.league,
+                        'game_id': game.game_id,
+                        'game_date': game.game_date,
+                        'game_time': game.game_time,
+                        'game_type': game.game_type,
+                        'home_team': game.home_team,
+                        'home_team_abbrev': game.home_team_abbrev,
+                        'home_wins': game.home_wins,
+                        'home_losses': game.home_losses,
+                        'visitor_team': game.visitor_team,
+                        'visitor_team_abbrev': game.visitor_team_abbrev,
+                        'visitor_wins': game.visitor_wins,
+                        'visitor_losses': game.visitor_losses,
+                        'game_status': game.game_status,
+                        'current_period': game.current_period,
+                        'time_remaining': game.time_remaining,
+                        'is_final': game.is_final,
+                    })
+        
+        # Convert back to Game-like objects
+        class GameProxy:
+            def __init__(self, data):
+                for k, v in data.items():
+                    setattr(self, k, v)
+        
+        all_games = [GameProxy(g) for g in games_data]
         
         return format_schedule_curl(all_games, target_date)
     except Exception as e:
@@ -336,31 +365,43 @@ def get_scores_all_sports_curl_v1(
         target_date = parse_date_param(date)
         all_games = []
         
+        # Use joinedload or ensure we access attributes within session context
+        # Better: convert Game objects to dicts while session is open
+        games_data = []
         with get_db_session() as db:
             for sport_key, league in SPORT_MAPPINGS.items():
                 games = db.query(Game).filter(
                     Game.league == league,
                     Game.game_date == target_date
                 ).all()
-                # Access all needed attributes while session is open
+                # Convert to dicts while session is open
                 for game in games:
-                    # Trigger lazy loading of all attributes
-                    _ = game.league
-                    _ = game.game_id
-                    _ = game.game_date
-                    _ = game.game_time
-                    _ = game.game_type
-                    _ = game.home_team
-                    _ = game.home_team_abbrev
-                    _ = game.home_score_total
-                    _ = game.visitor_team
-                    _ = game.visitor_team_abbrev
-                    _ = game.visitor_score_total
-                    _ = game.game_status
-                    _ = game.current_period
-                    _ = game.time_remaining
-                    _ = game.is_final
-                all_games.extend(games)
+                    games_data.append({
+                        'league': game.league,
+                        'game_id': game.game_id,
+                        'game_date': game.game_date,
+                        'game_time': game.game_time,
+                        'game_type': game.game_type,
+                        'home_team': game.home_team,
+                        'home_team_abbrev': game.home_team_abbrev,
+                        'home_score_total': game.home_score_total,
+                        'visitor_team': game.visitor_team,
+                        'visitor_team_abbrev': game.visitor_team_abbrev,
+                        'visitor_score_total': game.visitor_score_total,
+                        'game_status': game.game_status,
+                        'current_period': game.current_period,
+                        'time_remaining': game.time_remaining,
+                        'is_final': game.is_final,
+                    })
+        
+        # Now convert back to Game-like objects or modify format_scores_curl to accept dicts
+        # Actually, let's create a simple wrapper class
+        class GameProxy:
+            def __init__(self, data):
+                for k, v in data.items():
+                    setattr(self, k, v)
+        
+        all_games = [GameProxy(g) for g in games_data]
         
         return format_scores_curl(all_games, target_date)
     except Exception as e:
