@@ -12,7 +12,7 @@ pydantic-settings==2.1.0
 requests==2.31.0
 beautifulsoup4==4.12.2
 nba-api==1.2.1
-MLB-StatsAPI==1.1.7
+MLB-StatsAPI==1.9.0
 
 # Utilities
 python-dateutil==2.8.2
