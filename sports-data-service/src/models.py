@@ -4,7 +4,7 @@ SQLAlchemy models for the sports data service.
 
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, Date, Time, Text, JSON
 from sqlalchemy.sql import func
-from .database import Base
+from database import Base
 
 
 class Game(Base):

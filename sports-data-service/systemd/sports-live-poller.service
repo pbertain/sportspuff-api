@@ -1,16 +1,13 @@
 [Unit]
 Description=Sports Data Live Score Poller
-After=network.target
+After=docker.service
+Requires=docker.service
 
 [Service]
-Type=simple
-User=sports
-Group=sports
-WorkingDirectory=/app
-Environment=PYTHONPATH=/app:/app/dependencies/nba_api/src:/app/dependencies/mlb-statsapi
-ExecStart=/usr/local/bin/python3 /app/scripts/poll_live_scores.py
-Restart=always
-RestartSec=10
+Type=oneshot
+ExecStart=/usr/bin/docker-compose exec -T sports-service python scripts/poll_live_scores.py
+WorkingDirectory=/opt/sportspuff-api/sports-data-service
+Restart=on-failure
 StandardOutput=journal
 StandardError=journal
 

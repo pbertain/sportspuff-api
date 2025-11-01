@@ -62,16 +62,29 @@
         - "{{ deployment_dir }}/sports-data-service/alembic"
         - "{{ deployment_dir }}/sports-data-service/alembic/versions"
     
-    - name: Copy application files
+    - name: Copy src directory
       copy:
-        src: "{{ item }}"
+        src: ../sports-data-service/src
         dest: "{{ deployment_dir }}/sports-data-service/"
         mode: preserve
-      loop:
-        - ../sports-data-service/src/
-        - ../sports-data-service/scripts/
-        - ../sports-data-service/systemd/
-        - ../sports-data-service/alembic/
+    
+    - name: Copy scripts directory
+      copy:
+        src: ../sports-data-service/scripts
+        dest: "{{ deployment_dir }}/sports-data-service/"
+        mode: preserve
+    
+    - name: Copy systemd directory
+      copy:
+        src: ../sports-data-service/systemd
+        dest: "{{ deployment_dir }}/sports-data-service/"
+        mode: preserve
+    
+    - name: Copy alembic directory
+      copy:
+        src: ../sports-data-service/alembic
+        dest: "{{ deployment_dir }}/sports-data-service/"
+        mode: preserve
     
     - name: Copy configuration files
       copy:
@@ -82,6 +95,7 @@
         - ../sports-data-service/requirements.txt
         - ../sports-data-service/Dockerfile
         - ../sports-data-service/docker-compose.yml
+        - ../sports-data-service/docker-entrypoint.sh
         - ../sports-data-service/alembic.ini
         - ../sports-data-service/init.sql
         - ../sports-data-service/env.example
@@ -165,8 +179,10 @@
     - name: Build and start containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        sudo docker-compose build --no-cache
-        sudo docker-compose up -d
+        export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
+        export API_PORT="{{ api_port }}"
+        sudo -E docker-compose build --no-cache
+        sudo -E docker-compose up -d
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
@@ -184,13 +200,22 @@
         sudo docker-compose exec -T sports-service python scripts/update_schedules.py || true
       ignore_errors: yes
     
-    - name: Copy systemd service and timer files to systemd directory
-      shell: |
-        cp {{ deployment_dir }}/sports-data-service/systemd/*.service /etc/systemd/system/
-        cp {{ deployment_dir }}/sports-data-service/systemd/*.timer /etc/systemd/system/
-        chmod 644 /etc/systemd/system/sports-*.{service,timer}
-      args:
-        creates: /etc/systemd/system/sports-schedule-update.service
+    - name: Create systemd service and timer files for environment
+      template:
+        src: "{{ item.src }}"
+        dest: "/etc/systemd/system/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: '0644'
+      loop:
+        - src: templates/sports-schedule-update.service.j2
+          dest: "sports-schedule-update-{{ deployment_env }}.service"
+        - src: templates/sports-schedule-update.timer.j2
+          dest: "sports-schedule-update-{{ deployment_env }}.timer"
+        - src: templates/sports-live-poller.service.j2
+          dest: "sports-live-poller-{{ deployment_env }}.service"
+        - src: templates/sports-live-poller.timer.j2
+          dest: "sports-live-poller-{{ deployment_env }}.timer"
     
     - name: Reload systemd daemon
       systemd:
@@ -198,13 +223,19 @@
     
     - name: Enable and start schedule update timer
       systemd:
-        name: sports-schedule-update.timer
+        name: "sports-schedule-update-{{ deployment_env }}.timer"
         enabled: yes
         state: started
     
-    - name: Enable and start live poller service
+    - name: Enable live poller service (oneshot, triggered by timer)
       systemd:
-        name: sports-live-poller.service
+        name: "sports-live-poller-{{ deployment_env }}.service"
+        enabled: yes
+        state: stopped
+    
+    - name: Enable and start live poller timer
+      systemd:
+        name: "sports-live-poller-{{ deployment_env }}.timer"
         enabled: yes
         state: started
     

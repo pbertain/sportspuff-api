@@ -15,11 +15,16 @@ import logging
 sys.path.insert(0, '/app/dependencies/nba_api/src')
 
 from nba_api.live.nba.endpoints import scoreboard
-from nba_api.stats.endpoints import scoreboardv2, scheduleleaguev2
+from nba_api.stats.endpoints import scoreboardv2
+try:
+    from nba_api.stats.endpoints import scheduleleaguev2
+except ImportError:
+    # scheduleleaguev2 may not exist in all versions
+    scheduleleaguev2 = None
 from sqlalchemy.orm import Session
 
 from .base import BaseCollector
-from ..models import Game
+from models import Game
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +86,28 @@ class NBACollector(BaseCollector):
             
             # Get schedule for the determined season with timeout
             def get_schedule_data():
+                if scheduleleaguev2 is None:
+                    # Fallback: use scoreboard endpoint for today's games
+                    try:
+                        if date is None:
+                            date_str = datetime.now().strftime('%Y-%m-%d')
+                        else:
+                            date_str = date.strftime('%Y-%m-%d')
+                        scoreboard_data = scoreboardv2.ScoreboardV2(game_date=date_str)
+                        scoreboard_dict = scoreboard_data.get_dict()
+                        # Extract games from scoreboard format
+                        games = []
+                        if 'resultSets' in scoreboard_dict and len(scoreboard_dict['resultSets']) > 0:
+                            # ScoreboardV2 returns games in resultSets[0]
+                            game_rows = scoreboard_dict['resultSets'][0].get('rowSet', [])
+                            for row in game_rows:
+                                # Format: [GAME_ID, GAME_DATE_EST, GAME_SEQUENCE, GAME_STATUS_ID, ...]
+                                games.append({'gameId': row[0] if len(row) > 0 else None})
+                        # Wrap in leagueSchedule format for compatibility
+                        return {'leagueSchedule': {'gameDates': [{'gameDate': date_str, 'games': games}]}}
+                    except Exception as e:
+                        logger.error(f"Error getting schedule via scoreboard: {e}")
+                        return {}
                 schedule_data = scheduleleaguev2.ScheduleLeagueV2(season=season)
                 return schedule_data.get_dict()
             

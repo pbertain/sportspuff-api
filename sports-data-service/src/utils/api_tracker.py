@@ -8,8 +8,8 @@ from typing import Dict, List, Optional
 import logging
 from collections import defaultdict, deque
 
-from ..config import settings
-from ..models import ApiUsage
+from config import settings
+from models import ApiUsage
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)

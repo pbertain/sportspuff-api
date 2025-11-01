@@ -47,14 +47,36 @@ class NHLCollector(BaseCollector):
             if response.status_code == 200:
                 data = response.json()
                 games = []
+                seen_game_ids = set()  # Track game IDs to prevent duplicates
                 
                 if 'gameWeek' in data and len(data['gameWeek']) > 0:
                     for day in data['gameWeek']:
                         if 'games' in day:
                             for game in day['games']:
-                                parsed_game = self.parse_game_data(game)
-                                if parsed_game:
-                                    games.append(parsed_game)
+                                game_id = str(game.get('id', ''))
+                                # Only process games for the requested date and avoid duplicates
+                                game_date_str = game.get('startTimeUTC', '')
+                                if game_date_str:
+                                    try:
+                                        game_date_obj = datetime.fromisoformat(game_date_str.replace('Z', '+00:00'))
+                                        if game_date_obj.strftime('%Y-%m-%d') == date_str and game_id not in seen_game_ids:
+                                            seen_game_ids.add(game_id)
+                                            parsed_game = self.parse_game_data(game)
+                                            if parsed_game:
+                                                games.append(parsed_game)
+                                    except ValueError:
+                                        # If date parsing fails, include it but check for duplicates
+                                        if game_id not in seen_game_ids:
+                                            seen_game_ids.add(game_id)
+                                            parsed_game = self.parse_game_data(game)
+                                            if parsed_game:
+                                                games.append(parsed_game)
+                                elif game_id not in seen_game_ids:
+                                    # No date, but check for duplicates
+                                    seen_game_ids.add(game_id)
+                                    parsed_game = self.parse_game_data(game)
+                                    if parsed_game:
+                                        games.append(parsed_game)
                 
                 return games
             else:

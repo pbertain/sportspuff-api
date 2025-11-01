@@ -1,0 +1,16 @@
+[Unit]
+Description=Sports Data Schedule Updater ({{ deployment_env }})
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=ansible
+ExecStart=/usr/local/bin/docker-compose exec -T sports-service python scripts/update_schedules.py
+WorkingDirectory={{ deployment_dir }}/sports-data-service
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+

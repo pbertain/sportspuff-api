@@ -7,11 +7,11 @@ from datetime import datetime, date
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
 
-from ..config import settings
-from ..database import get_db_session
-from ..models import Game
-from ..collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector
-from ..utils import api_tracker
+from config import settings
+from database import get_db_session
+from models import Game
+from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector
+from utils import api_tracker
 
 logger = logging.getLogger(__name__)
 

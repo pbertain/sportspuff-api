@@ -6,8 +6,8 @@ from datetime import datetime, time
 from typing import Optional, List, Dict, Any
 import logging
 
-from ..config import settings
-from ..models import Game
+from config import settings
+from models import Game
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
