@@ -6,7 +6,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 User=ansible
-ExecStart=/usr/local/bin/docker-compose exec -T sports-service python scripts/poll_live_scores.py
+ExecStart=/usr/local/bin/docker-compose -f {{ deployment_dir }}/sports-data-service/docker-compose.yml exec -T sports-service python scripts/poll_live_scores.py
 WorkingDirectory={{ deployment_dir }}/sports-data-service
 Restart=on-failure
 StandardOutput=journal
