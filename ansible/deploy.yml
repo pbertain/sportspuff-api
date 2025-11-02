@@ -172,9 +172,25 @@
     - name: Stop and remove existing containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
+        # First, try to stop containers gracefully
         sudo docker-compose down --remove-orphans 2>/dev/null || true
-        # Also remove any stopped containers with these names in case they exist
+        
+        # Find and kill any containers using the API port
+        CONTAINER_USING_PORT=$(sudo docker ps -a --format "{{ '{{' }}.ID{{ '}}' }}" --filter "publish={{ api_port }}" 2>/dev/null | head -n1 || true)
+        if [ -n "$CONTAINER_USING_PORT" ]; then
+          echo "Found container $CONTAINER_USING_PORT using port {{ api_port }}, stopping it..."
+          sudo docker stop "$CONTAINER_USING_PORT" 2>/dev/null || true
+          sudo docker rm -f "$CONTAINER_USING_PORT" 2>/dev/null || true
+        fi
+        
+        # Force remove any containers with these names
         sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
+        
+        # Also check for containers from other deployment directories that might be using the port
+        sudo docker ps -a --format "{{ '{{' }}.Names{{ '}}' }}" | grep -E "^sports-data-" | while read name; do
+          sudo docker stop "$name" 2>/dev/null || true
+          sudo docker rm -f "$name" 2>/dev/null || true
+        done || true
       ignore_errors: yes
       register: stop_result
     
