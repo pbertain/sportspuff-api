@@ -177,6 +177,23 @@
       ignore_errors: yes
       register: stop_result
     
+    - name: Verify port is free before starting containers
+      shell: |
+        # Double-check port is actually free
+        if command -v ss >/dev/null 2>&1; then
+          LISTENING=$(sudo ss -tlnp | grep -E ":[[:space:]]*${API_PORT}[[:space:]]" || true)
+          if [ -n "$LISTENING" ]; then
+            echo "ERROR: Port ${API_PORT} is still in use before starting containers!"
+            echo "$LISTENING"
+            exit 1
+          else
+            echo "Port ${API_PORT} is confirmed free, proceeding with container start"
+          fi
+        fi
+      environment:
+        API_PORT: "{{ api_port }}"
+      ignore_errors: false
+    
     - name: Build and start containers
       shell: |
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
