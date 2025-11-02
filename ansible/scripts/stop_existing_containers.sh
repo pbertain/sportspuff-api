@@ -20,19 +20,22 @@ kill_port_listeners() {
       sleep 1
     fi
     
-    # Check with ss
+    # Check with ss - look for any binding on the port (127.0.0.1, 0.0.0.0, ::, etc)
     if command -v ss >/dev/null 2>&1; then
-      LISTENER=$(sudo ss -tlnp | grep ":${port} " | head -n1 || true)
-      if [ -n "$LISTENER" ]; then
-        echo "Found listener on port ${port}: $LISTENER"
-        # Extract PID
-        PID=$(echo "$LISTENER" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n1 || true)
-        if [ -z "$PID" ]; then
-          PID=$(echo "$LISTENER" | awk -F'[=,)]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) {print $i; exit}}' || true)
+      # Check for listeners on the port with any IP binding
+      LISTENERS=$(sudo ss -tlnp | grep -E ":[[:space:]]*${port}[[:space:]]" || true)
+      if [ -n "$LISTENERS" ]; then
+        echo "Found listeners on port ${port}:"
+        echo "$LISTENERS"
+        # Extract all PIDs from the output
+        PIDS=$(echo "$LISTENERS" | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | sort -u || true)
+        if [ -z "$PIDS" ]; then
+          # Alternative extraction method
+          PIDS=$(echo "$LISTENERS" | awk -F'[=,)]' '{for(i=1;i<=NF;i++) if($i ~ /^[0-9]+$/) print $i}' | sort -u || true)
         fi
-        if [ -n "$PID" ]; then
-          echo "Killing process $PID using port ${port}"
-          sudo kill -9 "$PID" 2>/dev/null || true
+        if [ -n "$PIDS" ]; then
+          echo "Killing processes using port ${port}: $PIDS"
+          echo "$PIDS" | xargs -r sudo kill -9 2>/dev/null || true
           sleep 1
         fi
       fi
@@ -48,9 +51,9 @@ kill_port_listeners() {
       fi
     fi
     
-    # Check if port is now free
+    # Check if port is now free (check for any IP binding)
     if command -v ss >/dev/null 2>&1; then
-      STILL_LISTENING=$(sudo ss -tlnp | grep ":${port} " || true)
+      STILL_LISTENING=$(sudo ss -tlnp | grep -E ":[[:space:]]*${port}[[:space:]]" || true)
       if [ -z "$STILL_LISTENING" ]; then
         echo "Port ${port} is now free!"
         return 0
@@ -90,18 +93,40 @@ fi
 echo "=== Force removing containers by name ==="
 sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
 
+# Clean up Docker networks that might be holding port mappings
+echo "=== Cleaning up Docker networks ==="
+# Prune unused networks
+sudo docker network prune -f 2>/dev/null || true
+
+# Remove any networks associated with sports-data-service
+# Use -q flag to get network IDs to avoid Jinja2 template conflicts
+sudo docker network ls -q | while read net_id; do
+  if [ -n "$net_id" ]; then
+    net_name=$(sudo docker network inspect "$net_id" --format '{{.Name}}' 2>/dev/null || true)
+    if echo "$net_name" | grep -qE "sports-data-service|sportspuff"; then
+      echo "Removing Docker network: $net_name ($net_id)"
+      sudo docker network rm "$net_id" 2>/dev/null || true
+    fi
+  fi
+done || true
+
 # Now aggressively kill anything using the port
 echo "=== Killing processes using port ${API_PORT} ==="
 kill_port_listeners "${API_PORT}"
 
 # Final check
 echo "=== Final port check ==="
-sleep 1
+sleep 2
 if command -v ss >/dev/null 2>&1; then
-  FINAL_CHECK=$(sudo ss -tlnp | grep ":${API_PORT} " || true)
+  FINAL_CHECK=$(sudo ss -tlnp | grep -E ":[[:space:]]*${API_PORT}[[:space:]]" || true)
   if [ -n "$FINAL_CHECK" ]; then
-    echo "ERROR: Port ${API_PORT} is still in use: $FINAL_CHECK"
-    echo "This may cause the deployment to fail."
+    echo "ERROR: Port ${API_PORT} is still in use:"
+    echo "$FINAL_CHECK"
+    echo "This will cause the deployment to fail."
+    # One last desperate attempt
+    echo "Making one final attempt to free the port..."
+    sudo fuser -k ${API_PORT}/tcp 2>/dev/null || true
+    sleep 2
   else
     echo "SUCCESS: Port ${API_PORT} is free"
   fi
