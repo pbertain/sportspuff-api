@@ -172,16 +172,26 @@
     - name: Stop and remove existing containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        # First, try to stop containers gracefully
+        # First, try to stop containers gracefully from this deployment
         sudo docker-compose down --remove-orphans 2>/dev/null || true
         
-        # Find and kill any containers using the API port
-        CONTAINER_USING_PORT=$(sudo docker ps -a --format "{{ '{{' }}.ID{{ '}}' }}" --filter "publish={{ api_port }}" 2>/dev/null | head -n1 || true)
-        if [ -n "$CONTAINER_USING_PORT" ]; then
-          echo "Found container $CONTAINER_USING_PORT using port {{ api_port }}, stopping it..."
-          sudo docker stop "$CONTAINER_USING_PORT" 2>/dev/null || true
-          sudo docker rm -f "$CONTAINER_USING_PORT" 2>/dev/null || true
-        fi
+        # Find containers using the API port by checking port mappings
+        # Check all running containers for the port mapping
+        sudo docker ps --format "{{ '{{' }}.ID{{ '}}' }} {{ '{{' }}.Ports{{ '}}' }}" | grep -E "127\.0\.0\.1:{{ api_port }}|0\.0\.0\.0:{{ api_port }}|::1:{{ api_port }}" | awk '{print $1}' | while read container_id; do
+          if [ -n "$container_id" ]; then
+            echo "Found container $container_id using port {{ api_port }}, stopping it..."
+            sudo docker stop "$container_id" 2>/dev/null || true
+            sudo docker rm -f "$container_id" 2>/dev/null || true
+          fi
+        done || true
+        
+        # Also check stopped containers
+        sudo docker ps -a --format "{{ '{{' }}.ID{{ '}}' }} {{ '{{' }}.Ports{{ '}}' }}" | grep -E "127\.0\.0\.1:{{ api_port }}|0\.0\.0\.0:{{ api_port }}|::1:{{ api_port }}" | awk '{print $1}' | while read container_id; do
+          if [ -n "$container_id" ]; then
+            echo "Found stopped container $container_id using port {{ api_port }}, removing it..."
+            sudo docker rm -f "$container_id" 2>/dev/null || true
+          fi
+        done || true
         
         # Force remove any containers with these names
         sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
@@ -191,6 +201,21 @@
           sudo docker stop "$name" 2>/dev/null || true
           sudo docker rm -f "$name" 2>/dev/null || true
         done || true
+        
+        # Use lsof/ss to check if anything else is using the port directly (not Docker)
+        if command -v lsof >/dev/null 2>&1; then
+          PID=$(sudo lsof -ti:{{ api_port }} 2>/dev/null || true)
+          if [ -n "$PID" ]; then
+            echo "Found process $PID using port {{ api_port }}, killing it..."
+            sudo kill -9 "$PID" 2>/dev/null || true
+          fi
+        elif command -v ss >/dev/null 2>&1; then
+          PID=$(sudo ss -tlnp | grep ":{{ api_port }} " | awk '{print $6}' | cut -d',' -f2 | cut -d'=' -f2 | head -n1 || true)
+          if [ -n "$PID" ] && [ "$PID" != "-" ]; then
+            echo "Found process $PID using port {{ api_port }}, killing it..."
+            sudo kill -9 "$PID" 2>/dev/null || true
+          fi
+        fi
       ignore_errors: yes
       register: stop_result
     
