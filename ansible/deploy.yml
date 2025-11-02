@@ -220,7 +220,7 @@
         done || true
         
         # Try to stop containers from this specific deployment
-        cd "{{ deployment_dir }}/sports-data-service"
+        cd "${DEPLOYMENT_DIR}/sports-data-service"
         sudo docker-compose down --remove-orphans 2>/dev/null || true
         
         # Force remove containers by name (case where docker-compose didn't clean up)
@@ -239,6 +239,7 @@
         fi
       environment:
         API_PORT: "{{ api_port }}"
+        DEPLOYMENT_DIR: "{{ deployment_dir }}"
       ignore_errors: yes
       register: stop_result
     
