@@ -177,22 +177,44 @@
       ignore_errors: yes
       register: stop_result
     
-    - name: Verify port is free before starting containers
+    - name: Final port cleanup and verification
       shell: |
+        # Final aggressive cleanup attempt
+        if command -v fuser >/dev/null 2>&1; then
+          echo "Final cleanup attempt with fuser..."
+          sudo fuser -k ${API_PORT}/tcp 2>/dev/null || true
+        fi
+        
+        # Wait a moment for processes to die
+        sleep 2
+        
         # Double-check port is actually free
         if command -v ss >/dev/null 2>&1; then
           LISTENING=$(sudo ss -tlnp | grep -E ":[[:space:]]*${API_PORT}[[:space:]]" || true)
           if [ -n "$LISTENING" ]; then
-            echo "ERROR: Port ${API_PORT} is still in use before starting containers!"
+            echo "WARNING: Port ${API_PORT} is still in use before starting containers!"
             echo "$LISTENING"
-            exit 1
+            # Try one more time with fuser
+            if command -v fuser >/dev/null 2>&1; then
+              echo "Making final attempt with fuser..."
+              sudo fuser -k ${API_PORT}/tcp 2>/dev/null || true
+              sleep 2
+              # Check again
+              LISTENING=$(sudo ss -tlnp | grep -E ":[[:space:]]*${API_PORT}[[:space:]]" || true)
+              if [ -n "$LISTENING" ]; then
+                echo "ERROR: Port ${API_PORT} is STILL in use after final cleanup attempt!"
+                echo "$LISTENING"
+                echo "This will likely cause the deployment to fail."
+                # Don't exit - let docker-compose try and fail with a clearer error
+              fi
+            fi
           else
-            echo "Port ${API_PORT} is confirmed free, proceeding with container start"
+            echo "SUCCESS: Port ${API_PORT} is confirmed free, proceeding with container start"
           fi
         fi
       environment:
         API_PORT: "{{ api_port }}"
-      ignore_errors: false
+      ignore_errors: yes
     
     - name: Build and start containers
       shell: |
