@@ -212,7 +212,8 @@
         
         # Now stop all Docker containers that might be using the port
         # Stop all sports-data containers from any deployment
-        sudo docker ps -a --filter "name=sports-data" --format "{{ '{{' }}.ID{{ '}}' }}" | while read container_id; do
+        # Use -q flag to get IDs only (avoids Jinja2 template conflicts)
+        sudo docker ps -aq --filter "name=sports-data" | while read container_id; do
           if [ -n "$container_id" ]; then
             echo "Stopping and removing container $container_id"
             sudo docker stop "$container_id" 2>/dev/null || true
