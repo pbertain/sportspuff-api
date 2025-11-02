@@ -169,10 +169,12 @@
         - ansible_groups.stdout is defined
         - "'docker' not in ansible_groups.stdout"
     
-    - name: Stop existing containers
+    - name: Stop and remove existing containers
       shell: |
         cd {{ deployment_dir }}/sports-data-service
-        sudo docker-compose down 2>/dev/null || true
+        sudo docker-compose down --remove-orphans 2>/dev/null || true
+        # Also remove any stopped containers with these names in case they exist
+        sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
       ignore_errors: yes
       register: stop_result
     
