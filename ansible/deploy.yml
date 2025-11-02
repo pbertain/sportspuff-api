@@ -171,8 +171,6 @@
     
     - name: Stop and remove existing containers
       shell: |
-        API_PORT="{{ api_port }}"
-        
         # First, kill anything using the port directly (most reliable)
         # Check with ss first (most common)
         if command -v ss >/dev/null 2>&1; then
@@ -239,6 +237,8 @@
             sleep 2
           fi
         fi
+      environment:
+        API_PORT: "{{ api_port }}"
       ignore_errors: yes
       register: stop_result
     
