@@ -93,20 +93,44 @@ fi
 echo "=== Force removing containers by name ==="
 sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
 
-# Clean up Docker networks that might be holding port mappings
-echo "=== Cleaning up Docker networks ==="
+# Additional cleanup: Check for ANY containers using the port
+echo "=== Checking for containers using port ${API_PORT} ==="
+# Check all running containers for active port mappings
+# Use docker ps with --no-trunc to get full output, then parse
+sudo docker ps --no-trunc | grep -E ":${API_PORT}->|:${API_PORT}/" | awk '{print $1}' | while read container_id; do
+  if [ -n "$container_id" ] && [ "$container_id" != "CONTAINER" ]; then
+    echo "Found running container $container_id using port ${API_PORT}, stopping it..."
+    sudo docker stop "$container_id" 2>/dev/null || true
+    sudo docker rm -f "$container_id" 2>/dev/null || true
+  fi
+done || true
+
+# Check all containers (including stopped) by inspecting port bindings
+# This catches containers that have port bindings configured but are stopped
+echo "=== Checking stopped containers for port bindings ==="
+sudo docker ps -aq | while read container_id; do
+  if [ -n "$container_id" ]; then
+    # Get port bindings from inspect JSON
+    inspect_output=$(sudo docker inspect "$container_id" 2>/dev/null || true)
+    # Check for port bindings that match our API_PORT (format: "0.0.0.0:34180->34180/tcp" or "HostPort":"34180")
+    if echo "$inspect_output" | grep -qE "\"${API_PORT}\"|\":${API_PORT}->|:${API_PORT}/"; then
+      container_name=$(echo "$inspect_output" | grep -oE '"Name"[[:space:]]*:[[:space:]]*"[^"]*' | head -n1 | sed 's/"Name"[[:space:]]*:[[:space:]]*"//' | sed 's|^/||' || echo "$container_id")
+      echo "Found container $container_name ($container_id) with port binding to ${API_PORT}, removing it..."
+      sudo docker stop "$container_id" 2>/dev/null || true
+      sudo docker rm -f "$container_id" 2>/dev/null || true
+    fi
+  fi
+done || true
+
 # Prune unused networks
 sudo docker network prune -f 2>/dev/null || true
 
 # Remove any networks associated with sports-data-service
-# Use -q flag to get network IDs to avoid Jinja2 template conflicts
-sudo docker network ls -q | while read net_id; do
-  if [ -n "$net_id" ]; then
-    net_name=$(sudo docker network inspect "$net_id" --format '{{.Name}}' 2>/dev/null || true)
-    if echo "$net_name" | grep -qE "sports-data-service|sportspuff"; then
-      echo "Removing Docker network: $net_name ($net_id)"
-      sudo docker network rm "$net_id" 2>/dev/null || true
-    fi
+# List all networks and filter by name pattern
+sudo docker network ls --no-trunc | grep -E "(sports-data-service|sportspuff)" | awk '{print $1}' | while read net_id; do
+  if [ -n "$net_id" ] && [ "$net_id" != "NETWORK" ]; then
+    echo "Removing Docker network: $net_id"
+    sudo docker network rm "$net_id" 2>/dev/null || true
   fi
 done || true
 
