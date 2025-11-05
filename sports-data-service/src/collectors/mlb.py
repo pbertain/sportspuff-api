@@ -55,6 +55,36 @@ class MLBCollector(BaseCollector):
             logger.error(f"Error fetching MLB schedule: {e}")
             return []
     
+    def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get full MLB season schedule.
+        
+        Args:
+            season: Season year (e.g., "2024"). If None, uses current year.
+            
+        Returns:
+            List of game dictionaries for the entire season
+        """
+        self._check_rate_limit()
+        
+        try:
+            # MLB statsapi.schedule() without date returns all games
+            logger.info("Fetching full MLB season schedule")
+            games = statsapi.schedule()
+            
+            parsed_games = []
+            for game in games:
+                parsed_game = self.parse_game_data(game)
+                if parsed_game:
+                    parsed_games.append(parsed_game)
+            
+            logger.info(f"Fetched {len(parsed_games)} games for MLB season")
+            return parsed_games
+            
+        except Exception as e:
+            logger.error(f"Error fetching MLB season schedule: {e}")
+            return []
+    
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
         Get live MLB scores for specified date.

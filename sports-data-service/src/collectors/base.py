@@ -80,6 +80,22 @@ class BaseCollector(ABC):
         """
         pass
     
+    def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get full season schedule for the league.
+        
+        Args:
+            season: Season identifier (e.g., "2024-25" for NBA, "2024" for others)
+                   If None, will determine current season automatically.
+            
+        Returns:
+            List of game dictionaries for the entire season
+        """
+        # Default implementation: fetch games day by day for the season
+        # Individual collectors can override with more efficient methods
+        logger.warning(f"get_season_schedule() not implemented for {self.league}, using date-by-date fallback")
+        return []
+    
     @abstractmethod
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """

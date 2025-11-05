@@ -5,7 +5,7 @@ Configuration management for Sports Data Service.
 import os
 from typing import List, Dict, Any
 from pydantic_settings import BaseSettings
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class Settings(BaseSettings):
@@ -57,6 +57,24 @@ class Settings(BaseSettings):
     # API Server
     api_host: str = Field(default="127.0.0.1")
     api_port: int = Field(default=34180)
+    
+    # Proxy Configuration (for Decodo or other proxy services)
+    proxy_enabled: bool = Field(default=False, description="Enable proxy for NBA API requests")
+    proxy_host: str = Field(default="dc.decodo.com")
+    proxy_username: str = Field(default="")
+    proxy_password: str = Field(default="")
+    proxy_port_start: int = Field(default=10001)
+    proxy_port_end: int = Field(default=10010)
+    
+    @field_validator('proxy_enabled', mode='before')
+    @classmethod
+    def parse_bool(cls, v):
+        """Parse boolean from string or bool."""
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, str):
+            return v.lower() in ('true', '1', 'yes', 'on')
+        return bool(v)
     
     class Config:
         env_file = ".env"

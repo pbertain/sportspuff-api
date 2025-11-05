@@ -68,6 +68,23 @@ class NFLCollector(BaseCollector):
             logger.error(f"Error fetching NFL schedule: {e}")
             return []
     
+    def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get full NFL season schedule.
+        
+        Args:
+            season: Season year (e.g., "2024"). If None, uses current year.
+            
+        Returns:
+            List of game dictionaries for the entire season
+            
+        Note: NFL API uses date-specific endpoints. For full season, we would
+        need to fetch week-by-week or day-by-day. This is a placeholder.
+        """
+        logger.warning("NFL full season fetch not implemented - would need to fetch week-by-week")
+        # For now, return empty - could implement week-by-week fetching if needed
+        return []
+    
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
         Get live NFL scores for specified date.

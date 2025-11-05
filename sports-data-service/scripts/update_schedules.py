@@ -32,6 +32,9 @@ def main():
     parser = argparse.ArgumentParser(description='Update sports schedules')
     parser.add_argument('--league', help='Specific league to update (NBA, MLB, NHL, NFL, WNBA)')
     parser.add_argument('--date', help='Date to update (YYYY-MM-DD format)')
+    parser.add_argument('--days-ahead', type=int, default=0, help='Number of days ahead to fetch (default: 0)')
+    parser.add_argument('--full-season', action='store_true', help='Fetch and store full season schedule')
+    parser.add_argument('--season', help='Season identifier (e.g., "2024-25" for NBA, "2024" for others)')
     parser.add_argument('--stats', action='store_true', help='Show schedule statistics')
     parser.add_argument('--cleanup', action='store_true', help='Clean up old data')
     parser.add_argument('--dry-run', action='store_true', help='Dry run for cleanup')
@@ -74,6 +77,21 @@ def main():
                 action = "Would delete" if args.dry_run else "Deleted"
                 print(f"{league}: {action} {count} old games")
         
+        elif args.full_season:
+            # Update full season schedules
+            logger.info("Fetching full season schedules")
+            results = updater.update_season_schedule(league=args.league, season=args.season)
+            
+            print("\n📅 Full Season Schedule Update Results")
+            print("=" * 40)
+            
+            total_games = 0
+            for league, count in results.items():
+                print(f"{league}: {count} games")
+                total_games += count
+            
+            print(f"\nTotal: {total_games} games stored")
+        
         else:
             # Update schedules
             target_date = None
@@ -86,8 +104,11 @@ def main():
             
             if args.league:
                 # Update specific league
-                logger.info(f"Updating {args.league} schedule")
-                count = updater.update_league(args.league, target_date)
+                if args.days_ahead > 0:
+                    logger.info(f"Updating {args.league} schedule for {target_date} + {args.days_ahead} days")
+                else:
+                    logger.info(f"Updating {args.league} schedule")
+                count = updater.update_league(args.league, target_date, days_ahead=args.days_ahead)
                 print(f"✅ Updated {args.league}: {count} games")
             else:
                 # Update all leagues

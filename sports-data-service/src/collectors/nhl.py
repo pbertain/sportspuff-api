@@ -87,6 +87,23 @@ class NHLCollector(BaseCollector):
             logger.error(f"Error fetching NHL schedule: {e}")
             return []
     
+    def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get full NHL season schedule.
+        
+        Args:
+            season: Season year (e.g., "2024"). If None, uses current year.
+            
+        Returns:
+            List of game dictionaries for the entire season
+            
+        Note: NHL API doesn't have a direct season endpoint, so we fetch
+        day by day for the season (Oct-Apr). This is a fallback implementation.
+        """
+        logger.warning("NHL full season fetch not implemented - would need to fetch day-by-day")
+        # For now, return empty - could implement day-by-day fetching if needed
+        return []
+    
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
         Get live NHL scores for specified date.

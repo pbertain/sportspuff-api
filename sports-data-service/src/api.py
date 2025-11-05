@@ -19,6 +19,18 @@ sys.path.insert(0, '/app/src')
 from database import get_db_session
 from models import Game
 from config import settings
+from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector
+
+def get_collector(league: str):
+    """Get collector instance for a league."""
+    collectors = {
+        'NBA': NBACollector(),
+        'MLB': MLBCollector(),
+        'NHL': NHLCollector(),
+        'NFL': NFLCollector(),
+        'WNBA': WNBACollector(),
+    }
+    return collectors.get(league)
 
 app = FastAPI(
     title="Sports Data Service API",
@@ -35,23 +47,134 @@ SPORT_MAPPINGS = {
     'wnba': 'WNBA'
 }
 
-def get_greeting() -> str:
-    """Get greeting based on time of day."""
-    now = datetime.now()
+def get_timezone(tz_param: Optional[str] = None):
+    """
+    Get timezone object from query parameter.
+    
+    Supports:
+    - Common US timezone aliases (et, est, pt, pst, etc.)
+    - Any pytz timezone name (e.g., 'America/New_York', 'Europe/London', 'Europe/Berlin', 'Asia/Tokyo')
+    - Case-insensitive matching for pytz timezone names
+    
+    Returns US/Pacific (Pacific time) as default if timezone cannot be determined.
+    
+    Note: For best results, use full pytz timezone names like 'Europe/Berlin' instead of
+    abbreviations like 'CEST'. pytz handles daylight saving time automatically.
+    """
+    if not tz_param:
+        return pytz.timezone('US/Pacific')
+    
+    tz_param = tz_param.strip()
+    tz_param_lower = tz_param.lower()
+    
+    # Map common US timezone aliases (user-friendly shortcuts)
+    us_aliases = {
+        'et': 'US/Eastern',
+        'est': 'US/Eastern',
+        'edt': 'US/Eastern',
+        'eastern': 'US/Eastern',
+        'pt': 'US/Pacific',
+        'pst': 'US/Pacific',
+        'pdt': 'US/Pacific',
+        'pacific': 'US/Pacific',
+        'ct': 'US/Central',
+        'cst': 'US/Central',
+        'cdt': 'US/Central',
+        'central': 'US/Central',
+        'mt': 'US/Mountain',
+        'mst': 'US/Mountain',
+        'mdt': 'US/Mountain',
+        'mountain': 'US/Mountain',
+        'akst': 'US/Alaska',
+        'akdt': 'US/Alaska',
+        'alaska': 'US/Alaska',
+        'ak': 'US/Alaska',
+        'hst': 'US/Hawaii',
+        'hawaii': 'US/Hawaii',
+        'hi': 'US/Hawaii',
+    }
+    
+    # Check US aliases first
+    if tz_param_lower in us_aliases:
+        return pytz.timezone(us_aliases[tz_param_lower])
+    
+    # Try to parse as a pytz timezone name directly (case-sensitive first)
+    try:
+        return pytz.timezone(tz_param)
+    except pytz.exceptions.UnknownTimeZoneError:
+        pass
+    
+    # Try case-insensitive lookup in all pytz timezones
+    # This allows users to use 'europe/berlin', 'EUROPE/BERLIN', etc.
+    try:
+        for tz_name in pytz.all_timezones:
+            if tz_name.lower() == tz_param_lower:
+                return pytz.timezone(tz_name)
+    except Exception:
+        pass
+    
+    # Try common timezone abbreviations that pytz doesn't recognize directly
+    # Only a minimal set for very common abbreviations
+    common_abbrevs = {
+        'utc': 'UTC',
+        'z': 'UTC',
+        'gmt': 'Europe/London',
+        'cest': 'Europe/Berlin',  # Central European Summer Time
+        'cet': 'Europe/Berlin',   # Central European Time
+        'bst': 'Europe/London',   # British Summer Time
+    }
+    if tz_param_lower in common_abbrevs:
+        try:
+            return pytz.timezone(common_abbrevs[tz_param_lower])
+        except:
+            pass
+    
+    # Default to Pacific if we can't determine the timezone
+    return pytz.timezone('US/Pacific')
+
+def get_greeting(tz: pytz.BaseTzInfo = None) -> str:
+    """Get greeting based on time of day in specified timezone."""
+    if tz is None:
+        tz = pytz.timezone('US/Pacific')  # Default to Pacific
+    
+    now = datetime.now(tz)
     hour = now.hour
     
-    if 5 <= hour < 12:
+    if 0 <= hour < 5:
+        return "Good God! It's so early (or late!)!!"
+    elif 5 <= hour < 12:
         return "Good morning"
     elif 12 <= hour < 17:
         return "Good afternoon"
     elif 17 <= hour < 24:
         return "Good evening"
     else:
-        return "God it's late"
+        return "Good God! It's so early (or late!)!!"
 
-def parse_date_param(date_param: Optional[str]) -> date:
-    """Parse date parameter (today, tomorrow, yesterday, or YYYYMMDD)."""
-    today = date.today()
+def parse_date_param(date_param: Optional[str], tz: pytz.BaseTzInfo = None) -> date:
+    """
+    Parse date parameter with support for multiple formats.
+    
+    Supports:
+    - Relative dates: today, tomorrow, yesterday (uses Pacific time by default)
+    - YYYY-MM-DD (ISO format, e.g., 2025-11-05)
+    - YYYYMMDD (compact format, e.g., 20251105)
+    - M/D/YYYY or MM/DD/YYYY (US format, e.g., 11/5/2025 or 11/05/2025)
+    - M-D-YYYY or MM-DD-YYYY (US format with dashes, e.g., 11-5-2025)
+    - YYYY/M/D or YYYY/MM/DD (alternative format, e.g., 2025/11/5)
+    
+    Uses dateutil.parser as fallback for other formats.
+    
+    Args:
+        date_param: Date string to parse
+        tz: Timezone for relative dates (defaults to Pacific)
+    """
+    if tz is None:
+        tz = pytz.timezone('US/Pacific')  # Default to Pacific for "today"
+    
+    # Get today's date in the specified timezone
+    now_tz = datetime.now(tz)
+    today = now_tz.date()
     
     if date_param is None or date_param.lower() == 'today':
         return today
@@ -59,14 +182,38 @@ def parse_date_param(date_param: Optional[str]) -> date:
         return today + timedelta(days=1)
     elif date_param.lower() == 'yesterday':
         return today - timedelta(days=1)
-    elif len(date_param) == 8 and date_param.isdigit():
-        # YYYYMMDD format
+    
+    # Try multiple date formats
+    date_formats = [
+        '%Y-%m-%d',      # YYYY-MM-DD (ISO format)
+        '%Y%m%d',         # YYYYMMDD (compact format)
+        '%m/%d/%Y',       # M/D/YYYY or MM/DD/YYYY
+        '%m-%d-%Y',       # M-D-YYYY or MM-DD-YYYY
+        '%Y/%m/%d',       # YYYY/M/D or YYYY/MM/DD
+        '%m.%d.%Y',       # M.D.YYYY (alternative)
+        '%d/%m/%Y',       # D/M/YYYY (European format)
+        '%d-%m-%Y',       # D-M-YYYY (European format)
+        '%Y-%m-%d',       # YYYY-MM-DD (redundant but explicit)
+    ]
+    
+    # Try each format
+    for fmt in date_formats:
         try:
-            return datetime.strptime(date_param, '%Y%m%d').date()
+            return datetime.strptime(date_param, fmt).date()
         except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid date format. Use YYYYMMDD")
-    else:
-        raise HTTPException(status_code=400, detail="Invalid date parameter")
+            continue
+    
+    # Fallback to dateutil.parser for flexible parsing (handles many formats)
+    try:
+        from dateutil import parser
+        parsed_date = parser.parse(date_param)
+        return parsed_date.date()
+    except (ValueError, TypeError) as e:
+        # If all parsing fails, provide helpful error message
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid date format: '{date_param}'. Supported formats: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, M-D-YYYY, etc."
+        )
 
 def format_game_for_curl(game: Game, sport: str) -> str:
     """Format a single game for curl-style output."""
@@ -103,10 +250,13 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     else:
         return f" {away_team}@{home_team} {time_status}"
 
-def format_schedule_curl(games: List[Game], target_date: date) -> str:
+def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None) -> str:
     """Format games in curl-style schedule format."""
     if not games:
         return "No games scheduled"
+    
+    if tz is None:
+        tz = pytz.timezone('US/Pacific')  # Default to Pacific
     
     # Group by sport
     by_sport: Dict[str, List[Game]] = {}
@@ -117,10 +267,10 @@ def format_schedule_curl(games: List[Game], target_date: date) -> str:
         by_sport[sport].append(game)
     
     # Format the output
-    greeting = get_greeting()
+    greeting = get_greeting(tz)
     date_str = target_date.strftime('%a %d %b %Y')
     
-    output = f"{greeting}!\nHere is {date_str} sports schedule\n"
+    output = f"{greeting}!\nHere is the schedule:\n"
     output += f"       {date_str}:\n"
     output += "-" * 30 + "\n"
     
@@ -137,12 +287,18 @@ def format_schedule_curl(games: List[Game], target_date: date) -> str:
         
         # Determine season info from first game
         first_game = sport_games[0]
-        season_type = first_game.game_type.title().replace('_', ' ')
+        # Map game_type to display format
+        game_type_map = {
+            'preseason': 'Preseason',
+            'regular': 'Regular Season',
+            'playoffs': 'Playoffs',
+            'allstar': 'All-Star',
+            'nba_cup': 'Emirates NBA Cup',
+            'postseason': 'Playoffs'
+        }
+        season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
         
-        # Try to determine week (this is simplified - you may need to calculate)
-        week = "???"  # Placeholder
-        
-        output += f"{first_game.league} - {season_type}, Week {week}:\n"
+        output += f"{first_game.league} - {season_type}:\n"
         
         for game in sport_games:
             output += format_game_for_curl(game, sport)
@@ -150,16 +306,67 @@ def format_schedule_curl(games: List[Game], target_date: date) -> str:
         
         output += "-" * 30 + "\n"
     
-    output += "     All times in Pacific\n"
-    output += f"  Sent from SportsPuff@{datetime.now().strftime('%H:%M')}\n"
+    # Determine timezone display name
+    tz_name = tz.zone if hasattr(tz, 'zone') else str(tz)
+    
+    # Try to extract a readable timezone name
+    # Common patterns: America/New_York -> Eastern, Europe/London -> London, etc.
+    if '/' in tz_name:
+        # Extract the city/region name (e.g., "New_York" from "America/New_York")
+        parts = tz_name.split('/')
+        if len(parts) > 1:
+            city_name = parts[-1].replace('_', ' ')
+            # Map common timezone names to shorter display names
+            display_map = {
+                'New York': 'Eastern',
+                'Los Angeles': 'Pacific',
+                'Chicago': 'Central',
+                'Denver': 'Mountain',
+                'Anchorage': 'Alaska',
+                'Honolulu': 'Hawaii',
+                'London': 'London',
+                'Paris': 'Paris',
+                'Tokyo': 'Tokyo',
+                'Sydney': 'Sydney',
+            }
+            tz_display = display_map.get(city_name, city_name)
+        else:
+            tz_display = tz_name
+    elif tz_name in ['GMT', 'UTC']:
+        tz_display = tz_name
+    else:
+        # Fallback: use the timezone name as-is, or try to extract readable part
+        if 'Pacific' in tz_name:
+            tz_display = 'Pacific'
+        elif 'Eastern' in tz_name:
+            tz_display = 'Eastern'
+        elif 'Central' in tz_name:
+            tz_display = 'Central'
+        elif 'Mountain' in tz_name:
+            tz_display = 'Mountain'
+        elif 'Alaska' in tz_name:
+            tz_display = 'Alaska'
+        elif 'Hawaii' in tz_name:
+            tz_display = 'Hawaii'
+        else:
+            tz_display = tz_name.replace('_', ' ').replace('/', ' ')
+    
+    output += f"     All times in {tz_display}\n"
+    
+    # Format timestamp in the specified timezone
+    now_tz = datetime.now(tz)
+    output += f"  Sent from SportsPuff@{now_tz.strftime('%H:%M')}\n"
     output += "-" * 30 + "\n"
     
     return output
 
-def format_scores_curl(games: List[Game], target_date: date) -> str:
+def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None) -> str:
     """Format games in curl-style scores format."""
     if not games:
         return "No scores available"
+    
+    if tz is None:
+        tz = pytz.timezone('US/Pacific')  # Default to Pacific
     
     # Group by sport
     by_sport: Dict[str, List[Game]] = {}
@@ -170,10 +377,10 @@ def format_scores_curl(games: List[Game], target_date: date) -> str:
         by_sport[sport].append(game)
     
     # Format the output
-    greeting = get_greeting()
+    greeting = get_greeting(tz)
     date_str = target_date.strftime('%a %d %b %Y')
     
-    output = f"{greeting}!\nHere are {date_str} sports scores\n"
+    output = f"{greeting}!\nHere are the scores:\n"
     output += f"       {date_str}:\n"
     output += "-" * 30 + "\n"
     
@@ -188,17 +395,27 @@ def format_scores_curl(games: List[Game], target_date: date) -> str:
         if not sport_games:
             continue
         
-        # Only show games that have scores (final or in progress)
-        scored_games = [g for g in sport_games if g.is_final or g.game_status == 'in_progress']
+        # Show games with scores (final, in progress, or scheduled with scores > 0)
+        scored_games = [g for g in sport_games if g.is_final or 
+                       g.game_status == 'in_progress' or 
+                       (g.visitor_score_total > 0 or g.home_score_total > 0)]
         if not scored_games:
             continue
         
         # Determine season info from first game
         first_game = scored_games[0]
-        season_type = first_game.game_type.title().replace('_', ' ')
-        week = "???"  # Placeholder
+        # Map game_type to display format
+        game_type_map = {
+            'preseason': 'Preseason',
+            'regular': 'Regular Season',
+            'playoffs': 'Playoffs',
+            'allstar': 'All-Star',
+            'nba_cup': 'Emirates NBA Cup',
+            'postseason': 'Playoffs'
+        }
+        season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
         
-        output += f"{first_game.league} - {season_type}, Week {week}:\n"
+        output += f"{first_game.league} - {season_type}:\n"
         
         for game in scored_games:
             away_abbr = game.visitor_team_abbrev
@@ -208,20 +425,67 @@ def format_scores_curl(games: List[Game], target_date: date) -> str:
             home_score = game.home_score_total or 0
             
             if game.is_final:
-                status = f"({away_score:2d}-{home_score:2d}) F"
-            elif game.game_status == 'in_progress':
+                status = "F"
+                output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+            elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
                 period = game.current_period or '?'
-                time_left = game.time_remaining or '?:??'
-                status = f"({away_score:2d}-{home_score:2d}) {time_left}"
-            else:
-                status = "TBD"
-            
-            output += f" {away_abbr}(v) [{away_score:3d}-{home_score:2d}] {home_abbr}(h) {status}\n"
+                time_left = game.time_remaining or ''
+                if time_left and time_left.strip():
+                    status = f"Q{period} {time_left}"
+                else:
+                    status = f"Q{period}"
+                output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+        else:
+            output += f" {away_abbr} @ {home_abbr} TBD\n"
         
         output += "-" * 30 + "\n"
     
-    output += "     All times in Pacific\n"
-    output += f"  Sent from SportsPuff@{datetime.now().strftime('%H:%M')}\n"
+    # Determine timezone display name (same logic as format_schedule_curl)
+    tz_name = tz.zone if hasattr(tz, 'zone') else str(tz)
+    
+    # Try to extract a readable timezone name
+    if '/' in tz_name:
+        parts = tz_name.split('/')
+        if len(parts) > 1:
+            city_name = parts[-1].replace('_', ' ')
+            display_map = {
+                'New York': 'Eastern',
+                'Los Angeles': 'Pacific',
+                'Chicago': 'Central',
+                'Denver': 'Mountain',
+                'Anchorage': 'Alaska',
+                'Honolulu': 'Hawaii',
+                'London': 'London',
+                'Paris': 'Paris',
+                'Tokyo': 'Tokyo',
+                'Sydney': 'Sydney',
+            }
+            tz_display = display_map.get(city_name, city_name)
+        else:
+            tz_display = tz_name
+    elif tz_name in ['GMT', 'UTC']:
+        tz_display = tz_name
+    else:
+        if 'Pacific' in tz_name:
+            tz_display = 'Pacific'
+        elif 'Eastern' in tz_name:
+            tz_display = 'Eastern'
+        elif 'Central' in tz_name:
+            tz_display = 'Central'
+        elif 'Mountain' in tz_name:
+            tz_display = 'Mountain'
+        elif 'Alaska' in tz_name:
+            tz_display = 'Alaska'
+        elif 'Hawaii' in tz_name:
+            tz_display = 'Hawaii'
+        else:
+            tz_display = tz_name.replace('_', ' ').replace('/', ' ')
+    
+    output += f"     All times in {tz_display}\n"
+    
+    # Format timestamp in the specified timezone
+    now_tz = datetime.now(tz)
+    output += f"  Sent from SportsPuff@{now_tz.strftime('%H:%M')}\n"
     output += "-" * 30 + "\n"
     
     return output
@@ -235,11 +499,13 @@ def root():
 
 @app.get("/api/v1/schedules/{date}")
 def get_schedules_all_sports_api_v1(
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
 ):
     """Get schedules for all sports in JSON format."""
     try:
-        target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
+        target_date = parse_date_param(date, timezone)
         result = {}
         
         with get_db_session() as db:
@@ -274,11 +540,13 @@ def get_schedules_all_sports_api_v1(
 
 @app.get("/curl/v1/schedules/{date}", response_class=PlainTextResponse)
 def get_schedules_all_sports_curl_v1(
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific (default: Pacific)"),
 ):
     """Get schedules for all sports in curl-style text format."""
     try:
-        target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
+        target_date = parse_date_param(date, timezone)
         
         # Convert Game objects to dicts while session is open
         games_data = []
@@ -318,18 +586,20 @@ def get_schedules_all_sports_curl_v1(
         
         all_games = [GameProxy(g) for g in games_data]
         
-        return format_schedule_curl(all_games, target_date)
+        return format_schedule_curl(all_games, target_date, timezone)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/v1/scores/{date}")
 def get_scores_all_sports_api_v1(
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
 ):
     """Get scores for all sports in JSON format."""
     try:
-        target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
+        target_date = parse_date_param(date, timezone)
         result = {}
         
         with get_db_session() as db:
@@ -362,11 +632,13 @@ def get_scores_all_sports_api_v1(
 
 @app.get("/curl/v1/scores/{date}", response_class=PlainTextResponse)
 def get_scores_all_sports_curl_v1(
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific (default: Pacific)"),
 ):
     """Get scores for all sports in curl-style text format."""
     try:
         target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
         all_games = []
         
         # Use joinedload or ensure we access attributes within session context
@@ -407,7 +679,7 @@ def get_scores_all_sports_curl_v1(
         
         all_games = [GameProxy(g) for g in games_data]
         
-        return format_scores_curl(all_games, target_date)
+        return format_scores_curl(all_games, target_date, timezone)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -415,26 +687,75 @@ def get_scores_all_sports_curl_v1(
 @app.get("/api/v1/schedule/{sport}/{date}")
 def get_schedule_api_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
 ):
     """Get schedule in JSON format."""
     try:
-        target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
+        target_date = parse_date_param(date, timezone)
         league = SPORT_MAPPINGS.get(sport.lower())
         
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
-        with get_db_session() as db:
-            games = db.query(Game).filter(
-                Game.league == league,
-                Game.game_date == target_date
-            ).order_by(Game.game_time).all()
-            
-            return {
-                "sport": sport,
-                "date": target_date.isoformat(),
-                "games": [
+        # Get today's date in the timezone
+        now_tz = datetime.now(timezone)
+        today = now_tz.date()
+        games_list = []
+        
+        # For today's games, try to get live data first
+        if target_date == today:
+            collector = get_collector(league)
+            if collector:
+                live_games = collector.get_live_scores(target_date)
+                if live_games:
+                    # Use live data - convert to format expected by frontend
+                    seen_game_ids = set()
+                    for game_dict in live_games:
+                        game_id = game_dict.get('game_id', '')
+                        if game_id and game_id in seen_game_ids:
+                            continue
+                        seen_game_ids.add(game_id)
+                        
+                        # Get game_time from live data if available
+                        game_time = game_dict.get('game_time')
+                        game_date_str = game_dict.get('game_date', '')
+                        
+                        # If game_time is not in live data, try to get it from database
+                        if not game_time:
+                            with get_db_session() as db:
+                                db_game = db.query(Game).filter(
+                                    Game.game_id == game_id
+                                ).first()
+                                if db_game and db_game.game_time:
+                                    game_time = db_game.game_time
+                        
+                        games_list.append({
+                            "game_id": game_id,
+                            "game_date": game_date_str if game_date_str else target_date.isoformat(),
+                            "game_time": game_time.isoformat() if game_time else None,
+                            "home_team": game_dict.get('home_team', ''),
+                            "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
+                            "visitor_team": game_dict.get('visitor_team', ''),
+                            "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
+                            "game_status": game_dict.get('game_status', 'scheduled'),
+                            "game_type": game_dict.get('game_type', 'regular'),
+                            "home_wins": game_dict.get('home_wins', 0),
+                            "home_losses": game_dict.get('home_losses', 0),
+                            "visitor_wins": game_dict.get('visitor_wins', 0),
+                            "visitor_losses": game_dict.get('visitor_losses', 0),
+                        })
+        
+        # Fallback to database if no live games or not today
+        if not games_list:
+            with get_db_session() as db:
+                games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date
+                ).order_by(Game.game_time).all()
+                
+                games_list = [
                     {
                         "game_id": game.game_id,
                         "game_date": game.game_date.isoformat(),
@@ -444,11 +765,20 @@ def get_schedule_api_v1(
                         "visitor_team": game.visitor_team,
                         "visitor_team_abbrev": game.visitor_team_abbrev,
                         "game_status": game.game_status,
-                        "game_type": game.game_type
+                        "game_type": game.game_type,
+                        "home_wins": game.home_wins or 0,
+                        "home_losses": game.home_losses or 0,
+                        "visitor_wins": game.visitor_wins or 0,
+                        "visitor_losses": game.visitor_losses or 0,
                     }
                     for game in games
                 ]
-            }
+        
+        return {
+            "sport": sport,
+            "date": target_date.isoformat(),
+            "games": games_list
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -456,23 +786,122 @@ def get_schedule_api_v1(
 @app.get("/curl/v1/schedule/{sport}/{date}", response_class=PlainTextResponse)
 def get_schedule_curl_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific, akst/alaska, hst/hawaii (default: Pacific)"),
 ):
     """Get schedule in curl-style text format."""
     try:
-        target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
+        # Parse date using the timezone (so "today" is in the correct timezone)
+        target_date = parse_date_param(date, timezone)
         league = SPORT_MAPPINGS.get(sport.lower())
         
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
-        with get_db_session() as db:
-            games = db.query(Game).filter(
-                Game.league == league,
-                Game.game_date == target_date
-            ).order_by(Game.game_time).all()
-            
-            return format_schedule_curl(games, target_date)
+        # Get today's date in the timezone
+        now_tz = datetime.now(timezone)
+        today = now_tz.date()
+        games = []
+        
+        if target_date == today:
+            # Try to get live data first for today
+            collector = get_collector(league)
+            if collector:
+                live_games = collector.get_live_scores(target_date)
+                if live_games:
+                    # Convert live games to Game-like objects for formatting
+                    # Use a simple class wrapper instead of SQLAlchemy model
+                    class GameWrapper:
+                        def __init__(self, data):
+                            for k, v in data.items():
+                                setattr(self, k, v)
+                    
+                    # Use a set to track game_ids and avoid duplicates
+                    seen_game_ids = set()
+                    for game_dict in live_games:
+                        game_id = game_dict.get('game_id', '')
+                        if game_id and game_id in seen_game_ids:
+                            continue  # Skip duplicates
+                        seen_game_ids.add(game_id)
+                        
+                        game_data = {
+                            'league': league,
+                            'game_id': game_id,
+                            'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
+                            'game_time': None,
+                            'game_type': game_dict.get('game_type', 'regular'),
+                            'home_team': game_dict.get('home_team', ''),
+                            'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
+                            'visitor_team': game_dict.get('visitor_team', ''),
+                            'visitor_team_abbrev': game_dict.get('visitor_team_abbrev', ''),
+                            'home_score_total': game_dict.get('home_score_total', 0),
+                            'visitor_score_total': game_dict.get('visitor_score_total', 0),
+                            'game_status': game_dict.get('game_status', 'scheduled'),
+                            'current_period': game_dict.get('current_period', ''),
+                            'time_remaining': game_dict.get('time_remaining', ''),
+                            'is_final': game_dict.get('is_final', False),
+                            'home_wins': game_dict.get('home_wins', 0),
+                            'home_losses': game_dict.get('home_losses', 0),
+                            'visitor_wins': game_dict.get('visitor_wins', 0),
+                            'visitor_losses': game_dict.get('visitor_losses', 0)
+                        }
+                        games.append(GameWrapper(game_data))
+        
+        # Fallback to database if no live games or not today
+        if not games:
+            with get_db_session() as db:
+                db_games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date
+                ).order_by(Game.game_time).all()
+                
+                # Convert to GameWrapper to avoid session issues
+                class GameWrapper:
+                    def __init__(self, data):
+                        for k, v in data.items():
+                            setattr(self, k, v)
+                
+                # Convert while session is still open
+                for game in db_games:
+                    game_data = {
+                        'league': game.league,
+                        'game_id': game.game_id,
+                        'game_date': game.game_date,
+                        'game_time': game.game_time,
+                        'game_type': game.game_type,
+                        'home_team': game.home_team,
+                        'home_team_abbrev': game.home_team_abbrev,
+                        'visitor_team': game.visitor_team,
+                        'visitor_team_abbrev': game.visitor_team_abbrev,
+                        'home_score_total': game.home_score_total,
+                        'visitor_score_total': game.visitor_score_total,
+                        'game_status': game.game_status,
+                        'current_period': game.current_period,
+                        'time_remaining': game.time_remaining,
+                        'is_final': game.is_final,
+                        'home_wins': game.home_wins,
+                        'home_losses': game.home_losses,
+                        'visitor_wins': game.visitor_wins,
+                        'visitor_losses': game.visitor_losses,
+                    }
+                    games.append(GameWrapper(game_data))
+        
+        # Deduplicate games by game_id before formatting
+        seen_game_ids = set()
+        unique_games = []
+        for game in games:
+            game_id = getattr(game, 'game_id', None) or getattr(game, 'gameId', None)
+            if game_id:
+                if game_id not in seen_game_ids:
+                    seen_game_ids.add(game_id)
+                    unique_games.append(game)
+                # Skip duplicates
+            else:
+                # If no game_id, include it (shouldn't happen)
+                unique_games.append(game)
+        
+        return format_schedule_curl(unique_games, target_date, timezone)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -480,21 +909,48 @@ def get_schedule_curl_v1(
 @app.get("/api/v1/scores/{sport}/{date}")
 def get_scores_api_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
 ):
     """Get scores in JSON format."""
     try:
-        target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
+        target_date = parse_date_param(date, timezone)
         league = SPORT_MAPPINGS.get(sport.lower())
         
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
+        # Get live scores from collector (includes in-progress and final games)
+        collector = get_collector(league)
+        if collector:
+            live_games = collector.get_live_scores(target_date)
+            if live_games:
+                return {
+                    "sport": sport,
+                    "date": target_date.isoformat(),
+                    "scores": [
+                        {
+                            "game_id": game.get('game_id', ''),
+                            "home_team": game.get('home_team', ''),
+                            "home_score": game.get('home_score_total', 0),
+                            "visitor_team": game.get('visitor_team', ''),
+                            "visitor_score": game.get('visitor_score_total', 0),
+                            "is_final": game.get('is_final', False),
+                            "game_status": game.get('game_status', 'scheduled'),
+                            "current_period": game.get('current_period', ''),
+                            "time_remaining": game.get('time_remaining', '')
+                        }
+                        for game in live_games
+                    ]
+                }
+        
+        # Fallback to database for final games only
         with get_db_session() as db:
             games = db.query(Game).filter(
                 Game.league == league,
                 Game.game_date == target_date,
-                Game.is_final == True  # Only final games have scores
+                Game.is_final == True
             ).all()
             
             return {
@@ -519,23 +975,80 @@ def get_scores_api_v1(
 @app.get("/curl/v1/scores/{sport}/{date}", response_class=PlainTextResponse)
 def get_scores_curl_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
-    date: str = Path(..., description="Date: today, tomorrow, yesterday, or YYYYMMDD"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific (default: Pacific)"),
 ):
     """Get scores in curl-style text format."""
     try:
-        target_date = parse_date_param(date)
+        timezone = get_timezone(tz)
+        # Parse date using the timezone (so "today" is in the correct timezone)
+        target_date = parse_date_param(date, timezone)
         league = SPORT_MAPPINGS.get(sport.lower())
         
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
+        # Always try to get live scores first (for today's games, always use live data)
+        collector = get_collector(league)
+        game_objects = []
+        
+        if collector:
+            live_games = collector.get_live_scores(target_date)
+            if live_games:
+                # Convert dicts to Game-like objects for formatting
+                class GameWrapper:
+                    def __init__(self, data):
+                        for k, v in data.items():
+                            setattr(self, k, v)
+                
+                # Use a set to track game_ids and avoid duplicates
+                seen_game_ids = set()
+                for game_dict in live_games:
+                    game_id = game_dict.get('game_id', '')
+                    if game_id and game_id in seen_game_ids:
+                        continue  # Skip duplicates
+                    seen_game_ids.add(game_id)
+                    
+                    game_data = {
+                        'league': league,
+                        'game_id': game_id,
+                        'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
+                        'home_team': game_dict.get('home_team', ''),
+                        'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
+                        'visitor_team': game_dict.get('visitor_team', ''),
+                        'visitor_team_abbrev': game_dict.get('visitor_team_abbrev', ''),
+                        'home_score_total': game_dict.get('home_score_total', 0),
+                        'visitor_score_total': game_dict.get('visitor_score_total', 0),
+                        'game_status': game_dict.get('game_status', 'scheduled'),
+                        'current_period': game_dict.get('current_period', ''),
+                        'time_remaining': game_dict.get('time_remaining', ''),
+                        'is_final': game_dict.get('is_final', False),
+                        'game_type': game_dict.get('game_type', 'regular')
+                    }
+                    game_objects.append(GameWrapper(game_data))
+        
+        # If we have live games, use them (they're always more up-to-date)
+        if game_objects:
+            return format_scores_curl(game_objects, target_date, timezone)
+        
+        # Fallback to database only if no live games
         with get_db_session() as db:
             games = db.query(Game).filter(
                 Game.league == league,
                 Game.game_date == target_date
             ).all()
             
-            return format_scores_curl(games, target_date)
+            # Deduplicate database games
+            seen_game_ids = set()
+            unique_games = []
+            for game in games:
+                if game.game_id and game.game_id not in seen_game_ids:
+                    seen_game_ids.add(game.game_id)
+                    unique_games.append(game)
+                elif not game.game_id:
+                    unique_games.append(game)
+            
+            return format_scores_curl(unique_games, target_date, timezone)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

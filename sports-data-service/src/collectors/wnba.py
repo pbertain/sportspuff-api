@@ -2,11 +2,21 @@
 WNBA data collector for the sports data service.
 """
 
+import sys
 import requests
 import time
 from datetime import datetime, date
 from typing import Dict, List, Optional, Any
 import logging
+
+# Add NBA API to path (WNBA is part of nba_api library)
+sys.path.insert(0, '/app/dependencies/nba_api/src')
+
+# Setup proxy before importing nba_api
+from utils.proxy import setup_proxy, get_proxy_config
+setup_proxy()
+
+from nba_api.stats.endpoints import leaguegamefinder
 
 from .base import BaseCollector
 
@@ -24,6 +34,10 @@ class WNBACollector(BaseCollector):
             "x-rapidapi-key": self.api_key,
             "x-rapidapi-host": "tank01-wnba-live-in-game-real-time-statistics-wnba.p.rapidapi.com"
         }
+        # Get proxy configuration (for LeagueGameFinder calls)
+        self.proxy_config = get_proxy_config()
+        if self.proxy_config:
+            logger.info("Using proxy for WNBA API requests (LeagueGameFinder)")
     
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
@@ -66,6 +80,160 @@ class WNBACollector(BaseCollector):
                 
         except Exception as e:
             logger.error(f"Error fetching WNBA schedule: {e}")
+            return []
+    
+    def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
+        """
+        Get full WNBA season schedule using LeagueGameFinder.
+        
+        Args:
+            season: Season year (e.g., "2025"). If None, uses current year.
+            
+        Returns:
+            List of game dictionaries for the entire season
+        """
+        self._check_rate_limit()
+        
+        try:
+            # Determine season if not provided
+            if season is None:
+                now = datetime.now()
+                year = now.year
+                month = now.month
+                
+                # WNBA season typically runs May-September
+                # If we're past September, use current year
+                # If we're before May, use previous year
+                if month >= 10 or month < 5:
+                    season = str(year)
+                else:
+                    season = str(year)
+            
+            logger.info(f"Fetching full WNBA season schedule for {season}")
+            
+            # LeagueGameFinder with WNBA league ID (10)
+            # For WNBA, season format is just the year (e.g., "2025")
+            # But LeagueGameFinder expects "YYYY-YY" format like NBA
+            # Actually, let's check - WNBA might use different format
+            # Try with just year first, then try YYYY-YY format
+            season_formats = [season, f"{season}-{str(int(season) + 1)[-2:]}"]
+            
+            nba_headers = {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://www.nba.com/',
+                'Accept': 'application/json, text/plain, */*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'Origin': 'https://www.nba.com'
+            }
+            
+            all_games = []
+            
+            for season_format in season_formats:
+                try:
+                    logger.info(f"Trying WNBA season format: {season_format}")
+                    game_finder = leaguegamefinder.LeagueGameFinder(
+                        season_nullable=season_format,
+                        league_id_nullable='10',  # WNBA league ID
+                        headers=nba_headers,
+                        timeout=60
+                    )
+                    data = game_finder.get_dict()
+                    
+                    # LeagueGameFinder returns data in resultSets format
+                    # Note: Each game has TWO rows (one per team), so we need to deduplicate by game_id
+                    if 'resultSets' in data and len(data['resultSets']) > 0:
+                        game_results = data['resultSets'][0]
+                        game_rows = game_results.get('rowSet', [])
+                        
+                        logger.info(f"LeagueGameFinder returned {len(game_rows)} rows (will deduplicate by game)")
+                        
+                        # Group rows by game_id (each game has 2 rows - one per team)
+                        games_by_id = {}
+                        
+                        for row in game_rows:
+                            if len(row) >= 7:
+                                game_id = str(row[4]) if len(row) > 4 else ''
+                                game_date_str = row[5] if len(row) > 5 else ''
+                                matchup = row[6] if len(row) > 6 else ''
+                                
+                                if not game_id or game_id in games_by_id:
+                                    continue  # Skip if no game_id or already processed
+                                
+                                # Parse matchup (e.g., "NY @ CHI" or "NY vs. CHI")
+                                matchup_parts = matchup.split()
+                                if len(matchup_parts) < 3:
+                                    continue
+                                
+                                visitor_abbrev = matchup_parts[0]
+                                home_abbrev = matchup_parts[2]
+                                
+                                # Find team data for this game (we have 2 rows, find both teams)
+                                home_team_row = None
+                                away_team_row = None
+                                
+                                for check_row in game_rows:
+                                    if len(check_row) >= 7 and str(check_row[4]) == game_id:
+                                        team_abbrev = check_row[2] if len(check_row) > 2 else ''
+                                        if team_abbrev == home_abbrev:
+                                            home_team_row = check_row
+                                        elif team_abbrev == visitor_abbrev:
+                                            away_team_row = check_row
+                                
+                                if not home_team_row or not away_team_row:
+                                    continue  # Skip if we can't find both teams
+                                
+                                # Extract team info from rows
+                                # Format: [SEASON_ID, TEAM_ID, TEAM_ABBREVIATION, TEAM_NAME, GAME_ID, GAME_DATE, MATCHUP, ...]
+                                home_team_id = str(home_team_row[1]) if len(home_team_row) > 1 else ''
+                                home_team_name = home_team_row[3] if len(home_team_row) > 3 else ''
+                                away_team_id = str(away_team_row[1]) if len(away_team_row) > 1 else ''
+                                away_team_name = away_team_row[3] if len(away_team_row) > 3 else ''
+                                
+                                # Parse date - LeagueGameFinder returns YYYY-MM-DD format
+                                try:
+                                    game_date_obj = datetime.strptime(game_date_str, '%Y-%m-%d')
+                                    game_date_formatted = game_date_obj.strftime('%Y-%m-%d')  # WNBA parse_game_data expects YYYY-MM-DD
+                                except:
+                                    continue
+                                
+                                # Build game object compatible with parse_game_data
+                                game_obj = {
+                                    'gameID': game_id,
+                                    'gameDate': game_date_formatted,
+                                    'homeTeam': {
+                                        'teamID': home_team_id,
+                                        'teamAbbr': home_abbrev,
+                                        'teamName': home_team_name
+                                    },
+                                    'awayTeam': {
+                                        'teamID': away_team_id,
+                                        'teamAbbr': visitor_abbrev,
+                                        'teamName': away_team_name
+                                    },
+                                    'gameStatus': 'scheduled',
+                                    '_leagueGameFinder': True
+                                }
+                                
+                                parsed_game = self.parse_game_data(game_obj)
+                                if parsed_game:
+                                    games_by_id[game_id] = parsed_game
+                        
+                        all_games = list(games_by_id.values())
+                        if len(all_games) > 0:
+                            logger.info(f"Successfully fetched {len(all_games)} unique WNBA games for season {season}")
+                            return all_games
+                    
+                except Exception as e:
+                    logger.warning(f"Failed to fetch WNBA season {season_format}: {e}")
+                    continue
+            
+            if len(all_games) == 0:
+                logger.warning(f"No WNBA games found for season {season}")
+            
+            return all_games
+                
+        except Exception as e:
+            logger.error(f"Error fetching WNBA season schedule: {e}")
             return []
     
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
