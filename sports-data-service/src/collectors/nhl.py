@@ -215,19 +215,52 @@ class NHLCollector(BaseCollector):
             home_period_scores = self._parse_period_scores(home_team.get('periods', []))
             visitor_period_scores = self._parse_period_scores(away_team.get('periods', []))
             
+            # Extract team names more robustly
+            home_place_name = home_team.get('placeName', {})
+            if isinstance(home_place_name, dict):
+                home_place_name = home_place_name.get('default', '')
+            else:
+                home_place_name = str(home_place_name) if home_place_name else ''
+            
+            home_common_name = home_team.get('commonName', {})
+            if isinstance(home_common_name, dict):
+                home_common_name = home_common_name.get('default', '')
+            else:
+                home_common_name = str(home_common_name) if home_common_name else ''
+            
+            home_team_name = f"{home_place_name} {home_common_name}".strip()
+            if not home_team_name:
+                logger.warning(f"Empty home team name for game {raw_game.get('id', 'unknown')}")
+            
+            away_place_name = away_team.get('placeName', {})
+            if isinstance(away_place_name, dict):
+                away_place_name = away_place_name.get('default', '')
+            else:
+                away_place_name = str(away_place_name) if away_place_name else ''
+            
+            away_common_name = away_team.get('commonName', {})
+            if isinstance(away_common_name, dict):
+                away_common_name = away_common_name.get('default', '')
+            else:
+                away_common_name = str(away_common_name) if away_common_name else ''
+            
+            away_team_name = f"{away_place_name} {away_common_name}".strip()
+            if not away_team_name:
+                logger.warning(f"Empty away team name for game {raw_game.get('id', 'unknown')}")
+            
             return {
                 'league': 'NHL',
                 'game_id': str(raw_game.get('id', '')),
                 'game_date': game_date,
                 'game_time': game_time,
                 'game_type': game_type,
-                'home_team': f"{home_team.get('placeName', {}).get('default', '')} {home_team.get('commonName', {}).get('default', '')}".strip(),
+                'home_team': home_team_name,
                 'home_team_abbrev': home_team.get('abbrev', ''),
                 'home_team_id': str(home_team.get('id', '')),
                 'home_wins': home_team.get('wins', 0),
                 'home_losses': home_team.get('losses', 0),
                 'home_score_total': home_team.get('score', 0),
-                'visitor_team': f"{away_team.get('placeName', {}).get('default', '')} {away_team.get('commonName', {}).get('default', '')}".strip(),
+                'visitor_team': away_team_name,
                 'visitor_team_abbrev': away_team.get('abbrev', ''),
                 'visitor_team_id': str(away_team.get('id', '')),
                 'visitor_wins': away_team.get('wins', 0),
