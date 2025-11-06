@@ -194,6 +194,18 @@
         API_PORT: "{{ api_port }}"
       ignore_errors: false
     
+    - name: Stop and remove existing containers
+      shell: |
+        export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
+        export API_PORT="{{ api_port }}"
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose down || true
+      environment:
+        POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
+        API_PORT: "{{ api_port }}"
+      args:
+        chdir: "{{ deployment_dir }}/sports-data-service"
+      ignore_errors: true
+    
     - name: Build and start containers
       shell: |
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
