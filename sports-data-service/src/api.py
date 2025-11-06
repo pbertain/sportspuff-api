@@ -10,7 +10,7 @@ import os
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, Path, Query, HTTPException
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
 import pytz
 
@@ -46,6 +46,401 @@ SPORT_MAPPINGS = {
     'nhl': 'NHL',
     'wnba': 'WNBA'
 }
+
+def get_help_json() -> Dict[str, Any]:
+    """Generate JSON formatted help content."""
+    return {
+        "title": "Sports Data Service API Help",
+        "version": "1.0.0",
+        "endpoints": {
+            "schedules": {
+                "description": "Get game schedules",
+                "json": [
+                    "/api/v1/schedules/{date} - All sports schedules",
+                    "/api/v1/schedule/{sport}/{date} - Single sport schedule"
+                ],
+                "curl": [
+                    "/curl/v1/schedules/{date} - All sports schedules",
+                    "/curl/v1/schedule/{sport}/{date} - Single sport schedule"
+                ],
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
+                "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"]
+            },
+            "scores": {
+                "description": "Get game scores",
+                "json": [
+                    "/api/v1/scores/{date} - All sports scores",
+                    "/api/v1/scores/{sport}/{date} - Single sport scores"
+                ],
+                "curl": [
+                    "/curl/v1/scores/{date} - All sports scores",
+                    "/curl/v1/scores/{sport}/{date} - Single sport scores"
+                ],
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
+                "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"]
+            },
+            "standings": {
+                "description": "Get team standings",
+                "json": [
+                    "/api/v1/standings/{sport} - Single sport standings"
+                ],
+                "curl": [
+                    "/curl/v1/standings/{sport} - Single sport standings"
+                ],
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
+                "note": "Standings endpoint is currently under development"
+            }
+        },
+        "timezone": {
+            "description": "Change timezone using the 'tz' query parameter",
+            "usage": "?tz=<timezone>",
+            "examples": [
+                "?tz=et - Eastern Time",
+                "?tz=pt - Pacific Time",
+                "?tz=ct - Central Time",
+                "?tz=mt - Mountain Time",
+                "?tz=America/New_York - Full timezone name",
+                "?tz=Europe/London - International timezone"
+            ],
+            "supported_aliases": [
+                "et, est, edt, eastern - US/Eastern",
+                "pt, pst, pdt, pacific - US/Pacific",
+                "ct, cst, cdt, central - US/Central",
+                "mt, mst, mdt, mountain - US/Mountain",
+                "akst, akdt, alaska, ak - US/Alaska",
+                "hst, hawaii, hi - US/Hawaii"
+            ],
+            "default": "US/Pacific (Pacific Time)"
+        },
+        "help": {
+            "json": "/api/help or /api/v1/help",
+            "text": "/curl/help or /curl/v1/help",
+            "html": "/help"
+        }
+    }
+
+def get_help_text() -> str:
+    """Generate plain text formatted help content."""
+    help_text = """Sports Data Service API Help
+Version: 1.0.0
+
+ENDPOINTS:
+
+Schedules:
+  JSON Format:
+    /api/v1/schedules/{date}              - All sports schedules
+    /api/v1/schedule/{sport}/{date}        - Single sport schedule
+  
+  cURL Format:
+    /curl/v1/schedules/{date}              - All sports schedules
+    /curl/v1/schedule/{sport}/{date}       - Single sport schedule
+
+Scores:
+  JSON Format:
+    /api/v1/scores/{date}                  - All sports scores
+    /api/v1/scores/{sport}/{date}          - Single sport scores
+  
+  cURL Format:
+    /curl/v1/scores/{date}                 - All sports scores
+    /curl/v1/scores/{sport}/{date}         - Single sport scores
+
+Standings:
+  JSON Format:
+    /api/v1/standings/{sport}               - Single sport standings
+  
+  cURL Format:
+    /curl/v1/standings/{sport}              - Single sport standings
+
+  Note: Standings endpoint is currently under development
+
+SPORTS:
+  nba, mlb, nfl, nhl, wnba
+
+DATE FORMATS:
+  today, tomorrow, yesterday
+  YYYY-MM-DD (e.g., 2025-01-15)
+  YYYYMMDD (e.g., 20250115)
+  M/D/YYYY (e.g., 1/15/2025)
+  MM/DD/YYYY (e.g., 01/15/2025)
+
+TIMEZONE:
+  Change timezone using the 'tz' query parameter: ?tz=<timezone>
+  
+  Examples:
+    ?tz=et              - Eastern Time
+    ?tz=pt              - Pacific Time
+    ?tz=ct              - Central Time
+    ?tz=mt              - Mountain Time
+    ?tz=America/New_York - Full timezone name
+    ?tz=Europe/London   - International timezone
+  
+  Supported Aliases:
+    et, est, edt, eastern     -> US/Eastern
+    pt, pst, pdt, pacific     -> US/Pacific
+    ct, cst, cdt, central     -> US/Central
+    mt, mst, mdt, mountain    -> US/Mountain
+    akst, akdt, alaska, ak    -> US/Alaska
+    hst, hawaii, hi           -> US/Hawaii
+  
+  Default: US/Pacific (Pacific Time)
+
+HELP:
+  /api/help or /api/v1/help    - JSON formatted help
+  /curl/help or /curl/v1/help  - Plain text help (this format)
+  /help                         - HTML formatted help
+
+EXAMPLES:
+  curl http://localhost:34180/api/v1/schedule/nba/today
+  curl http://localhost:34180/curl/v1/scores/mlb/today?tz=et
+  curl http://localhost:34180/api/v1/standings/nba
+"""
+    return help_text
+
+def get_help_html() -> str:
+    """Generate HTML formatted help content."""
+    html = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sports Data Service API Help</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            border-bottom: 3px solid #4CAF50;
+            padding-bottom: 10px;
+        }
+        h2 {
+            color: #555;
+            margin-top: 30px;
+            border-bottom: 2px solid #e0e0e0;
+            padding-bottom: 5px;
+        }
+        h3 {
+            color: #666;
+            margin-top: 20px;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-family: 'Courier New', monospace;
+            color: #d63384;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            border-left: 4px solid #4CAF50;
+        }
+        .endpoint {
+            background-color: #f9f9f9;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border-left: 3px solid #2196F3;
+        }
+        .sport-list {
+            display: inline-block;
+            background-color: #e3f2fd;
+            padding: 5px 10px;
+            border-radius: 3px;
+            margin: 2px;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 10px;
+            margin: 10px 0;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+        }
+        th, td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #4CAF50;
+            color: white;
+        }
+        tr:hover {
+            background-color: #f5f5f5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Sports Data Service API Help</h1>
+        <p><strong>Version:</strong> 1.0.0</p>
+        
+        <h2>Endpoints</h2>
+        
+        <h3>Schedules</h3>
+        <div class="endpoint">
+            <strong>JSON Format:</strong><br>
+            <code>/api/v1/schedules/{date}</code> - All sports schedules<br>
+            <code>/api/v1/schedule/{sport}/{date}</code> - Single sport schedule
+        </div>
+        <div class="endpoint">
+            <strong>cURL Format:</strong><br>
+            <code>/curl/v1/schedules/{date}</code> - All sports schedules<br>
+            <code>/curl/v1/schedule/{sport}/{date}</code> - Single sport schedule
+        </div>
+        
+        <h3>Scores</h3>
+        <div class="endpoint">
+            <strong>JSON Format:</strong><br>
+            <code>/api/v1/scores/{date}</code> - All sports scores<br>
+            <code>/api/v1/scores/{sport}/{date}</code> - Single sport scores
+        </div>
+        <div class="endpoint">
+            <strong>cURL Format:</strong><br>
+            <code>/curl/v1/scores/{date}</code> - All sports scores<br>
+            <code>/curl/v1/scores/{sport}/{date}</code> - Single sport scores
+        </div>
+        
+        <h3>Standings</h3>
+        <div class="endpoint">
+            <strong>JSON Format:</strong><br>
+            <code>/api/v1/standings/{sport}</code> - Single sport standings
+        </div>
+        <div class="endpoint">
+            <strong>cURL Format:</strong><br>
+            <code>/curl/v1/standings/{sport}</code> - Single sport standings
+        </div>
+        <div class="note">
+            <strong>Note:</strong> Standings endpoint is currently under development
+        </div>
+        
+        <h2>Sports</h2>
+        <p>
+            <span class="sport-list">nba</span>
+            <span class="sport-list">mlb</span>
+            <span class="sport-list">nfl</span>
+            <span class="sport-list">nhl</span>
+            <span class="sport-list">wnba</span>
+        </p>
+        
+        <h2>Date Formats</h2>
+        <p>The <code>{date}</code> parameter accepts:</p>
+        <ul>
+            <li><code>today</code> - Today's date</li>
+            <li><code>tomorrow</code> - Tomorrow's date</li>
+            <li><code>yesterday</code> - Yesterday's date</li>
+            <li><code>YYYY-MM-DD</code> - ISO format (e.g., 2025-01-15)</li>
+            <li><code>YYYYMMDD</code> - Compact format (e.g., 20250115)</li>
+            <li><code>M/D/YYYY</code> - US format (e.g., 1/15/2025)</li>
+            <li><code>MM/DD/YYYY</code> - US format with leading zeros (e.g., 01/15/2025)</li>
+        </ul>
+        
+        <h2>Timezone</h2>
+        <p>Change timezone using the <code>tz</code> query parameter: <code>?tz=&lt;timezone&gt;</code></p>
+        
+        <h3>Examples</h3>
+        <table>
+            <tr>
+                <th>Parameter</th>
+                <th>Description</th>
+            </tr>
+            <tr>
+                <td><code>?tz=et</code></td>
+                <td>Eastern Time</td>
+            </tr>
+            <tr>
+                <td><code>?tz=pt</code></td>
+                <td>Pacific Time</td>
+            </tr>
+            <tr>
+                <td><code>?tz=ct</code></td>
+                <td>Central Time</td>
+            </tr>
+            <tr>
+                <td><code>?tz=mt</code></td>
+                <td>Mountain Time</td>
+            </tr>
+            <tr>
+                <td><code>?tz=America/New_York</code></td>
+                <td>Full timezone name</td>
+            </tr>
+            <tr>
+                <td><code>?tz=Europe/London</code></td>
+                <td>International timezone</td>
+            </tr>
+        </table>
+        
+        <h3>Supported Aliases</h3>
+        <table>
+            <tr>
+                <th>Aliases</th>
+                <th>Timezone</th>
+            </tr>
+            <tr>
+                <td><code>et, est, edt, eastern</code></td>
+                <td>US/Eastern</td>
+            </tr>
+            <tr>
+                <td><code>pt, pst, pdt, pacific</code></td>
+                <td>US/Pacific</td>
+            </tr>
+            <tr>
+                <td><code>ct, cst, cdt, central</code></td>
+                <td>US/Central</td>
+            </tr>
+            <tr>
+                <td><code>mt, mst, mdt, mountain</code></td>
+                <td>US/Mountain</td>
+            </tr>
+            <tr>
+                <td><code>akst, akdt, alaska, ak</code></td>
+                <td>US/Alaska</td>
+            </tr>
+            <tr>
+                <td><code>hst, hawaii, hi</code></td>
+                <td>US/Hawaii</td>
+            </tr>
+        </table>
+        
+        <p><strong>Default:</strong> US/Pacific (Pacific Time)</p>
+        
+        <h2>Help</h2>
+        <ul>
+            <li><code>/api/help</code> or <code>/api/v1/help</code> - JSON formatted help</li>
+            <li><code>/curl/help</code> or <code>/curl/v1/help</code> - Plain text help</li>
+            <li><code>/help</code> - HTML formatted help (this page)</li>
+        </ul>
+        
+        <h2>Examples</h2>
+        <pre># Get today's NBA schedule (JSON)
+curl http://localhost:34180/api/v1/schedule/nba/today
+
+# Get today's MLB scores (cURL format, Eastern Time)
+curl http://localhost:34180/curl/v1/scores/mlb/today?tz=et
+
+# Get NBA standings (JSON)
+curl http://localhost:34180/api/v1/standings/nba</pre>
+    </div>
+</body>
+</html>"""
+    return html
 
 def get_timezone(tz_param: Optional[str] = None):
     """
@@ -226,17 +621,23 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     home_team = f"{game.home_team_abbrev} [{home_wins:3d}-{home_losses:2d}]"
     
     # Format time/status
+    # Priority: Show scores if game is final or in progress, otherwise show scheduled time
     if game.is_final:
         if game.home_score_total is not None and game.visitor_score_total is not None:
             time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
         else:
             time_status = "F"
-    elif game.game_status == 'in_progress':
+    elif game.game_status == 'in_progress' or (game.visitor_score_total and game.visitor_score_total > 0) or (game.home_score_total and game.home_score_total > 0):
+        # Game is in progress or has a score - show the score in schedule format
         period = game.current_period or '?'
-        time_left = game.time_remaining or '?:??'
-        time_status = f"{time_left} {period}"
+        time_left = game.time_remaining or ''
+        if time_left and time_left.strip():
+            # Format: (score-score) Q4 time_left
+            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) Q{period} {time_left}"
+        else:
+            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) Q{period}"
     else:
-        # Scheduled game
+        # Scheduled game - show time
         if game.game_time:
             # Convert to Pacific time
             pt = pytz.timezone('America/Los_Angeles')
@@ -396,9 +797,22 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
             continue
         
         # Show games with scores (final, in progress, or scheduled with scores > 0)
-        scored_games = [g for g in sport_games if g.is_final or 
-                       g.game_status == 'in_progress' or 
-                       (g.visitor_score_total > 0 or g.home_score_total > 0)]
+        # Also deduplicate by game_id to avoid showing the same game twice
+        seen_game_ids = set()
+        scored_games = []
+        for g in sport_games:
+            game_id = getattr(g, 'game_id', None) or getattr(g, 'gameId', None)
+            if game_id and game_id in seen_game_ids:
+                continue  # Skip duplicates
+            # Only include games that have scores (final, in progress, or have non-zero scores)
+            # Skip games that are just scheduled (score 0-0 and status is scheduled)
+            has_score = (g.visitor_score_total and g.visitor_score_total > 0) or (g.home_score_total and g.home_score_total > 0)
+            is_final_or_live = g.is_final or g.game_status == 'in_progress' or has_score
+            
+            if is_final_or_live:
+                seen_game_ids.add(game_id or 'no_id')
+                scored_games.append(g)
+        
         if not scored_games:
             continue
         
@@ -435,8 +849,8 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                 else:
                     status = f"Q{period}"
                 output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
-        else:
-            output += f" {away_abbr} @ {home_abbr} TBD\n"
+            # Note: We should not reach here since we filtered out games without scores above
+            # But if we do, skip it (don't show TBD for games in scores list)
         
         output += "-" * 30 + "\n"
     
@@ -495,6 +909,36 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
 def root():
     """Root endpoint."""
     return {"message": "Sports Data Service API", "version": "1.0.0"}
+
+
+@app.get("/help", response_class=HTMLResponse)
+def help_html():
+    """HTML formatted help page."""
+    return get_help_html()
+
+
+@app.get("/api/help")
+def help_api():
+    """JSON formatted help."""
+    return get_help_json()
+
+
+@app.get("/api/v1/help")
+def help_api_v1():
+    """JSON formatted help."""
+    return get_help_json()
+
+
+@app.get("/curl/help", response_class=PlainTextResponse)
+def help_curl():
+    """Plain text formatted help."""
+    return get_help_text()
+
+
+@app.get("/curl/v1/help", response_class=PlainTextResponse)
+def help_curl_v1():
+    """Plain text formatted help."""
+    return get_help_text()
 
 
 @app.get("/api/v1/schedules/{date}")
@@ -825,11 +1269,21 @@ def get_schedule_curl_v1(
                             continue  # Skip duplicates
                         seen_game_ids.add(game_id)
                         
+                        # Get game_time from database if not in live data
+                        game_time = game_dict.get('game_time')
+                        if not game_time:
+                            with get_db_session() as db:
+                                db_game = db.query(Game).filter(
+                                    Game.game_id == game_id
+                                ).first()
+                                if db_game and db_game.game_time:
+                                    game_time = db_game.game_time
+                        
                         game_data = {
                             'league': league,
                             'game_id': game_id,
                             'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
-                            'game_time': None,
+                            'game_time': game_time,
                             'game_type': game_dict.get('game_type', 'regular'),
                             'home_team': game_dict.get('home_team', ''),
                             'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
@@ -848,7 +1302,7 @@ def get_schedule_curl_v1(
                         }
                         games.append(GameWrapper(game_data))
         
-        # Fallback to database if no live games or not today
+        # Fallback to database ONLY if no live games were found (not today or live API returned nothing)
         if not games:
             with get_db_session() as db:
                 db_games = db.query(Game).filter(
@@ -1075,6 +1529,19 @@ def get_standings_curl_v1(
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+# Catch-all routes for unknown /api/ and /curl/ paths - return help
+@app.get("/api/{path:path}")
+def api_catch_all(path: str):
+    """Catch-all for unknown /api/ paths - returns JSON help."""
+    return get_help_json()
+
+
+@app.get("/curl/{path:path}", response_class=PlainTextResponse)
+def curl_catch_all(path: str):
+    """Catch-all for unknown /curl/ paths - returns plain text help."""
+    return get_help_text()
 
 
 if __name__ == "__main__":
