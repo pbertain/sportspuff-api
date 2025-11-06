@@ -1717,6 +1717,95 @@ def health_check():
 
 
 # Catch-all routes for unknown /api/ and /curl/ paths - return help
+@app.get("/api/v1/debug/{sport}/{date}")
+def debug_schedule_data(
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, etc."),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+):
+    """Debug endpoint to see raw schedule data."""
+    try:
+        timezone = get_timezone(tz)
+        target_date = parse_date_param(date, timezone)
+        sport_lower = sport.lower()
+        league = SPORT_MAPPINGS.get(sport_lower)
+        
+        if not league:
+            raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
+        
+        # Get data from collector
+        collector = get_collector(league)
+        collector_data = []
+        if collector:
+            collector_data = collector.get_schedule(target_date)
+        
+        # Get data from live scores
+        live_data = []
+        if collector:
+            live_data = collector.get_live_scores(target_date)
+        
+        # Get data from database
+        db_data = []
+        with get_db_session() as db:
+            db_games = db.query(Game).filter(
+                Game.league == league,
+                Game.game_date == target_date
+            ).order_by(Game.game_time).all()
+            
+            db_data = [
+                {
+                    "game_id": game.game_id,
+                    "home_team": game.home_team,
+                    "home_team_abbrev": game.home_team_abbrev,
+                    "visitor_team": game.visitor_team,
+                    "visitor_team_abbrev": game.visitor_team_abbrev,
+                    "home_wins": game.home_wins,
+                    "home_losses": game.home_losses,
+                    "visitor_wins": game.visitor_wins,
+                    "visitor_losses": game.visitor_losses,
+                    "game_time": game.game_time.isoformat() if game.game_time else None,
+                    "game_status": game.game_status,
+                }
+                for game in db_games
+            ]
+        
+        # Get what _get_games_for_curl would return
+        curl_games = _get_games_for_curl(league, target_date, timezone)
+        curl_data = []
+        for game in curl_games:
+            curl_data.append({
+                "game_id": getattr(game, 'game_id', None),
+                "home_team": getattr(game, 'home_team', None),
+                "home_team_abbrev": getattr(game, 'home_team_abbrev', None),
+                "visitor_team": getattr(game, 'visitor_team', None),
+                "visitor_team_abbrev": getattr(game, 'visitor_team_abbrev', None),
+                "home_wins": getattr(game, 'home_wins', None),
+                "home_losses": getattr(game, 'home_losses', None),
+                "visitor_wins": getattr(game, 'visitor_wins', None),
+                "visitor_losses": getattr(game, 'visitor_losses', None),
+                "game_time": getattr(game, 'game_time', None),
+                "league": getattr(game, 'league', None),
+            })
+        
+        return {
+            "sport": sport,
+            "league": league,
+            "date": target_date.isoformat(),
+            "collector_schedule": collector_data[:3] if collector_data else [],  # First 3 games
+            "collector_live_scores": live_data[:3] if live_data else [],  # First 3 games
+            "database_games": db_data[:3] if db_data else [],  # First 3 games
+            "curl_format_games": curl_data[:3] if curl_data else [],  # First 3 games
+            "counts": {
+                "collector_schedule": len(collector_data),
+                "collector_live_scores": len(live_data),
+                "database_games": len(db_data),
+                "curl_format_games": len(curl_data),
+            }
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/api/{path:path}")
 def api_catch_all(path: str):
     """Catch-all for unknown /api/ paths - returns JSON help."""

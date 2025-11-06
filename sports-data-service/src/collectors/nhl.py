@@ -290,32 +290,89 @@ class NHLCollector(BaseCollector):
             Standardized game dictionary
         """
         try:
-            # This is a simplified parser for detailed game data
-            # You'll need to adjust based on the actual API response structure
-            teams = raw_game.get('teams', {})
-            home_team = teams.get('home', {})
-            away_team = teams.get('away', {})
+            # The detailed game API uses homeTeam/awayTeam at root level, similar to schedule API
+            home_team = raw_game.get('homeTeam', {})
+            away_team = raw_game.get('awayTeam', {})
+            
+            if not home_team or not away_team:
+                logger.warning(f"No team data found in detailed game {raw_game.get('id', 'unknown')}")
+                return None
+            
+            # Extract team names using same logic as parse_game_data
+            home_place_name = home_team.get('placeName', {})
+            if isinstance(home_place_name, dict):
+                home_place_name = home_place_name.get('default', '')
+            else:
+                home_place_name = str(home_place_name) if home_place_name else ''
+            
+            home_common_name = home_team.get('commonName', {})
+            if isinstance(home_common_name, dict):
+                home_common_name = home_common_name.get('default', '')
+            else:
+                home_common_name = str(home_common_name) if home_common_name else ''
+            
+            home_team_name = f"{home_place_name} {home_common_name}".strip()
+            
+            away_place_name = away_team.get('placeName', {})
+            if isinstance(away_place_name, dict):
+                away_place_name = away_place_name.get('default', '')
+            else:
+                away_place_name = str(away_place_name) if away_place_name else ''
+            
+            away_common_name = away_team.get('commonName', {})
+            if isinstance(away_common_name, dict):
+                away_common_name = away_common_name.get('default', '')
+            else:
+                away_common_name = str(away_common_name) if away_common_name else ''
+            
+            away_team_name = f"{away_place_name} {away_common_name}".strip()
+            
+            # Parse game date
+            game_date_str = raw_game.get('gameDate', '')
+            if not game_date_str:
+                game_date_str = datetime.now().strftime('%Y-%m-%d')
+            
+            # Parse game time
+            game_time = None
+            game_datetime = raw_game.get('startTimeUTC', '')
+            if game_datetime:
+                try:
+                    game_time = datetime.fromisoformat(game_datetime.replace('Z', '+00:00'))
+                except ValueError:
+                    pass
+            
+            # Detect game type
+            game_type = self._detect_nhl_game_type(raw_game)
+            
+            # Get scores from boxscore if available, otherwise 0
+            home_score = raw_game.get('homeTeam', {}).get('score', 0)
+            away_score = raw_game.get('awayTeam', {}).get('score', 0)
             
             return {
                 'league': 'NHL',
-                'game_id': str(raw_game.get('gamePk', '')),
-                'game_date': datetime.now().strftime('%Y-%m-%d'),
-                'game_type': 'regular',
-                'home_team': home_team.get('team', {}).get('name', ''),
-                'home_team_abbrev': home_team.get('team', {}).get('abbreviation', ''),
-                'home_team_id': str(home_team.get('team', {}).get('id', '')),
-                'home_score_total': home_team.get('score', 0),
-                'visitor_team': away_team.get('team', {}).get('name', ''),
-                'visitor_team_abbrev': away_team.get('team', {}).get('abbreviation', ''),
-                'visitor_team_id': str(away_team.get('team', {}).get('id', '')),
-                'visitor_score_total': away_team.get('score', 0),
-                'game_status': self.normalize_game_status(raw_game.get('status', {}).get('detailedState', 'scheduled')),
-                'current_period': raw_game.get('linescore', {}).get('currentPeriod', ''),
-                'time_remaining': raw_game.get('linescore', {}).get('currentPeriodTimeRemaining', ''),
-                'is_final': raw_game.get('status', {}).get('detailedState') == 'Final',
-                'is_overtime': raw_game.get('linescore', {}).get('currentPeriodOrdinal') == 'OT',
-                'home_period_scores': self._parse_period_scores(home_team.get('periods', [])),
-                'visitor_period_scores': self._parse_period_scores(away_team.get('periods', [])),
+                'game_id': str(raw_game.get('id', '')),
+                'game_date': game_date_str,
+                'game_time': game_time,
+                'game_type': game_type,
+                'home_team': home_team_name,
+                'home_team_abbrev': home_team.get('abbrev', ''),
+                'home_team_id': str(home_team.get('id', '')),
+                'home_score_total': home_score,
+                'visitor_team': away_team_name,
+                'visitor_team_abbrev': away_team.get('abbrev', ''),
+                'visitor_team_id': str(away_team.get('id', '')),
+                'visitor_score_total': away_score,
+                'game_status': self.normalize_game_status(raw_game.get('gameState', 'scheduled')),
+                'current_period': raw_game.get('clock', {}).get('timeRemaining', ''),
+                'time_remaining': raw_game.get('clock', {}).get('timeRemaining', ''),
+                'is_final': raw_game.get('gameState') == 'FINAL',
+                'is_overtime': False,  # Would need to check period descriptor if available
+                'home_wins': 0,  # Detailed API doesn't include wins/losses
+                'home_losses': 0,
+                'visitor_wins': 0,
+                'visitor_losses': 0,
+                'home_period_scores': {},
+                'visitor_period_scores': {},
             }
             
         except Exception as e:
