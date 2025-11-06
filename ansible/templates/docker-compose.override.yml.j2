@@ -7,5 +7,5 @@ services:
       DATABASE_URL: postgresql://sports_user:${POSTGRES_PASSWORD}@postgres:5432/sports_data
       DEPLOYMENT_ENV: {{ deployment_env }}
     ports:
-      - "127.0.0.1:{{ api_port }}:{{ api_port }}"
+      - "0.0.0.0:{{ api_port }}:{{ api_port }}"
 
