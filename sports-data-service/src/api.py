@@ -623,8 +623,20 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     visitor_losses = game.visitor_losses or 0
     home_wins = game.home_wins or 0
     home_losses = game.home_losses or 0
-    away_team = f"{game.visitor_team_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}]"
-    home_team = f"{game.home_team_abbrev} [{home_wins:3d}-{home_losses:2d}]"
+    
+    # Use abbreviation if available, otherwise fall back to full team name (first 3 chars)
+    visitor_abbrev = game.visitor_team_abbrev
+    if not visitor_abbrev or visitor_abbrev.strip() == '':
+        # Fallback to first 3 characters of team name, or full name if shorter
+        visitor_abbrev = (game.visitor_team or '???')[:3].upper()
+    
+    home_abbrev = game.home_team_abbrev
+    if not home_abbrev or home_abbrev.strip() == '':
+        # Fallback to first 3 characters of team name, or full name if shorter
+        home_abbrev = (game.home_team or '???')[:3].upper()
+    
+    away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}]"
+    home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}]"
     
     # Format time/status
     # Priority: Show scores if game is final or in progress, otherwise show scheduled time
@@ -1365,6 +1377,17 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         continue  # Skip duplicates
                     seen_game_ids.add(game_id)
                     
+                    # Skip games with empty team names (both abbreviation and full name)
+                    home_team = game_dict.get('home_team', '')
+                    home_abbrev = game_dict.get('home_team_abbrev', '')
+                    visitor_team = game_dict.get('visitor_team', '')
+                    visitor_abbrev = game_dict.get('visitor_team_abbrev', '')
+                    
+                    if (not home_team or home_team.strip() == '') and (not home_abbrev or home_abbrev.strip() == ''):
+                        continue
+                    if (not visitor_team or visitor_team.strip() == '') and (not visitor_abbrev or visitor_abbrev.strip() == ''):
+                        continue
+                    
                     # Get game_time from database if not in live data
                     game_time = game_dict.get('game_time')
                     if not game_time:
@@ -1408,6 +1431,12 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
             
             # Convert while session is still open
             for game in db_games:
+                # Skip games with empty team names (both abbreviation and full name)
+                if (not game.home_team or game.home_team.strip() == '') and (not game.home_team_abbrev or game.home_team_abbrev.strip() == ''):
+                    continue
+                if (not game.visitor_team or game.visitor_team.strip() == '') and (not game.visitor_team_abbrev or game.visitor_team_abbrev.strip() == ''):
+                    continue
+                
                 game_data = {
                     'league': game.league,
                     'game_id': game.game_id,
