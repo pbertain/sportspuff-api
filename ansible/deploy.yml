@@ -199,7 +199,16 @@
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
         cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose down --remove-orphans || true
+        # Force stop containers by name
+        sudo docker stop sports-data-postgres sports-data-service 2>/dev/null || true
+        # Force remove containers by name (handles stopped containers)
         sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
+        # Also find and remove any containers with sports-data in the name
+        for container_id in $(sudo docker ps -a --filter "name=sports-data" --format "{{ '{{' }}.ID{{ '}}' }}" 2>/dev/null || true); do
+          if [ -n "$container_id" ]; then
+            sudo docker rm -f "$container_id" 2>/dev/null || true
+          fi
+        done
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
