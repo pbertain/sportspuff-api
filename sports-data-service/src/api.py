@@ -63,8 +63,9 @@ def get_help_json() -> Dict[str, Any]:
                     "/curl/v1/schedules/{date} - All sports schedules",
                     "/curl/v1/schedule/{sport}/{date} - Single sport schedule"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
-                "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"]
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "all"],
+                "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
+                "note": "Use 'all' as sport to get schedules for all sports"
             },
             "scores": {
                 "description": "Get game scores",
@@ -76,8 +77,9 @@ def get_help_json() -> Dict[str, Any]:
                     "/curl/v1/scores/{date} - All sports scores",
                     "/curl/v1/scores/{sport}/{date} - Single sport scores"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
-                "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"]
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "all"],
+                "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
+                "note": "Use 'all' as sport to get scores for all sports"
             },
             "standings": {
                 "description": "Get team standings",
@@ -87,7 +89,7 @@ def get_help_json() -> Dict[str, Any]:
                 "curl": [
                     "/curl/v1/standings/{sport} - Single sport standings"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "all"],
                 "note": "Standings endpoint is currently under development"
             }
         },
@@ -154,7 +156,9 @@ Standings:
   Note: Standings endpoint is currently under development
 
 SPORTS:
-  nba, mlb, nfl, nhl, wnba
+  nba, mlb, nfl, nhl, wnba, all
+  
+  Use 'all' to get data for all sports combined
 
 DATE FORMATS:
   today, tomorrow, yesterday
@@ -338,7 +342,9 @@ def get_help_html() -> str:
             <span class="sport-list">nfl</span>
             <span class="sport-list">nhl</span>
             <span class="sport-list">wnba</span>
+            <span class="sport-list">all</span>
         </p>
+        <p><strong>Note:</strong> Use <code>all</code> as the sport parameter to get data for all sports combined.</p>
         
         <h2>Date Formats</h2>
         <p>The <code>{date}</code> parameter accepts:</p>
@@ -651,13 +657,63 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     else:
         return f" {away_team}@{home_team} {time_status}"
 
-def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None) -> str:
-    """Format games in curl-style schedule format."""
-    if not games:
-        return "No games scheduled"
+def _get_season_type_for_sport(sport: str, target_date: date) -> str:
+    """Get season type for a sport from database when there are no games for the date."""
+    sport_to_league = {
+        'mlb': 'MLB',
+        'wnba': 'WNBA',
+        'nba': 'NBA',
+        'nfl': 'NFL',
+        'nhl': 'NHL'
+    }
+    league = sport_to_league.get(sport)
+    if not league:
+        return "Off Season"
     
+    # Try to find the most recent game for this sport to determine season type
+    try:
+        with get_db_session() as db:
+            # Look for games within a reasonable range (30 days before/after)
+            start_date = target_date - timedelta(days=30)
+            end_date = target_date + timedelta(days=30)
+            
+            recent_game = db.query(Game).filter(
+                Game.league == league,
+                Game.game_date >= start_date,
+                Game.game_date <= end_date
+            ).order_by(Game.game_date.desc()).first()
+            
+            if recent_game:
+                game_type_map = {
+                    'preseason': 'Preseason',
+                    'regular': 'Regular Season',
+                    'playoffs': 'Playoffs',
+                    'allstar': 'All-Star',
+                    'nba_cup': 'Emirates NBA Cup',
+                    'postseason': 'Playoffs'
+                }
+                return game_type_map.get(recent_game.game_type.lower(), recent_game.game_type.title().replace('_', ' '))
+    except Exception:
+        pass
+    
+    # Default fallback
+    return "Off Season"
+
+def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None, show_all_sports: bool = False) -> str:
+    """Format games in curl-style schedule format.
+    
+    Args:
+        games: List of games to format
+        target_date: Target date for the schedule
+        tz: Timezone for display
+        show_all_sports: If True, show all sports even if they have no games
+    """
     if tz is None:
         tz = pytz.timezone('US/Pacific')  # Default to Pacific
+    
+    # If no games and not showing all sports, return early
+    if not games and not show_all_sports:
+        return "No games scheduled"
     
     # Group by sport
     by_sport: Dict[str, List[Game]] = {}
@@ -677,33 +733,49 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
     
     # Sort sports by custom order
     sport_order = ['mlb', 'wnba', 'nba', 'nfl', 'nhl']
+    sport_to_league = {
+        'mlb': 'MLB',
+        'wnba': 'WNBA',
+        'nba': 'NBA',
+        'nfl': 'NFL',
+        'nhl': 'NHL'
+    }
     
     for sport in sport_order:
-        if sport not in by_sport:
+        # If show_all_sports is False, skip sports with no games
+        if not show_all_sports and sport not in by_sport:
             continue
         
-        sport_games = by_sport[sport]
-        if not sport_games:
-            continue
+        sport_games = by_sport.get(sport, [])
         
-        # Determine season info from first game
-        first_game = sport_games[0]
-        # Map game_type to display format
-        game_type_map = {
-            'preseason': 'Preseason',
-            'regular': 'Regular Season',
-            'playoffs': 'Playoffs',
-            'allstar': 'All-Star',
-            'nba_cup': 'Emirates NBA Cup',
-            'postseason': 'Playoffs'
-        }
-        season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
+        # Get season info - either from games or from database
+        if sport_games:
+            # Determine season info from first game
+            first_game = sport_games[0]
+            # Map game_type to display format
+            game_type_map = {
+                'preseason': 'Preseason',
+                'regular': 'Regular Season',
+                'playoffs': 'Playoffs',
+                'allstar': 'All-Star',
+                'nba_cup': 'Emirates NBA Cup',
+                'postseason': 'Playoffs'
+            }
+            season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
+            league_name = first_game.league
+        else:
+            # No games for this sport - try to get season info from database
+            league_name = sport_to_league.get(sport, sport.upper())
+            season_type = _get_season_type_for_sport(sport, target_date)
         
-        output += f"{first_game.league} - {season_type}:\n"
+        output += f"{league_name} - {season_type}:\n"
         
-        for game in sport_games:
-            output += format_game_for_curl(game, sport)
-            output += "\n"
+        if sport_games:
+            for game in sport_games:
+                output += format_game_for_curl(game, sport)
+                output += "\n"
+        else:
+            output += " No games scheduled\n"
         
         output += "-" * 30 + "\n"
     
@@ -761,11 +833,15 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
     
     return output
 
-def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None) -> str:
-    """Format games in curl-style scores format."""
-    if not games:
-        return "No scores available"
+def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None, show_all_sports: bool = False) -> str:
+    """Format games in curl-style scores format.
     
+    Args:
+        games: List of games to format
+        target_date: Target date for the scores
+        tz: Timezone for display
+        show_all_sports: If True, show all sports even if they have no scores
+    """
     if tz is None:
         tz = pytz.timezone('US/Pacific')  # Default to Pacific
     
@@ -787,14 +863,20 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
     
     # Sort sports by custom order
     sport_order = ['mlb', 'wnba', 'nba', 'nfl', 'nhl']
+    sport_to_league = {
+        'mlb': 'MLB',
+        'wnba': 'WNBA',
+        'nba': 'NBA',
+        'nfl': 'NFL',
+        'nhl': 'NHL'
+    }
     
     for sport in sport_order:
-        if sport not in by_sport:
+        # If show_all_sports is False, skip sports with no games
+        if not show_all_sports and sport not in by_sport:
             continue
         
-        sport_games = by_sport[sport]
-        if not sport_games:
-            continue
+        sport_games = by_sport.get(sport, [])
         
         # Show games with scores (final, in progress, or scheduled with scores > 0)
         # Also deduplicate by game_id to avoid showing the same game twice
@@ -813,44 +895,49 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                 seen_game_ids.add(game_id or 'no_id')
                 scored_games.append(g)
         
-        if not scored_games:
-            continue
+        # Get season info - either from games or from database
+        if scored_games:
+            # Determine season info from first game
+            first_game = scored_games[0]
+            # Map game_type to display format
+            game_type_map = {
+                'preseason': 'Preseason',
+                'regular': 'Regular Season',
+                'playoffs': 'Playoffs',
+                'allstar': 'All-Star',
+                'nba_cup': 'Emirates NBA Cup',
+                'postseason': 'Playoffs'
+            }
+            season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
+            league_name = first_game.league
+        else:
+            # No scores for this sport - try to get season info from database
+            league_name = sport_to_league.get(sport, sport.upper())
+            season_type = _get_season_type_for_sport(sport, target_date)
         
-        # Determine season info from first game
-        first_game = scored_games[0]
-        # Map game_type to display format
-        game_type_map = {
-            'preseason': 'Preseason',
-            'regular': 'Regular Season',
-            'playoffs': 'Playoffs',
-            'allstar': 'All-Star',
-            'nba_cup': 'Emirates NBA Cup',
-            'postseason': 'Playoffs'
-        }
-        season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
+        output += f"{league_name} - {season_type}:\n"
         
-        output += f"{first_game.league} - {season_type}:\n"
-        
-        for game in scored_games:
-            away_abbr = game.visitor_team_abbrev
-            home_abbr = game.home_team_abbrev
-            
-            away_score = game.visitor_score_total or 0
-            home_score = game.home_score_total or 0
-            
-            if game.is_final:
-                status = "F"
-                output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
-            elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
-                period = game.current_period or '?'
-                time_left = game.time_remaining or ''
-                if time_left and time_left.strip():
-                    status = f"Q{period} {time_left}"
-                else:
-                    status = f"Q{period}"
-                output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
-            # Note: We should not reach here since we filtered out games without scores above
-            # But if we do, skip it (don't show TBD for games in scores list)
+        if scored_games:
+            for game in scored_games:
+                away_abbr = game.visitor_team_abbrev
+                home_abbr = game.home_team_abbrev
+                
+                away_score = game.visitor_score_total or 0
+                home_score = game.home_score_total or 0
+                
+                if game.is_final:
+                    status = "F"
+                    output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+                elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
+                    period = game.current_period or '?'
+                    time_left = game.time_remaining or ''
+                    if time_left and time_left.strip():
+                        status = f"Q{period} {time_left}"
+                    else:
+                        status = f"Q{period}"
+                    output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+        else:
+            output += " No games scheduled\n"
         
         output += "-" * 30 + "\n"
     
@@ -1130,7 +1217,7 @@ def get_scores_all_sports_curl_v1(
 
 @app.get("/api/v1/schedule/{sport}/{date}")
 def get_schedule_api_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
     tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
 ):
@@ -1138,85 +1225,34 @@ def get_schedule_api_v1(
     try:
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
-        league = SPORT_MAPPINGS.get(sport.lower())
+        sport_lower = sport.lower()
         
+        # Handle 'all' sport - aggregate from all sports
+        if sport_lower == 'all':
+            all_games = []
+            for sport_key in SPORT_MAPPINGS.keys():
+                league = SPORT_MAPPINGS[sport_key]
+                games_list = _get_schedule_for_league(league, target_date, timezone)
+                # Add sport identifier to each game
+                for game in games_list:
+                    game['sport'] = sport_key
+                all_games.extend(games_list)
+            
+            # Sort by game_time
+            all_games.sort(key=lambda x: x.get('game_time') or '')
+            
+            return {
+                "sport": "all",
+                "date": target_date.isoformat(),
+                "games": all_games
+            }
+        
+        # Single sport logic
+        league = SPORT_MAPPINGS.get(sport_lower)
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
-        # Get today's date in the timezone
-        now_tz = datetime.now(timezone)
-        today = now_tz.date()
-        games_list = []
-        
-        # For today's games, try to get live data first
-        if target_date == today:
-            collector = get_collector(league)
-            if collector:
-                live_games = collector.get_live_scores(target_date)
-                if live_games:
-                    # Use live data - convert to format expected by frontend
-                    seen_game_ids = set()
-                    for game_dict in live_games:
-                        game_id = game_dict.get('game_id', '')
-                        if game_id and game_id in seen_game_ids:
-                            continue
-                        seen_game_ids.add(game_id)
-                        
-                        # Get game_time from live data if available
-                        game_time = game_dict.get('game_time')
-                        game_date_str = game_dict.get('game_date', '')
-                        
-                        # If game_time is not in live data, try to get it from database
-                        if not game_time:
-                            with get_db_session() as db:
-                                db_game = db.query(Game).filter(
-                                    Game.game_id == game_id
-                                ).first()
-                                if db_game and db_game.game_time:
-                                    game_time = db_game.game_time
-                        
-                        games_list.append({
-                            "game_id": game_id,
-                            "game_date": game_date_str if game_date_str else target_date.isoformat(),
-                            "game_time": game_time.isoformat() if game_time else None,
-                            "home_team": game_dict.get('home_team', ''),
-                            "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
-                            "visitor_team": game_dict.get('visitor_team', ''),
-                            "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
-                            "game_status": game_dict.get('game_status', 'scheduled'),
-                            "game_type": game_dict.get('game_type', 'regular'),
-                            "home_wins": game_dict.get('home_wins', 0),
-                            "home_losses": game_dict.get('home_losses', 0),
-                            "visitor_wins": game_dict.get('visitor_wins', 0),
-                            "visitor_losses": game_dict.get('visitor_losses', 0),
-                        })
-        
-        # Fallback to database if no live games or not today
-        if not games_list:
-            with get_db_session() as db:
-                games = db.query(Game).filter(
-                    Game.league == league,
-                    Game.game_date == target_date
-                ).order_by(Game.game_time).all()
-                
-                games_list = [
-                    {
-                        "game_id": game.game_id,
-                        "game_date": game.game_date.isoformat(),
-                        "game_time": game.game_time.isoformat() if game.game_time else None,
-                        "home_team": game.home_team,
-                        "home_team_abbrev": game.home_team_abbrev,
-                        "visitor_team": game.visitor_team,
-                        "visitor_team_abbrev": game.visitor_team_abbrev,
-                        "game_status": game.game_status,
-                        "game_type": game.game_type,
-                        "home_wins": game.home_wins or 0,
-                        "home_losses": game.home_losses or 0,
-                        "visitor_wins": game.visitor_wins or 0,
-                        "visitor_losses": game.visitor_losses or 0,
-                    }
-                    for game in games
-                ]
+        games_list = _get_schedule_for_league(league, target_date, timezone)
         
         return {
             "sport": sport,
@@ -1226,10 +1262,181 @@ def get_schedule_api_v1(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.BaseTzInfo) -> List[Dict[str, Any]]:
+    """Helper function to get schedule for a specific league."""
+    now_tz = datetime.now(timezone)
+    today = now_tz.date()
+    games_list = []
+    
+    # For today's games, try to get live data first
+    if target_date == today:
+        collector = get_collector(league)
+        if collector:
+            live_games = collector.get_live_scores(target_date)
+            if live_games:
+                # Use live data - convert to format expected by frontend
+                seen_game_ids = set()
+                for game_dict in live_games:
+                    game_id = game_dict.get('game_id', '')
+                    if game_id and game_id in seen_game_ids:
+                        continue
+                    seen_game_ids.add(game_id)
+                    
+                    # Get game_time from live data if available
+                    game_time = game_dict.get('game_time')
+                    game_date_str = game_dict.get('game_date', '')
+                    
+                    # If game_time is not in live data, try to get it from database
+                    if not game_time:
+                        with get_db_session() as db:
+                            db_game = db.query(Game).filter(
+                                Game.game_id == game_id
+                            ).first()
+                            if db_game and db_game.game_time:
+                                game_time = db_game.game_time
+                    
+                    games_list.append({
+                        "game_id": game_id,
+                        "game_date": game_date_str if game_date_str else target_date.isoformat(),
+                        "game_time": game_time.isoformat() if game_time else None,
+                        "home_team": game_dict.get('home_team', ''),
+                        "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
+                        "visitor_team": game_dict.get('visitor_team', ''),
+                        "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
+                        "game_status": game_dict.get('game_status', 'scheduled'),
+                        "game_type": game_dict.get('game_type', 'regular'),
+                        "home_wins": game_dict.get('home_wins', 0),
+                        "home_losses": game_dict.get('home_losses', 0),
+                        "visitor_wins": game_dict.get('visitor_wins', 0),
+                        "visitor_losses": game_dict.get('visitor_losses', 0),
+                    })
+    
+    # Fallback to database if no live games or not today
+    if not games_list:
+        with get_db_session() as db:
+            games = db.query(Game).filter(
+                Game.league == league,
+                Game.game_date == target_date
+            ).order_by(Game.game_time).all()
+            
+            games_list = [
+                {
+                    "game_id": game.game_id,
+                    "game_date": game.game_date.isoformat(),
+                    "game_time": game.game_time.isoformat() if game.game_time else None,
+                    "home_team": game.home_team,
+                    "home_team_abbrev": game.home_team_abbrev,
+                    "visitor_team": game.visitor_team,
+                    "visitor_team_abbrev": game.visitor_team_abbrev,
+                    "game_status": game.game_status,
+                    "game_type": game.game_type,
+                    "home_wins": game.home_wins or 0,
+                    "home_losses": game.home_losses or 0,
+                    "visitor_wins": game.visitor_wins or 0,
+                    "visitor_losses": game.visitor_losses or 0,
+                }
+                for game in games
+            ]
+    
+    return games_list
+
+def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInfo) -> List[Any]:
+    """Helper function to get games for curl formatting (returns GameWrapper objects)."""
+    now_tz = datetime.now(timezone)
+    today = now_tz.date()
+    games = []
+    
+    class GameWrapper:
+        def __init__(self, data):
+            for k, v in data.items():
+                setattr(self, k, v)
+    
+    if target_date == today:
+        # Try to get live data first for today
+        collector = get_collector(league)
+        if collector:
+            live_games = collector.get_live_scores(target_date)
+            if live_games:
+                # Use a set to track game_ids and avoid duplicates
+                seen_game_ids = set()
+                for game_dict in live_games:
+                    game_id = game_dict.get('game_id', '')
+                    if game_id and game_id in seen_game_ids:
+                        continue  # Skip duplicates
+                    seen_game_ids.add(game_id)
+                    
+                    # Get game_time from database if not in live data
+                    game_time = game_dict.get('game_time')
+                    if not game_time:
+                        with get_db_session() as db:
+                            db_game = db.query(Game).filter(
+                                Game.game_id == game_id
+                            ).first()
+                            if db_game and db_game.game_time:
+                                game_time = db_game.game_time
+                    
+                    game_data = {
+                        'league': league,
+                        'game_id': game_id,
+                        'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
+                        'game_time': game_time,
+                        'game_type': game_dict.get('game_type', 'regular'),
+                        'home_team': game_dict.get('home_team', ''),
+                        'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
+                        'visitor_team': game_dict.get('visitor_team', ''),
+                        'visitor_team_abbrev': game_dict.get('visitor_team_abbrev', ''),
+                        'home_score_total': game_dict.get('home_score_total', 0),
+                        'visitor_score_total': game_dict.get('visitor_score_total', 0),
+                        'game_status': game_dict.get('game_status', 'scheduled'),
+                        'current_period': game_dict.get('current_period', ''),
+                        'time_remaining': game_dict.get('time_remaining', ''),
+                        'is_final': game_dict.get('is_final', False),
+                        'home_wins': game_dict.get('home_wins', 0),
+                        'home_losses': game_dict.get('home_losses', 0),
+                        'visitor_wins': game_dict.get('visitor_wins', 0),
+                        'visitor_losses': game_dict.get('visitor_losses', 0)
+                    }
+                    games.append(GameWrapper(game_data))
+    
+    # Fallback to database ONLY if no live games were found (not today or live API returned nothing)
+    if not games:
+        with get_db_session() as db:
+            db_games = db.query(Game).filter(
+                Game.league == league,
+                Game.game_date == target_date
+            ).order_by(Game.game_time).all()
+            
+            # Convert while session is still open
+            for game in db_games:
+                game_data = {
+                    'league': game.league,
+                    'game_id': game.game_id,
+                    'game_date': game.game_date,
+                    'game_time': game.game_time,
+                    'game_type': game.game_type,
+                    'home_team': game.home_team,
+                    'home_team_abbrev': game.home_team_abbrev,
+                    'visitor_team': game.visitor_team,
+                    'visitor_team_abbrev': game.visitor_team_abbrev,
+                    'home_score_total': game.home_score_total,
+                    'visitor_score_total': game.visitor_score_total,
+                    'game_status': game.game_status,
+                    'current_period': game.current_period,
+                    'time_remaining': game.time_remaining,
+                    'is_final': game.is_final,
+                    'home_wins': game.home_wins,
+                    'home_losses': game.home_losses,
+                    'visitor_wins': game.visitor_wins,
+                    'visitor_losses': game.visitor_losses,
+                }
+                games.append(GameWrapper(game_data))
+    
+    return games
+
 
 @app.get("/curl/v1/schedule/{sport}/{date}", response_class=PlainTextResponse)
 def get_schedule_curl_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
     tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific, akst/alaska, hst/hawaii (default: Pacific)"),
 ):
@@ -1238,108 +1445,24 @@ def get_schedule_curl_v1(
         timezone = get_timezone(tz)
         # Parse date using the timezone (so "today" is in the correct timezone)
         target_date = parse_date_param(date, timezone)
-        league = SPORT_MAPPINGS.get(sport.lower())
+        sport_lower = sport.lower()
         
+        # Handle 'all' sport - aggregate from all sports
+        if sport_lower == 'all':
+            all_games = []
+            for sport_key in SPORT_MAPPINGS.keys():
+                league = SPORT_MAPPINGS[sport_key]
+                games = _get_games_for_curl(league, target_date, timezone)
+                all_games.extend(games)
+            
+            return format_schedule_curl(all_games, target_date, timezone, show_all_sports=True)
+        
+        # Single sport logic
+        league = SPORT_MAPPINGS.get(sport_lower)
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
-        # Get today's date in the timezone
-        now_tz = datetime.now(timezone)
-        today = now_tz.date()
-        games = []
-        
-        if target_date == today:
-            # Try to get live data first for today
-            collector = get_collector(league)
-            if collector:
-                live_games = collector.get_live_scores(target_date)
-                if live_games:
-                    # Convert live games to Game-like objects for formatting
-                    # Use a simple class wrapper instead of SQLAlchemy model
-                    class GameWrapper:
-                        def __init__(self, data):
-                            for k, v in data.items():
-                                setattr(self, k, v)
-                    
-                    # Use a set to track game_ids and avoid duplicates
-                    seen_game_ids = set()
-                    for game_dict in live_games:
-                        game_id = game_dict.get('game_id', '')
-                        if game_id and game_id in seen_game_ids:
-                            continue  # Skip duplicates
-                        seen_game_ids.add(game_id)
-                        
-                        # Get game_time from database if not in live data
-                        game_time = game_dict.get('game_time')
-                        if not game_time:
-                            with get_db_session() as db:
-                                db_game = db.query(Game).filter(
-                                    Game.game_id == game_id
-                                ).first()
-                                if db_game and db_game.game_time:
-                                    game_time = db_game.game_time
-                        
-                        game_data = {
-                            'league': league,
-                            'game_id': game_id,
-                            'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
-                            'game_time': game_time,
-                            'game_type': game_dict.get('game_type', 'regular'),
-                            'home_team': game_dict.get('home_team', ''),
-                            'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
-                            'visitor_team': game_dict.get('visitor_team', ''),
-                            'visitor_team_abbrev': game_dict.get('visitor_team_abbrev', ''),
-                            'home_score_total': game_dict.get('home_score_total', 0),
-                            'visitor_score_total': game_dict.get('visitor_score_total', 0),
-                            'game_status': game_dict.get('game_status', 'scheduled'),
-                            'current_period': game_dict.get('current_period', ''),
-                            'time_remaining': game_dict.get('time_remaining', ''),
-                            'is_final': game_dict.get('is_final', False),
-                            'home_wins': game_dict.get('home_wins', 0),
-                            'home_losses': game_dict.get('home_losses', 0),
-                            'visitor_wins': game_dict.get('visitor_wins', 0),
-                            'visitor_losses': game_dict.get('visitor_losses', 0)
-                        }
-                        games.append(GameWrapper(game_data))
-        
-        # Fallback to database ONLY if no live games were found (not today or live API returned nothing)
-        if not games:
-            with get_db_session() as db:
-                db_games = db.query(Game).filter(
-                    Game.league == league,
-                    Game.game_date == target_date
-                ).order_by(Game.game_time).all()
-                
-                # Convert to GameWrapper to avoid session issues
-                class GameWrapper:
-                    def __init__(self, data):
-                        for k, v in data.items():
-                            setattr(self, k, v)
-                
-                # Convert while session is still open
-                for game in db_games:
-                    game_data = {
-                        'league': game.league,
-                        'game_id': game.game_id,
-                        'game_date': game.game_date,
-                        'game_time': game.game_time,
-                        'game_type': game.game_type,
-                        'home_team': game.home_team,
-                        'home_team_abbrev': game.home_team_abbrev,
-                        'visitor_team': game.visitor_team,
-                        'visitor_team_abbrev': game.visitor_team_abbrev,
-                        'home_score_total': game.home_score_total,
-                        'visitor_score_total': game.visitor_score_total,
-                        'game_status': game.game_status,
-                        'current_period': game.current_period,
-                        'time_remaining': game.time_remaining,
-                        'is_final': game.is_final,
-                        'home_wins': game.home_wins,
-                        'home_losses': game.home_losses,
-                        'visitor_wins': game.visitor_wins,
-                        'visitor_losses': game.visitor_losses,
-                    }
-                    games.append(GameWrapper(game_data))
+        games = _get_games_for_curl(league, target_date, timezone)
         
         # Deduplicate games by game_id before formatting
         seen_game_ids = set()
@@ -1362,7 +1485,7 @@ def get_schedule_curl_v1(
 
 @app.get("/api/v1/scores/{sport}/{date}")
 def get_scores_api_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
     tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
 ):
@@ -1370,65 +1493,86 @@ def get_scores_api_v1(
     try:
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
-        league = SPORT_MAPPINGS.get(sport.lower())
+        sport_lower = sport.lower()
         
+        # Handle 'all' sport - aggregate from all sports
+        if sport_lower == 'all':
+            all_scores = []
+            for sport_key in SPORT_MAPPINGS.keys():
+                league = SPORT_MAPPINGS[sport_key]
+                scores_list = _get_scores_for_league(league, target_date)
+                # Add sport identifier to each score
+                for score in scores_list:
+                    score['sport'] = sport_key
+                all_scores.extend(scores_list)
+            
+            return {
+                "sport": "all",
+                "date": target_date.isoformat(),
+                "scores": all_scores
+            }
+        
+        # Single sport logic
+        league = SPORT_MAPPINGS.get(sport_lower)
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
-        # Get live scores from collector (includes in-progress and final games)
-        collector = get_collector(league)
-        if collector:
-            live_games = collector.get_live_scores(target_date)
-            if live_games:
-                return {
-                    "sport": sport,
-                    "date": target_date.isoformat(),
-                    "scores": [
-                        {
-                            "game_id": game.get('game_id', ''),
-                            "home_team": game.get('home_team', ''),
-                            "home_score": game.get('home_score_total', 0),
-                            "visitor_team": game.get('visitor_team', ''),
-                            "visitor_score": game.get('visitor_score_total', 0),
-                            "is_final": game.get('is_final', False),
-                            "game_status": game.get('game_status', 'scheduled'),
-                            "current_period": game.get('current_period', ''),
-                            "time_remaining": game.get('time_remaining', '')
-                        }
-                        for game in live_games
-                    ]
-                }
+        scores_list = _get_scores_for_league(league, target_date)
         
-        # Fallback to database for final games only
-        with get_db_session() as db:
-            games = db.query(Game).filter(
-                Game.league == league,
-                Game.game_date == target_date,
-                Game.is_final == True
-            ).all()
-            
-            return {
-                "sport": sport,
-                "date": target_date.isoformat(),
-                "scores": [
-                    {
-                        "game_id": game.game_id,
-                        "home_team": game.home_team,
-                        "home_score": game.home_score_total,
-                        "visitor_team": game.visitor_team,
-                        "visitor_score": game.visitor_score_total,
-                        "is_final": game.is_final
-                    }
-                    for game in games
-                ]
-            }
+        return {
+            "sport": sport,
+            "date": target_date.isoformat(),
+            "scores": scores_list
+        }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any]]:
+    """Helper function to get scores for a specific league."""
+    # Get live scores from collector (includes in-progress and final games)
+    collector = get_collector(league)
+    if collector:
+        live_games = collector.get_live_scores(target_date)
+        if live_games:
+            return [
+                {
+                    "game_id": game.get('game_id', ''),
+                    "home_team": game.get('home_team', ''),
+                    "home_score": game.get('home_score_total', 0),
+                    "visitor_team": game.get('visitor_team', ''),
+                    "visitor_score": game.get('visitor_score_total', 0),
+                    "is_final": game.get('is_final', False),
+                    "game_status": game.get('game_status', 'scheduled'),
+                    "current_period": game.get('current_period', ''),
+                    "time_remaining": game.get('time_remaining', '')
+                }
+                for game in live_games
+            ]
+    
+    # Fallback to database for final games only
+    with get_db_session() as db:
+        games = db.query(Game).filter(
+            Game.league == league,
+            Game.game_date == target_date,
+            Game.is_final == True
+        ).all()
+        
+        return [
+            {
+                "game_id": game.game_id,
+                "home_team": game.home_team,
+                "home_score": game.home_score_total,
+                "visitor_team": game.visitor_team,
+                "visitor_score": game.visitor_score_total,
+                "is_final": game.is_final
+            }
+            for game in games
+        ]
 
 
 @app.get("/curl/v1/scores/{sport}/{date}", response_class=PlainTextResponse)
 def get_scores_curl_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
     tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific (default: Pacific)"),
 ):
@@ -1437,8 +1581,20 @@ def get_scores_curl_v1(
         timezone = get_timezone(tz)
         # Parse date using the timezone (so "today" is in the correct timezone)
         target_date = parse_date_param(date, timezone)
-        league = SPORT_MAPPINGS.get(sport.lower())
+        sport_lower = sport.lower()
         
+        # Handle 'all' sport - aggregate from all sports
+        if sport_lower == 'all':
+            all_games = []
+            for sport_key in SPORT_MAPPINGS.keys():
+                league = SPORT_MAPPINGS[sport_key]
+                games = _get_games_for_curl(league, target_date, timezone)
+                all_games.extend(games)
+            
+            return format_scores_curl(all_games, target_date, timezone, show_all_sports=True)
+        
+        # Single sport logic
+        league = SPORT_MAPPINGS.get(sport_lower)
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
@@ -1509,20 +1665,49 @@ def get_scores_curl_v1(
 
 @app.get("/api/v1/standings/{sport}")
 def get_standings_api_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
 ):
     """Get standings in JSON format."""
+    sport_lower = sport.lower()
+    
+    # Handle 'all' sport
+    if sport_lower == 'all':
+        # TODO: Implement standings endpoint for all sports
+        return {
+            "sport": "all",
+            "message": "Standings endpoint - TODO",
+            "note": "When implemented, this will return standings for all sports"
+        }
+    
+    # Validate single sport
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
+    
     # TODO: Implement standings endpoint
-    return {"message": "Standings endpoint - TODO"}
+    return {
+        "sport": sport,
+        "message": "Standings endpoint - TODO"
+    }
 
 
 @app.get("/curl/v1/standings/{sport}", response_class=PlainTextResponse)
 def get_standings_curl_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
 ):
     """Get standings in curl-style text format."""
+    sport_lower = sport.lower()
+    
+    # Handle 'all' sport
+    if sport_lower == 'all':
+        # TODO: Implement standings endpoint for all sports
+        return "Standings endpoint - TODO\nWhen implemented, this will return standings for all sports\n"
+    
+    # Validate single sport
+    if sport_lower not in SPORT_MAPPINGS:
+        raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
+    
     # TODO: Implement standings endpoint
-    return "Standings endpoint - TODO\n"
+    return f"Standings endpoint - TODO\nSport: {sport}\n"
 
 
 @app.get("/health")
