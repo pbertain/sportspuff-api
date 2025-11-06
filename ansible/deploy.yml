@@ -199,7 +199,6 @@
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
         cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose down --remove-orphans || true
-        # Force remove containers by name in case docker-compose down didn't catch them
         sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
