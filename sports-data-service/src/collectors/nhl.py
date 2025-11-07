@@ -137,9 +137,11 @@ class NHLCollector(BaseCollector):
                     for day in data['gameWeek']:
                         if 'games' in day:
                             for game in day['games']:
-                                # Get detailed game data for live scores
                                 game_id = game.get('id')
-                                if game_id:
+                                # Only fetch detailed data for games that are in progress or final
+                                # This reduces API calls significantly
+                                game_state = game.get('gameState', '').upper()
+                                if game_id and game_state in ('LIVE', 'FINAL', 'CRITICAL'):
                                     try:
                                         detailed_game = self._get_game_details(game_id)
                                         parsed_game = self.parse_live_game_data(detailed_game)
@@ -152,6 +154,7 @@ class NHLCollector(BaseCollector):
                                         if parsed_game:
                                             games.append(parsed_game)
                                 else:
+                                    # For scheduled games, use basic game data (no extra API call needed)
                                     parsed_game = self.parse_game_data(game)
                                     if parsed_game:
                                         games.append(parsed_game)
@@ -167,11 +170,17 @@ class NHLCollector(BaseCollector):
     
     def _get_game_details(self, game_id: str) -> Dict[str, Any]:
         """Get detailed game data from NHL API."""
+        # Check rate limit before each detailed game request
+        self._check_rate_limit()
+        
         url = f"{self.base_url}/v1/gamecenter/{game_id}/boxscore"
         response = requests.get(url, timeout=self.api_timeout)
         
         if response.status_code == 200:
             return response.json()
+        elif response.status_code == 429:
+            logger.warning(f"Rate limited when fetching game {game_id} details")
+            raise Exception(f"Rate limited: {response.status_code}")
         else:
             raise Exception(f"Failed to get game details: {response.status_code}")
     
