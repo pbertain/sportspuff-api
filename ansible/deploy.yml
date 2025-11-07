@@ -236,8 +236,8 @@
       shell: |
         export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
         cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" ps
-        # Check if sports-service container is running (with environment-specific name)
-        container_name="sports-data-{{ deployment_env }}-sports-service-1"
+        # Check if sports-service container is running (with environment-specific name from override)
+        container_name="sports-data-{{ deployment_env }}-service"
         if ! sudo docker ps --filter "name=$container_name" --format "{{ '{{' }}.Status{{ '}}' }}" | grep -q "Up"; then
           echo "ERROR: $container_name container is not running!"
           echo "Container status:"
