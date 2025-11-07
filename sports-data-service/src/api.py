@@ -1372,6 +1372,11 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                         "home_losses": game_dict.get('home_losses', 0),
                         "visitor_wins": game_dict.get('visitor_wins', 0),
                         "visitor_losses": game_dict.get('visitor_losses', 0),
+                        "current_period": game_dict.get('current_period', ''),
+                        "time_remaining": game_dict.get('time_remaining', ''),
+                        "home_score_total": game_dict.get('home_score_total', 0),
+                        "visitor_score_total": game_dict.get('visitor_score_total', 0),
+                        "is_final": game_dict.get('is_final', False),
                     })
     
     # For any date (today or past), try get_schedule from collector
@@ -1402,6 +1407,11 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                     "home_losses": game_dict.get('home_losses', 0),
                     "visitor_wins": game_dict.get('visitor_wins', 0),
                     "visitor_losses": game_dict.get('visitor_losses', 0),
+                    "current_period": game_dict.get('current_period', ''),
+                    "time_remaining": game_dict.get('time_remaining', ''),
+                    "home_score_total": game_dict.get('home_score_total', 0),
+                    "visitor_score_total": game_dict.get('visitor_score_total', 0),
+                    "is_final": game_dict.get('is_final', False),
                 })
     
     # Fallback to database if no collector games found
@@ -1479,6 +1489,10 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                             if db_game and db_game.game_time:
                                 game_time = db_game.game_time
                     
+                    # Ensure time_remaining is included from live data
+                    time_remaining = game_dict.get('time_remaining', '')
+                    current_period = game_dict.get('current_period', '')
+                    
                     game_data = {
                         'league': league,
                         'game_id': game_id,
@@ -1492,8 +1506,8 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'home_score_total': game_dict.get('home_score_total', 0),
                         'visitor_score_total': game_dict.get('visitor_score_total', 0),
                         'game_status': game_dict.get('game_status', 'scheduled'),
-                        'current_period': game_dict.get('current_period', ''),
-                        'time_remaining': game_dict.get('time_remaining', ''),
+                        'current_period': current_period,
+                        'time_remaining': time_remaining,
                         'is_final': game_dict.get('is_final', False),
                         'home_wins': game_dict.get('home_wins', 0),
                         'home_losses': game_dict.get('home_losses', 0),

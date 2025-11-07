@@ -63,7 +63,18 @@ class NHLCollector(BaseCollector):
                                 game_id = str(game.get('id', ''))
                                 if game_id and game_id not in seen_game_ids:
                                     seen_game_ids.add(game_id)
-                                    parsed_game = self.parse_game_data(game)
+                                    # For in-progress games, fetch detailed data to get clock info
+                                    game_state = game.get('gameState', '').upper()
+                                    if game_state in ('LIVE', 'CRITICAL'):
+                                        try:
+                                            detailed_game = self._get_game_details(game_id)
+                                            parsed_game = self.parse_game_data(detailed_game)
+                                        except Exception as e:
+                                            logger.warning(f"Could not get detailed data for game {game_id}: {e}")
+                                            # Fall back to basic game data
+                                            parsed_game = self.parse_game_data(game)
+                                    else:
+                                        parsed_game = self.parse_game_data(game)
                                     if parsed_game:
                                         games.append(parsed_game)
                 
