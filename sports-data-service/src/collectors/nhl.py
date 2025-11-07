@@ -59,24 +59,25 @@ class NHLCollector(BaseCollector):
                                 if game_date_str:
                                     try:
                                         game_date_obj = datetime.fromisoformat(game_date_str.replace('Z', '+00:00'))
-                                        if game_date_obj.strftime('%Y-%m-%d') == date_str and game_id not in seen_game_ids:
+                                        game_date_formatted = game_date_obj.strftime('%Y-%m-%d')
+                                        # Strictly filter by date - only include games matching the requested date
+                                        if game_date_formatted == date_str and game_id not in seen_game_ids:
                                             seen_game_ids.add(game_id)
                                             parsed_game = self.parse_game_data(game)
                                             if parsed_game:
                                                 games.append(parsed_game)
-                                    except ValueError:
-                                        # If date parsing fails, include it but check for duplicates
-                                        if game_id not in seen_game_ids:
-                                            seen_game_ids.add(game_id)
-                                            parsed_game = self.parse_game_data(game)
-                                            if parsed_game:
-                                                games.append(parsed_game)
-                                elif game_id not in seen_game_ids:
-                                    # No date, but check for duplicates
-                                    seen_game_ids.add(game_id)
-                                    parsed_game = self.parse_game_data(game)
-                                    if parsed_game:
-                                        games.append(parsed_game)
+                                        else:
+                                            # Log if we're skipping a game due to date mismatch
+                                            if game_date_formatted != date_str:
+                                                logger.debug(f"Skipping game {game_id} - date {game_date_formatted} doesn't match requested {date_str}")
+                                    except ValueError as e:
+                                        # If date parsing fails, skip the game (don't include games without valid dates)
+                                        logger.debug(f"Skipping game {game_id} - date parsing failed: {e}")
+                                        continue
+                                else:
+                                    # No date - skip the game (we need a valid date to match)
+                                    logger.debug(f"Skipping game {game_id} - no startTimeUTC")
+                                    continue
                 
                 return games
             else:

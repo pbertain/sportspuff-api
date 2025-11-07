@@ -635,8 +635,17 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         # Fallback to first 3 characters of team name, or full name if shorter
         home_abbrev = (game.home_team or '???')[:3].upper()
     
-    away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}]"
-    home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}]"
+    # For NHL, format records as W-L-OTL (overtime losses)
+    # For now, OTL is 0 since we don't have it in the database yet
+    # TODO: Add OTL field to database and update NHL collector to extract it
+    if sport.lower() == 'nhl':
+        visitor_otl = getattr(game, 'visitor_otl', 0) or 0
+        home_otl = getattr(game, 'home_otl', 0) or 0
+        away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}-{visitor_otl:2d}]"
+        home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}-{home_otl:2d}]"
+    else:
+        away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}]"
+        home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}]"
     
     # Format time/status
     # Priority: Show scores if game is final or in progress, otherwise show scheduled time
@@ -649,11 +658,15 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         # Game is in progress or has a score - show the score in schedule format
         period = game.current_period or '?'
         time_left = game.time_remaining or ''
+        
+        # For NHL, use 'P' for Period instead of 'Q' for Quarter
+        period_prefix = 'P' if sport.lower() == 'nhl' else 'Q'
+        
         if time_left and time_left.strip():
-            # Format: (score-score) Q4 time_left
-            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) Q{period} {time_left}"
+            # Format: (score-score) P1 1:43 for NHL, Q4 2:30 for others
+            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
         else:
-            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) Q{period}"
+            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
     else:
         # Scheduled game - show time
         if game.game_time:
@@ -943,10 +956,12 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                 elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
                     period = game.current_period or '?'
                     time_left = game.time_remaining or ''
+                    # For NHL, use 'P' for Period instead of 'Q' for Quarter
+                    period_prefix = 'P' if sport == 'nhl' else 'Q'
                     if time_left and time_left.strip():
-                        status = f"Q{period} {time_left}"
+                        status = f"{period_prefix}{period} {time_left}"
                     else:
-                        status = f"Q{period}"
+                        status = f"{period_prefix}{period}"
                     output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
         else:
             output += " No games scheduled\n"
@@ -1280,9 +1295,10 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
     today = now_tz.date()
     games_list = []
     
+    collector = get_collector(league)
+    
     # For today's games, try to get live data first
     if target_date == today:
-        collector = get_collector(league)
         if collector:
             live_games = collector.get_live_scores(target_date)
             if live_games:
@@ -1323,7 +1339,37 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                         "visitor_losses": game_dict.get('visitor_losses', 0),
                     })
     
-    # Fallback to database if no live games or not today
+    # For any date (today or past), try get_schedule from collector
+    if not games_list and collector:
+        schedule_games = collector.get_schedule(target_date)
+        if schedule_games:
+            seen_game_ids = set()
+            for game_dict in schedule_games:
+                game_id = game_dict.get('game_id', '')
+                if game_id and game_id in seen_game_ids:
+                    continue
+                seen_game_ids.add(game_id)
+                
+                game_time = game_dict.get('game_time')
+                game_date_str = game_dict.get('game_date', '')
+                
+                games_list.append({
+                    "game_id": game_id,
+                    "game_date": game_date_str if game_date_str else target_date.isoformat(),
+                    "game_time": game_time.isoformat() if game_time else None,
+                    "home_team": game_dict.get('home_team', ''),
+                    "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
+                    "visitor_team": game_dict.get('visitor_team', ''),
+                    "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
+                    "game_status": game_dict.get('game_status', 'scheduled'),
+                    "game_type": game_dict.get('game_type', 'regular'),
+                    "home_wins": game_dict.get('home_wins', 0),
+                    "home_losses": game_dict.get('home_losses', 0),
+                    "visitor_wins": game_dict.get('visitor_wins', 0),
+                    "visitor_losses": game_dict.get('visitor_losses', 0),
+                })
+    
+    # Fallback to database if no collector games found
     if not games_list:
         with get_db_session() as db:
             games = db.query(Game).filter(
@@ -1421,7 +1467,55 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                     }
                     games.append(GameWrapper(game_data))
     
-    # Fallback to database ONLY if no live games were found (not today or live API returned nothing)
+    # For any date (today or past), try get_schedule from collector if we don't have games yet
+    if not games:
+        collector = get_collector(league)
+        if collector:
+            schedule_games = collector.get_schedule(target_date)
+            if schedule_games:
+                seen_game_ids = set()
+                for game_dict in schedule_games:
+                    game_id = game_dict.get('game_id', '')
+                    if game_id and game_id in seen_game_ids:
+                        continue
+                    seen_game_ids.add(game_id)
+                    
+                    # Skip games with empty team names
+                    home_team = game_dict.get('home_team', '')
+                    home_abbrev = game_dict.get('home_team_abbrev', '')
+                    visitor_team = game_dict.get('visitor_team', '')
+                    visitor_abbrev = game_dict.get('visitor_team_abbrev', '')
+                    
+                    if (not home_team or home_team.strip() == '') and (not home_abbrev or home_abbrev.strip() == ''):
+                        continue
+                    if (not visitor_team or visitor_team.strip() == '') and (not visitor_abbrev or visitor_abbrev.strip() == ''):
+                        continue
+                    
+                    game_time = game_dict.get('game_time')
+                    game_data = {
+                        'league': league,
+                        'game_id': game_id,
+                        'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
+                        'game_time': game_time,
+                        'game_type': game_dict.get('game_type', 'regular'),
+                        'home_team': home_team,
+                        'home_team_abbrev': home_abbrev,
+                        'visitor_team': visitor_team,
+                        'visitor_team_abbrev': visitor_abbrev,
+                        'home_score_total': game_dict.get('home_score_total', 0),
+                        'visitor_score_total': game_dict.get('visitor_score_total', 0),
+                        'game_status': game_dict.get('game_status', 'scheduled'),
+                        'current_period': game_dict.get('current_period', ''),
+                        'time_remaining': game_dict.get('time_remaining', ''),
+                        'is_final': game_dict.get('is_final', False),
+                        'home_wins': game_dict.get('home_wins', 0),
+                        'home_losses': game_dict.get('home_losses', 0),
+                        'visitor_wins': game_dict.get('visitor_wins', 0),
+                        'visitor_losses': game_dict.get('visitor_losses', 0)
+                    }
+                    games.append(GameWrapper(game_data))
+    
+    # Fallback to database ONLY if no collector games were found
     if not games:
         with get_db_session() as db:
             db_games = db.query(Game).filter(
@@ -1558,25 +1652,56 @@ def get_scores_api_v1(
 
 def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any]]:
     """Helper function to get scores for a specific league."""
+    from datetime import datetime
+    now_tz = datetime.now(pytz.timezone('US/Pacific'))
+    today = now_tz.date()
+    
     # Get live scores from collector (includes in-progress and final games)
     collector = get_collector(league)
     if collector:
-        live_games = collector.get_live_scores(target_date)
-        if live_games:
-            return [
-                {
-                    "game_id": game.get('game_id', ''),
-                    "home_team": game.get('home_team', ''),
-                    "home_score": game.get('home_score_total', 0),
-                    "visitor_team": game.get('visitor_team', ''),
-                    "visitor_score": game.get('visitor_score_total', 0),
-                    "is_final": game.get('is_final', False),
-                    "game_status": game.get('game_status', 'scheduled'),
-                    "current_period": game.get('current_period', ''),
-                    "time_remaining": game.get('time_remaining', '')
-                }
-                for game in live_games
-            ]
+        # For today, try live scores first
+        if target_date == today:
+            live_games = collector.get_live_scores(target_date)
+            if live_games:
+                return [
+                    {
+                        "game_id": game.get('game_id', ''),
+                        "home_team": game.get('home_team', ''),
+                        "home_score": game.get('home_score_total', 0),
+                        "visitor_team": game.get('visitor_team', ''),
+                        "visitor_score": game.get('visitor_score_total', 0),
+                        "is_final": game.get('is_final', False),
+                        "game_status": game.get('game_status', 'scheduled'),
+                        "current_period": game.get('current_period', ''),
+                        "time_remaining": game.get('time_remaining', '')
+                    }
+                    for game in live_games
+                ]
+        
+        # For past dates, try get_schedule (which may have final scores)
+        if target_date < today:
+            schedule_games = collector.get_schedule(target_date)
+            if schedule_games:
+                # Filter for games that have scores (final or in-progress)
+                scored_games = [
+                    game for game in schedule_games
+                    if game.get('is_final') or game.get('home_score_total', 0) > 0 or game.get('visitor_score_total', 0) > 0
+                ]
+                if scored_games:
+                    return [
+                        {
+                            "game_id": game.get('game_id', ''),
+                            "home_team": game.get('home_team', ''),
+                            "home_score": game.get('home_score_total', 0),
+                            "visitor_team": game.get('visitor_team', ''),
+                            "visitor_score": game.get('visitor_score_total', 0),
+                            "is_final": game.get('is_final', False),
+                            "game_status": game.get('game_status', 'scheduled'),
+                            "current_period": game.get('current_period', ''),
+                            "time_remaining": game.get('time_remaining', '')
+                        }
+                        for game in scored_games
+                    ]
     
     # Fallback to database for final games only
     with get_db_session() as db:
