@@ -199,7 +199,7 @@
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
         export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" down --remove-orphans || true
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" down --remove-orphans -v || true
         # Force stop containers by name (environment-specific)
         sudo docker stop "sports-data-{{ deployment_env }}-postgres-1" "sports-data-{{ deployment_env }}-sports-service-1" 2>/dev/null || true
         sudo docker stop "sports-data-postgres" "sports-data-service" 2>/dev/null || true
@@ -212,6 +212,14 @@
             sudo docker rm -f "$container_id" 2>/dev/null || true
           fi
         done
+        # Remove networks associated with this project (may contain stale references)
+        for network_id in $(sudo docker network ls --filter "name=sports-data-{{ deployment_env }}" --format "{{ '{{' }}.ID{{ '}}' }}" 2>/dev/null || true); do
+          if [ -n "$network_id" ]; then
+            sudo docker network rm "$network_id" 2>/dev/null || true
+          fi
+        done
+        # Remove any orphaned networks that might reference non-existent containers
+        sudo docker network prune -f || true
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
