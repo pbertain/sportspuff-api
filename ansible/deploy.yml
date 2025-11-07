@@ -228,6 +228,22 @@
       args:
         chdir: "{{ deployment_dir }}/sports-data-service"
     
+    - name: Verify containers are running
+      shell: |
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose ps
+        # Check if sports-service container is running
+        if ! sudo docker ps --filter "name=sports-data-service" --format "{{ '{{' }}.Status{{ '}}' }}" | grep -q "Up"; then
+          echo "ERROR: sports-data-service container is not running!"
+          echo "Container status:"
+          sudo docker ps -a --filter "name=sports-data"
+          echo "Container logs:"
+          sudo docker logs sports-data-service --tail 50 || true
+          exit 1
+        fi
+      args:
+        chdir: "{{ deployment_dir }}/sports-data-service"
+      ignore_errors: false
+    
     - name: Wait for services to be healthy
       wait_for:
         host: localhost
