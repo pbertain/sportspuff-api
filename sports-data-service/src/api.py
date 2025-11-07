@@ -636,8 +636,6 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         home_abbrev = (game.home_team or '???')[:3].upper()
     
     # For NHL, format records as W-L-OTL (overtime losses)
-    # For now, OTL is 0 since we don't have it in the database yet
-    # TODO: Add OTL field to database and update NHL collector to extract it
     if sport.lower() == 'nhl':
         visitor_otl = getattr(game, 'visitor_otl', 0) or 0
         home_otl = getattr(game, 'home_otl', 0) or 0
@@ -670,10 +668,12 @@ def format_game_for_curl(game: Game, sport: str) -> str:
             except (ValueError, TypeError):
                 period_display = f'P{period}'
             
+            # Always show time if available, otherwise just show period
             if time_left and time_left.strip():
                 # Format: (score-score) P1 - MM:SS or OT - MM:SS
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display} - {time_left}"
             else:
+                # If no time available, still show period
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display}"
         else:
             # For other sports, use 'Q' for Quarter
@@ -983,9 +983,11 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                         except (ValueError, TypeError):
                             period_display = f'P{period}'
                         
+                        # Always show time if available, otherwise just show period
                         if time_left and time_left.strip():
                             status = f"{period_display} - {time_left}"
                         else:
+                            # If no time available, still show period
                             status = period_display
                     else:
                         # For other sports, use 'Q' for Quarter
@@ -1495,8 +1497,10 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'is_final': game_dict.get('is_final', False),
                         'home_wins': game_dict.get('home_wins', 0),
                         'home_losses': game_dict.get('home_losses', 0),
+                        'home_otl': game_dict.get('home_otl', 0),
                         'visitor_wins': game_dict.get('visitor_wins', 0),
-                        'visitor_losses': game_dict.get('visitor_losses', 0)
+                        'visitor_losses': game_dict.get('visitor_losses', 0),
+                        'visitor_otl': game_dict.get('visitor_otl', 0)
                     }
                     games.append(GameWrapper(game_data))
     
@@ -1543,8 +1547,10 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'is_final': game_dict.get('is_final', False),
                         'home_wins': game_dict.get('home_wins', 0),
                         'home_losses': game_dict.get('home_losses', 0),
+                        'home_otl': game_dict.get('home_otl', 0),
                         'visitor_wins': game_dict.get('visitor_wins', 0),
-                        'visitor_losses': game_dict.get('visitor_losses', 0)
+                        'visitor_losses': game_dict.get('visitor_losses', 0),
+                        'visitor_otl': game_dict.get('visitor_otl', 0)
                     }
                     games.append(GameWrapper(game_data))
     
@@ -1582,8 +1588,10 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                     'is_final': game.is_final,
                     'home_wins': game.home_wins,
                     'home_losses': game.home_losses,
+                    'home_otl': getattr(game, 'home_otl', 0) or 0,
                     'visitor_wins': game.visitor_wins,
                     'visitor_losses': game.visitor_losses,
+                    'visitor_otl': getattr(game, 'visitor_otl', 0) or 0,
                 }
                 games.append(GameWrapper(game_data))
     
