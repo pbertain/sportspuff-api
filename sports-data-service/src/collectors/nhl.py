@@ -51,33 +51,17 @@ class NHLCollector(BaseCollector):
                 
                 if 'gameWeek' in data and len(data['gameWeek']) > 0:
                     for day in data['gameWeek']:
-                        if 'games' in day:
+                        # Use the date field from the day object (NHL API groups games by date)
+                        day_date = day.get('date', '')
+                        # Only process games from days that match the requested date
+                        if day_date == date_str and 'games' in day:
                             for game in day['games']:
                                 game_id = str(game.get('id', ''))
-                                # Only process games for the requested date and avoid duplicates
-                                game_date_str = game.get('startTimeUTC', '')
-                                if game_date_str:
-                                    try:
-                                        game_date_obj = datetime.fromisoformat(game_date_str.replace('Z', '+00:00'))
-                                        game_date_formatted = game_date_obj.strftime('%Y-%m-%d')
-                                        # Strictly filter by date - only include games matching the requested date
-                                        if game_date_formatted == date_str and game_id not in seen_game_ids:
-                                            seen_game_ids.add(game_id)
-                                            parsed_game = self.parse_game_data(game)
-                                            if parsed_game:
-                                                games.append(parsed_game)
-                                        else:
-                                            # Log if we're skipping a game due to date mismatch
-                                            if game_date_formatted != date_str:
-                                                logger.debug(f"Skipping game {game_id} - date {game_date_formatted} doesn't match requested {date_str}")
-                                    except ValueError as e:
-                                        # If date parsing fails, skip the game (don't include games without valid dates)
-                                        logger.debug(f"Skipping game {game_id} - date parsing failed: {e}")
-                                        continue
-                                else:
-                                    # No date - skip the game (we need a valid date to match)
-                                    logger.debug(f"Skipping game {game_id} - no startTimeUTC")
-                                    continue
+                                if game_id and game_id not in seen_game_ids:
+                                    seen_game_ids.add(game_id)
+                                    parsed_game = self.parse_game_data(game)
+                                    if parsed_game:
+                                        games.append(parsed_game)
                 
                 return games
             else:
@@ -136,50 +120,34 @@ class NHLCollector(BaseCollector):
                 
                 if 'gameWeek' in data and len(data['gameWeek']) > 0:
                     for day in data['gameWeek']:
-                        if 'games' in day:
+                        # Use the date field from the day object (NHL API groups games by date)
+                        day_date = day.get('date', '')
+                        # Only process games from days that match the requested date
+                        if day_date == date_str and 'games' in day:
                             for game in day['games']:
                                 game_id = str(game.get('id', ''))
-                                # Only process games for the requested date and avoid duplicates
-                                game_date_str = game.get('startTimeUTC', '')
-                                if game_date_str:
-                                    try:
-                                        game_date_obj = datetime.fromisoformat(game_date_str.replace('Z', '+00:00'))
-                                        game_date_formatted = game_date_obj.strftime('%Y-%m-%d')
-                                        # Strictly filter by date - only include games matching the requested date
-                                        if game_date_formatted == date_str and game_id not in seen_game_ids:
-                                            seen_game_ids.add(game_id)
-                                            # Only fetch detailed data for games that are in progress or final
-                                            # This reduces API calls significantly
-                                            game_state = game.get('gameState', '').upper()
-                                            if game_state in ('LIVE', 'FINAL', 'CRITICAL'):
-                                                try:
-                                                    detailed_game = self._get_game_details(game_id)
-                                                    parsed_game = self.parse_live_game_data(detailed_game)
-                                                    if parsed_game:
-                                                        games.append(parsed_game)
-                                                except Exception as e:
-                                                    logger.warning(f"Could not get detailed data for game {game_id}: {e}")
-                                                    # Fall back to basic game data
-                                                    parsed_game = self.parse_game_data(game)
-                                                    if parsed_game:
-                                                        games.append(parsed_game)
-                                            else:
-                                                # For scheduled games, use basic game data (no extra API call needed)
-                                                parsed_game = self.parse_game_data(game)
-                                                if parsed_game:
-                                                    games.append(parsed_game)
-                                        else:
-                                            # Skip games that don't match the requested date
-                                            if game_date_formatted != date_str:
-                                                logger.debug(f"Skipping game {game_id} - date {game_date_formatted} doesn't match requested {date_str}")
-                                    except ValueError as e:
-                                        # If date parsing fails, skip the game
-                                        logger.debug(f"Skipping game {game_id} - date parsing failed: {e}")
-                                        continue
-                                else:
-                                    # No date - skip the game (we need a valid date to match)
-                                    logger.debug(f"Skipping game {game_id} - no startTimeUTC")
-                                    continue
+                                if game_id and game_id not in seen_game_ids:
+                                    seen_game_ids.add(game_id)
+                                    # Only fetch detailed data for games that are in progress or final
+                                    # This reduces API calls significantly
+                                    game_state = game.get('gameState', '').upper()
+                                    if game_state in ('LIVE', 'FINAL', 'CRITICAL'):
+                                        try:
+                                            detailed_game = self._get_game_details(game_id)
+                                            parsed_game = self.parse_live_game_data(detailed_game)
+                                            if parsed_game:
+                                                games.append(parsed_game)
+                                        except Exception as e:
+                                            logger.warning(f"Could not get detailed data for game {game_id}: {e}")
+                                            # Fall back to basic game data
+                                            parsed_game = self.parse_game_data(game)
+                                            if parsed_game:
+                                                games.append(parsed_game)
+                                    else:
+                                        # For scheduled games, use basic game data (no extra API call needed)
+                                        parsed_game = self.parse_game_data(game)
+                                        if parsed_game:
+                                            games.append(parsed_game)
                 
                 return games
             else:
