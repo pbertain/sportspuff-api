@@ -659,14 +659,29 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         period = game.current_period or '?'
         time_left = game.time_remaining or ''
         
-        # For NHL, use 'P' for Period instead of 'Q' for Quarter
-        period_prefix = 'P' if sport.lower() == 'nhl' else 'Q'
-        
-        if time_left and time_left.strip():
-            # Format: (score-score) P1 1:43 for NHL, Q4 2:30 for others
-            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
+        if sport.lower() == 'nhl':
+            # For NHL: Period 4+ is overtime (OT), format as "P{period} - MM:SS"
+            try:
+                period_num = int(period) if str(period).isdigit() else 0
+                if period_num >= 4:
+                    period_display = 'OT'
+                else:
+                    period_display = f'P{period_num}'
+            except (ValueError, TypeError):
+                period_display = f'P{period}'
+            
+            if time_left and time_left.strip():
+                # Format: (score-score) P1 - MM:SS or OT - MM:SS
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display} - {time_left}"
+            else:
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display}"
         else:
-            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
+            # For other sports, use 'Q' for Quarter
+            period_prefix = 'Q'
+            if time_left and time_left.strip():
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
+            else:
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
     else:
         # Scheduled game - show time
         if game.game_time:
@@ -956,12 +971,30 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                 elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
                     period = game.current_period or '?'
                     time_left = game.time_remaining or ''
-                    # For NHL, use 'P' for Period instead of 'Q' for Quarter
-                    period_prefix = 'P' if sport == 'nhl' else 'Q'
-                    if time_left and time_left.strip():
-                        status = f"{period_prefix}{period} {time_left}"
+                    
+                    if sport == 'nhl':
+                        # For NHL: Period 4+ is overtime (OT), format as "P{period} - MM:SS"
+                        try:
+                            period_num = int(period) if str(period).isdigit() else 0
+                            if period_num >= 4:
+                                period_display = 'OT'
+                            else:
+                                period_display = f'P{period_num}'
+                        except (ValueError, TypeError):
+                            period_display = f'P{period}'
+                        
+                        if time_left and time_left.strip():
+                            status = f"{period_display} - {time_left}"
+                        else:
+                            status = period_display
                     else:
-                        status = f"{period_prefix}{period}"
+                        # For other sports, use 'Q' for Quarter
+                        period_prefix = 'Q'
+                        if time_left and time_left.strip():
+                            status = f"{period_prefix}{period} {time_left}"
+                        else:
+                            status = f"{period_prefix}{period}"
+                    
                     output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
         else:
             output += " No games scheduled\n"

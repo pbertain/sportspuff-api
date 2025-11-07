@@ -375,7 +375,7 @@ class NHLCollector(BaseCollector):
                 'visitor_team_id': str(away_team.get('id', '')),
                 'visitor_score_total': away_score,
                 'game_status': self.normalize_game_status(raw_game.get('gameState', 'scheduled')),
-                'current_period': raw_game.get('clock', {}).get('timeRemaining', ''),
+                'current_period': raw_game.get('periodDescriptor', {}).get('number', ''),
                 'time_remaining': raw_game.get('clock', {}).get('timeRemaining', ''),
                 'is_final': raw_game.get('gameState') == 'FINAL',
                 'is_overtime': False,  # Would need to check period descriptor if available
