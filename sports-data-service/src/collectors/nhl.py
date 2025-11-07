@@ -18,7 +18,8 @@ class NHLCollector(BaseCollector):
     
     def __init__(self):
         super().__init__("NHL")
-        self.base_url = "https://api-web.nhle.com"
+        self.base_url = "https://api-web.nhle.com/v1"
+        # Keep stats API for standings (it has better team record data)
         self.stats_api_url = "https://statsapi.web.nhl.com/api/v1"
         self._team_records_cache = {}  # Cache team records: {team_id: {'wins': int, 'losses': int, 'ot': int}}
         self._standings_cache_time = None
@@ -42,7 +43,7 @@ class NHLCollector(BaseCollector):
             else:
                 date_str = datetime.now().strftime('%Y-%m-%d')
             
-            url = f"{self.base_url}/v1/schedule/{date_str}"
+            url = f"{self.base_url}/schedule/{date_str}"
             
             start_time = time.time()
             response = requests.get(url, timeout=self.api_timeout)
@@ -79,6 +80,11 @@ class NHLCollector(BaseCollector):
                                         games.append(parsed_game)
                 
                 return games
+            elif response.status_code == 429:
+                logger.warning(f"Rate limited when fetching schedule for {date_str}")
+                # Wait and return empty - caller can retry
+                time.sleep(2)
+                return []
             else:
                 logger.error(f"NHL API error: {response.status_code}")
                 return []
@@ -97,12 +103,40 @@ class NHLCollector(BaseCollector):
         Returns:
             List of game dictionaries for the entire season
             
-        Note: NHL API doesn't have a direct season endpoint, so we fetch
-        day by day for the season (Oct-Apr). This is a fallback implementation.
+        Note: According to NHL API reference, we can get team season schedules.
+        For full league schedule, we fetch day-by-day for the season (Oct-Apr).
         """
-        logger.warning("NHL full season fetch not implemented - would need to fetch day-by-day")
-        # For now, return empty - could implement day-by-day fetching if needed
-        return []
+        if season is None:
+            season = datetime.now().year
+        
+        logger.info(f"Fetching full season schedule for {season} - this may take a while")
+        all_games = []
+        
+        # NHL season typically runs from early October to late April
+        # Fetch games day by day for the season
+        start_date = date(season, 10, 1)  # October 1
+        end_date = date(season + 1, 4, 30)  # April 30 of next year
+        
+        current_date = start_date
+        while current_date <= end_date:
+            try:
+                games = self.get_schedule(current_date)
+                all_games.extend(games)
+                # Small delay to avoid rate limiting
+                time.sleep(0.1)
+            except Exception as e:
+                logger.warning(f"Error fetching schedule for {current_date}: {e}")
+            
+            # Move to next day
+            from datetime import timedelta
+            current_date += timedelta(days=1)
+            
+            # Stop if we've gone past the current date significantly
+            if current_date > datetime.now().date() + timedelta(days=30):
+                break
+        
+        logger.info(f"Fetched {len(all_games)} games for season {season}")
+        return all_games
     
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
@@ -122,7 +156,7 @@ class NHLCollector(BaseCollector):
             else:
                 date_str = datetime.now().strftime('%Y-%m-%d')
             
-            url = f"{self.base_url}/v1/schedule/{date_str}"
+            url = f"{self.base_url}/schedule/{date_str}"
             
             start_time = time.time()
             response = requests.get(url, timeout=self.api_timeout)
@@ -165,6 +199,11 @@ class NHLCollector(BaseCollector):
                                             games.append(parsed_game)
                 
                 return games
+            elif response.status_code == 429:
+                logger.warning(f"Rate limited when fetching live scores for {date_str}")
+                # Wait and return empty - caller can retry
+                time.sleep(2)
+                return []
             else:
                 logger.error(f"NHL API error: {response.status_code}")
                 return []
@@ -178,13 +217,15 @@ class NHLCollector(BaseCollector):
         # Check rate limit before each detailed game request
         self._check_rate_limit()
         
-        url = f"{self.base_url}/v1/gamecenter/{game_id}/boxscore"
+        url = f"{self.base_url}/gamecenter/{game_id}/boxscore"
         response = requests.get(url, timeout=self.api_timeout)
         
         if response.status_code == 200:
             return response.json()
         elif response.status_code == 429:
             logger.warning(f"Rate limited when fetching game {game_id} details")
+            # Wait a bit before retrying
+            time.sleep(2)
             raise Exception(f"Rate limited: {response.status_code}")
         else:
             raise Exception(f"Failed to get game details: {response.status_code}")
@@ -226,6 +267,10 @@ class NHLCollector(BaseCollector):
                 self._standings_cache_time = time.time()
                 logger.info(f"Fetched standings for {len(records)} teams")
                 return records
+            elif response.status_code == 429:
+                logger.warning(f"Rate limited when fetching standings - will retry later")
+                # Return cached data if available, otherwise empty
+                return self._team_records_cache if self._team_records_cache else {}
             else:
                 logger.warning(f"Failed to fetch standings: {response.status_code}")
                 return {}
