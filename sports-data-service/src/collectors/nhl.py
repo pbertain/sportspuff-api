@@ -146,7 +146,7 @@ class NHLCollector(BaseCollector):
                                     # Only fetch detailed data for games that are in progress or final
                                     # This reduces API calls significantly
                                     game_state = game.get('gameState', '').upper()
-                                    if game_state in ('LIVE', 'FINAL', 'CRITICAL'):
+                                    if game_state in ('LIVE', 'FINAL', 'CRITICAL', 'OFF'):
                                         try:
                                             detailed_game = self._get_game_details(game_id)
                                             parsed_game = self.parse_live_game_data(detailed_game)
@@ -367,7 +367,7 @@ class NHLCollector(BaseCollector):
                 'game_status': self.normalize_game_status(raw_game.get('gameState', 'scheduled')),
                 'current_period': raw_game.get('periodDescriptor', {}).get('number', ''),
                 'time_remaining': raw_game.get('clock', {}).get('timeRemaining', ''),
-                'is_final': raw_game.get('gameState') == 'FINAL',
+                'is_final': raw_game.get('gameState') in ('FINAL', 'OFF'),
                 'is_overtime': raw_game.get('periodDescriptor', {}).get('periodType') == 'OVERTIME',
                 'home_period_scores': home_period_scores,
                 'visitor_period_scores': visitor_period_scores,
@@ -469,7 +469,7 @@ class NHLCollector(BaseCollector):
                 'game_status': self.normalize_game_status(raw_game.get('gameState', 'scheduled')),
                 'current_period': raw_game.get('periodDescriptor', {}).get('number', ''),
                 'time_remaining': raw_game.get('clock', {}).get('timeRemaining', ''),
-                'is_final': raw_game.get('gameState') == 'FINAL',
+                'is_final': raw_game.get('gameState') in ('FINAL', 'OFF'),
                 'is_overtime': raw_game.get('periodDescriptor', {}).get('periodType') == 'OVERTIME',
                 'home_wins': home_record.get('wins', 0),
                 'home_losses': home_record.get('losses', 0),

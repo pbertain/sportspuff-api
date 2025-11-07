@@ -160,7 +160,7 @@ class BaseCollector(ABC):
         """
         status_lower = status.lower()
         
-        if status_lower in ['final', 'completed', 'finished']:
+        if status_lower in ['final', 'completed', 'finished', 'off']:
             return 'final'
         elif status_lower in ['live', 'in progress', 'in_progress', 'active']:
             return 'in_progress'
