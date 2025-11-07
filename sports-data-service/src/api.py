@@ -1437,6 +1437,11 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                     "home_losses": game.home_losses or 0,
                     "visitor_wins": game.visitor_wins or 0,
                     "visitor_losses": game.visitor_losses or 0,
+                    "current_period": game.current_period or '',
+                    "time_remaining": game.time_remaining or '',
+                    "home_score_total": game.home_score_total or 0,
+                    "visitor_score_total": game.visitor_score_total or 0,
+                    "is_final": game.is_final or False,
                 }
                 for game in games
             ]
@@ -1584,6 +1589,10 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                 if (not game.visitor_team or game.visitor_team.strip() == '') and (not game.visitor_team_abbrev or game.visitor_team_abbrev.strip() == ''):
                     continue
                 
+                # Ensure time_remaining is properly extracted
+                time_remaining = game.time_remaining or ''
+                current_period = game.current_period or ''
+                
                 game_data = {
                     'league': game.league,
                     'game_id': game.game_id,
@@ -1594,17 +1603,17 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                     'home_team_abbrev': game.home_team_abbrev,
                     'visitor_team': game.visitor_team,
                     'visitor_team_abbrev': game.visitor_team_abbrev,
-                    'home_score_total': game.home_score_total,
-                    'visitor_score_total': game.visitor_score_total,
+                    'home_score_total': game.home_score_total or 0,
+                    'visitor_score_total': game.visitor_score_total or 0,
                     'game_status': game.game_status,
-                    'current_period': game.current_period,
-                    'time_remaining': game.time_remaining,
-                    'is_final': game.is_final,
-                    'home_wins': game.home_wins,
-                    'home_losses': game.home_losses,
+                    'current_period': current_period,
+                    'time_remaining': time_remaining,
+                    'is_final': game.is_final or False,
+                    'home_wins': game.home_wins or 0,
+                    'home_losses': game.home_losses or 0,
                     'home_otl': getattr(game, 'home_otl', 0) or 0,
-                    'visitor_wins': game.visitor_wins,
-                    'visitor_losses': game.visitor_losses,
+                    'visitor_wins': game.visitor_wins or 0,
+                    'visitor_losses': game.visitor_losses or 0,
                     'visitor_otl': getattr(game, 'visitor_otl', 0) or 0,
                 }
                 games.append(GameWrapper(game_data))
