@@ -1,7 +1,10 @@
 version: '3.8'
 
 services:
+  postgres:
+    container_name: sports-data-{{ deployment_env }}-postgres
   sports-service:
+    container_name: sports-data-{{ deployment_env }}-service
     environment:
       API_PORT: {{ api_port }}
       DATABASE_URL: postgresql://sports_user:${POSTGRES_PASSWORD}@postgres:5432/sports_data

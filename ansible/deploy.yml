@@ -198,13 +198,16 @@
       shell: |
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose down --remove-orphans || true
-        # Force stop containers by name
-        sudo docker stop sports-data-postgres sports-data-service 2>/dev/null || true
+        export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" down --remove-orphans || true
+        # Force stop containers by name (environment-specific)
+        sudo docker stop "sports-data-{{ deployment_env }}-postgres-1" "sports-data-{{ deployment_env }}-sports-service-1" 2>/dev/null || true
+        sudo docker stop "sports-data-postgres" "sports-data-service" 2>/dev/null || true
         # Force remove containers by name (handles stopped containers)
-        sudo docker rm -f sports-data-postgres sports-data-service 2>/dev/null || true
-        # Also find and remove any containers with sports-data in the name
-        for container_id in $(sudo docker ps -a --filter "name=sports-data" --format "{{ '{{' }}.ID{{ '}}' }}" 2>/dev/null || true); do
+        sudo docker rm -f "sports-data-{{ deployment_env }}-postgres-1" "sports-data-{{ deployment_env }}-sports-service-1" 2>/dev/null || true
+        sudo docker rm -f "sports-data-postgres" "sports-data-service" 2>/dev/null || true
+        # Also find and remove any containers with sports-data in the name for this environment
+        for container_id in $(sudo docker ps -a --filter "name=sports-data-{{ deployment_env }}" --format "{{ '{{' }}.ID{{ '}}' }}" 2>/dev/null || true); do
           if [ -n "$container_id" ]; then
             sudo docker rm -f "$container_id" 2>/dev/null || true
           fi
@@ -220,8 +223,9 @@
       shell: |
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose build --no-cache
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose up -d
+        export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build --no-cache
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" up -d
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
@@ -230,14 +234,16 @@
     
     - name: Verify containers are running
       shell: |
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose ps
-        # Check if sports-service container is running
-        if ! sudo docker ps --filter "name=sports-data-service" --format "{{ '{{' }}.Status{{ '}}' }}" | grep -q "Up"; then
-          echo "ERROR: sports-data-service container is not running!"
+        export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" ps
+        # Check if sports-service container is running (with environment-specific name)
+        container_name="sports-data-{{ deployment_env }}-sports-service-1"
+        if ! sudo docker ps --filter "name=$container_name" --format "{{ '{{' }}.Status{{ '}}' }}" | grep -q "Up"; then
+          echo "ERROR: $container_name container is not running!"
           echo "Container status:"
-          sudo docker ps -a --filter "name=sports-data"
+          sudo docker ps -a --filter "name=sports-data-{{ deployment_env }}"
           echo "Container logs:"
-          sudo docker logs sports-data-service --tail 50 || true
+          sudo docker logs "$container_name" --tail 50 || true
           exit 1
         fi
       args:
@@ -253,8 +259,9 @@
     
     - name: Initialize database (first time only)
       shell: |
+        export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
         cd {{ deployment_dir }}/sports-data-service
-        sudo docker-compose exec -T sports-service python scripts/update_schedules.py || true
+        sudo -E docker-compose -p "sports-data-{{ deployment_env }}" exec -T sports-service python scripts/update_schedules.py || true
       ignore_errors: yes
     
     - name: Create systemd service and timer files for environment
