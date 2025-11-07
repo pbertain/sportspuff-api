@@ -1890,8 +1890,34 @@ def debug_schedule_data(
         # Get data from collector
         collector = get_collector(league)
         collector_data = []
+        raw_api_team_data = []  # For NHL, show raw team structure
         if collector:
             collector_data = collector.get_schedule(target_date)
+            # For NHL, also get raw API response to inspect team structure
+            if sport_lower == 'nhl' and collector_data:
+                # Get raw API response by making a direct call
+                try:
+                    from datetime import datetime
+                    date_str = target_date.strftime('%Y-%m-%d')
+                    url = f"https://api-web.nhle.com/v1/schedule/{date_str}"
+                    import requests
+                    response = requests.get(url, timeout=10)
+                    if response.status_code == 200:
+                        data = response.json()
+                        # Extract first game's team structure if available
+                        if 'gameWeek' in data and len(data['gameWeek']) > 0:
+                            for day in data['gameWeek']:
+                                if 'games' in day and len(day['games']) > 0:
+                                    first_game = day['games'][0]
+                                    raw_api_team_data = {
+                                        "homeTeam_keys": list(first_game.get('homeTeam', {}).keys()) if 'homeTeam' in first_game else [],
+                                        "awayTeam_keys": list(first_game.get('awayTeam', {}).keys()) if 'awayTeam' in first_game else [],
+                                        "homeTeam_sample": {k: v for k, v in first_game.get('homeTeam', {}).items() if k in ['wins', 'losses', 'otLosses', 'ot_losses', 'overtimeLosses', 'ot', 'otl']} if 'homeTeam' in first_game else {},
+                                        "awayTeam_sample": {k: v for k, v in first_game.get('awayTeam', {}).items() if k in ['wins', 'losses', 'otLosses', 'ot_losses', 'overtimeLosses', 'ot', 'otl']} if 'awayTeam' in first_game else {},
+                                    }
+                                    break
+                except Exception as e:
+                    raw_api_team_data = {"error": str(e)}
         
         # Get data from live scores
         live_data = []
@@ -1941,7 +1967,7 @@ def debug_schedule_data(
                 "league": getattr(game, 'league', None),
             })
         
-        return {
+        result = {
             "sport": sport,
             "league": league,
             "date": target_date.isoformat(),
@@ -1956,6 +1982,11 @@ def debug_schedule_data(
                 "curl_format_games": len(curl_data),
             }
         }
+        # Add raw API team structure for NHL
+        if sport_lower == 'nhl' and raw_api_team_data:
+            result["raw_api_team_structure"] = raw_api_team_data
+        
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

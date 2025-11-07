@@ -194,6 +194,18 @@ class NHLCollector(BaseCollector):
                 logger.warning(f"No team data found for game {raw_game.get('id', 'unknown')}")
                 return None
             
+            # Debug: Log available keys in team objects to check for OTL data
+            # Remove this after we identify the OTL field name
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"Home team keys: {list(home_team.keys())}")
+                logger.debug(f"Away team keys: {list(away_team.keys())}")
+                # Check for common OTL field names
+                for otl_field in ['otLosses', 'ot_losses', 'overtimeLosses', 'ot', 'otl']:
+                    if otl_field in home_team:
+                        logger.debug(f"Found OTL field '{otl_field}' in home_team: {home_team.get(otl_field)}")
+                    if otl_field in away_team:
+                        logger.debug(f"Found OTL field '{otl_field}' in away_team: {away_team.get(otl_field)}")
+            
             # Parse game date
             game_datetime = raw_game.get('startTimeUTC', '')
             try:
