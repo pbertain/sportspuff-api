@@ -28,6 +28,7 @@ class Game(Base):
     home_team_id = Column(String(20), nullable=True)
     home_wins = Column(Integer, nullable=True)
     home_losses = Column(Integer, nullable=True)
+    home_otl = Column(Integer, nullable=True)  # Overtime losses (NHL)
     home_score_total = Column(Integer, nullable=True)
     
     # Visitor team
@@ -36,6 +37,7 @@ class Game(Base):
     visitor_team_id = Column(String(20), nullable=True)
     visitor_wins = Column(Integer, nullable=True)
     visitor_losses = Column(Integer, nullable=True)
+    visitor_otl = Column(Integer, nullable=True)  # Overtime losses (NHL)
     visitor_score_total = Column(Integer, nullable=True)
     
     # Game state
