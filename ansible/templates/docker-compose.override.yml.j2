@@ -3,6 +3,8 @@ version: '3.8'
 services:
   postgres:
     container_name: sports-data-{{ deployment_env }}-postgres
+    volumes:
+      - postgres_data_{{ deployment_env }}:/var/lib/postgresql/data
   sports-service:
     container_name: sports-data-{{ deployment_env }}-service
     environment:
@@ -11,4 +13,7 @@ services:
       DEPLOYMENT_ENV: {{ deployment_env }}
     ports:
       - "0.0.0.0:{{ api_port }}:{{ api_port }}"
+
+volumes:
+  postgres_data_{{ deployment_env }}:
 
