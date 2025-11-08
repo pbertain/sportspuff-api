@@ -115,7 +115,11 @@ class AdaptivePollingManager:
             # Close games in progress - poll more frequently
             return settings.close_game_poll_interval
         elif any(game.game_status == 'in_progress' for game in active_games):
-            # Games in progress but not close - normal interval
+            # Games in progress but not close
+            # NBA games poll every minute during games
+            if league == 'NBA':
+                return settings.close_game_poll_interval  # 60 seconds for NBA
+            # Normal interval for other leagues
             return settings.default_poll_interval
         else:
             # Games scheduled but not started - less frequent polling
