@@ -18,12 +18,13 @@ COPY scripts/ ./scripts/
 COPY alembic.ini ./
 COPY alembic/ ./alembic/
 COPY docker-entrypoint.sh ./docker-entrypoint.sh
+COPY healthcheck.sh ./healthcheck.sh
 
 # Set Python path
 ENV PYTHONPATH="/app"
 
-# Make entrypoint executable
-RUN chmod +x docker-entrypoint.sh
+# Make entrypoint and healthcheck executable
+RUN chmod +x docker-entrypoint.sh healthcheck.sh
 
 # Create non-root user
 RUN useradd -m -u 1000 sports && chown -R sports:sports /app

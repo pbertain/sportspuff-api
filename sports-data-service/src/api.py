@@ -1230,8 +1230,8 @@ def get_scores_all_sports_curl_v1(
 ):
     """Get scores for all sports in curl-style text format."""
     try:
-        target_date = parse_date_param(date)
         timezone = get_timezone(tz)
+        target_date = parse_date_param(date, timezone)
         all_games = []
         
         # Use joinedload or ensure we access attributes within session context
