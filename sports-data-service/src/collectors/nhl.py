@@ -233,9 +233,7 @@ class NHLCollector(BaseCollector):
     
     def _fetch_team_records(self) -> Dict[int, Dict[str, int]]:
         """
-        Calculate team records (W-L-OTL) from stored games in database.
-        
-        Since NHL standings API is not available, we calculate records from final games.
+        Fetch team records (W-L-OTL) from NHL standings API.
         
         Returns:
             Dictionary mapping team_id to {'wins': int, 'losses': int, 'ot': int}
@@ -245,118 +243,95 @@ class NHLCollector(BaseCollector):
             return self._team_records_cache
         
         try:
-            from database import get_db_session
-            from models import Game
-            from datetime import datetime, date as date_type
+            self._check_rate_limit()
+            response = requests.get(self.stats_api_url, timeout=self.api_timeout)
             
-            records = {}
-            
-            with get_db_session() as db:
-                # Get all final NHL games from current season (regular season only)
-                # NHL season typically runs Oct-Apr, so get games from Oct 1 of current year
-                current_year = datetime.now().year
-                season_start = date_type(current_year, 10, 1)
+            if response.status_code == 200:
+                data = response.json()
+                standings = data.get('standings', [])
+                records = {}
                 
-                # If we're before October, use previous year's October
-                if datetime.now().month < 10:
-                    season_start = date_type(current_year - 1, 10, 1)
-                
-                final_games = db.query(Game).filter(
-                    Game.league == 'NHL',
-                    Game.is_final == True,
-                    Game.game_type == 'regular',  # Only regular season games
-                    Game.game_date >= season_start
-                ).all()
-                
-                # Calculate records for each team
-                for game in final_games:
-                    # Determine winner/loser based on scores
-                    home_score = game.home_score_total or 0
-                    visitor_score = game.visitor_score_total or 0
-                    
-                    if home_score == visitor_score:
-                        continue  # Skip ties (shouldn't happen in NHL but just in case)
-                    
-                    # Get team IDs
-                    home_team_id = game.home_team_id
-                    visitor_team_id = game.visitor_team_id
-                    
-                    # Initialize records if not present
-                    if home_team_id:
-                        try:
-                            home_id = int(home_team_id)
-                            if home_id not in records:
-                                records[home_id] = {'wins': 0, 'losses': 0, 'ot': 0}
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    if visitor_team_id:
-                        try:
-                            visitor_id = int(visitor_team_id)
-                            if visitor_id not in records:
-                                records[visitor_id] = {'wins': 0, 'losses': 0, 'ot': 0}
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    # Determine if game went to overtime (period > 3 or is_overtime flag)
-                    is_ot = False
-                    try:
-                        period = int(game.current_period) if game.current_period and str(game.current_period).isdigit() else 0
-                        if period > 3 or game.is_overtime:
-                            is_ot = True
-                    except (ValueError, TypeError):
-                        if game.is_overtime:
-                            is_ot = True
-                    
-                    # Update records
-                    if home_score > visitor_score:
-                        # Home team wins
-                        if home_team_id:
-                            try:
-                                home_id = int(home_team_id)
-                                records[home_id]['wins'] += 1
-                            except (ValueError, TypeError):
-                                pass
-                        if visitor_team_id:
-                            try:
-                                visitor_id = int(visitor_team_id)
-                                if is_ot:
-                                    records[visitor_id]['ot'] += 1  # Overtime loss
-                                else:
-                                    records[visitor_id]['losses'] += 1
-                            except (ValueError, TypeError):
-                                pass
+                # Build a mapping from team abbreviation to team ID first
+                # We'll need to fetch team info to match abbreviations to IDs
+                abbrev_to_id = {}
+                for team_standing in standings:
+                    team_abbrev = team_standing.get('teamAbbrev', {})
+                    if isinstance(team_abbrev, dict):
+                        abbrev = team_abbrev.get('default', '')
                     else:
-                        # Visitor team wins
-                        if visitor_team_id:
-                            try:
-                                visitor_id = int(visitor_team_id)
-                                records[visitor_id]['wins'] += 1
-                            except (ValueError, TypeError):
-                                pass
-                        if home_team_id:
-                            try:
-                                home_id = int(home_team_id)
-                                if is_ot:
-                                    records[home_id]['ot'] += 1  # Overtime loss
-                                else:
-                                    records[home_id]['losses'] += 1
-                            except (ValueError, TypeError):
-                                pass
-            
-            # Cache the results
-            if records:
-                self._team_records_cache = records
-                self._standings_cache_time = time.time()
-                logger.info(f"Calculated standings for {len(records)} teams from {len(final_games)} final games")
-                return records
+                        abbrev = str(team_abbrev)
+                    
+                    if abbrev:
+                        # Try to get team ID from a team info endpoint or match by name
+                        # For now, we'll create a lookup that matches by abbreviation
+                        # and fetch team IDs from the schedule API
+                        abbrev_to_id[abbrev] = None  # Will be populated below
+                
+                # Fetch team IDs by getting a recent game schedule and matching abbreviations
+                try:
+                    schedule_url = f"{self.base_url}/schedule/{datetime.now().strftime('%Y-%m-%d')}"
+                    schedule_response = requests.get(schedule_url, timeout=self.api_timeout)
+                    if schedule_response.status_code == 200:
+                        schedule_data = schedule_response.json()
+                        game_weeks = schedule_data.get('gameWeek', [])
+                        for week in game_weeks:
+                            games = week.get('games', [])
+                            for game in games:
+                                home_team = game.get('homeTeam', {})
+                                away_team = game.get('awayTeam', {})
+                                
+                                home_abbrev = home_team.get('abbrev', '')
+                                home_id = home_team.get('id')
+                                if home_abbrev and home_id:
+                                    abbrev_to_id[home_abbrev] = home_id
+                                
+                                away_abbrev = away_team.get('abbrev', '')
+                                away_id = away_team.get('id')
+                                if away_abbrev and away_id:
+                                    abbrev_to_id[away_abbrev] = away_id
+                except Exception as e:
+                    logger.debug(f"Could not fetch team IDs from schedule: {e}")
+                
+                # Now build records dictionary using team IDs
+                for team_standing in standings:
+                    team_abbrev = team_standing.get('teamAbbrev', {})
+                    if isinstance(team_abbrev, dict):
+                        abbrev = team_abbrev.get('default', '')
+                    else:
+                        abbrev = str(team_abbrev)
+                    
+                    team_id = abbrev_to_id.get(abbrev) if abbrev else None
+                    
+                    if team_id:
+                        try:
+                            team_id_int = int(team_id)
+                            records[team_id_int] = {
+                                'wins': team_standing.get('wins', 0),
+                                'losses': team_standing.get('losses', 0),
+                                'ot': team_standing.get('otLosses', 0)  # Overtime losses
+                            }
+                        except (ValueError, TypeError):
+                            logger.debug(f"Invalid team_id format: {team_id}")
+                            continue
+                    else:
+                        logger.debug(f"Could not find team ID for abbreviation: {abbrev}")
+                
+                # Cache the results
+                if records:
+                    self._team_records_cache = records
+                    self._standings_cache_time = time.time()
+                    logger.info(f"Fetched standings for {len(records)} teams from NHL API")
+                    return records
+                else:
+                    logger.warning("No team records found in standings API response")
+                    return {}
             else:
-                logger.debug("No final games found to calculate team records")
+                logger.warning(f"NHL standings API returned status {response.status_code}")
                 return {}
                 
         except Exception as e:
             # Non-critical failure - team records are optional
-            logger.debug(f"Could not calculate team records from database (non-critical): {e}")
+            logger.debug(f"Could not fetch team records from NHL standings API (non-critical): {e}")
             return {}
     
     def _get_team_record(self, team_id: str) -> Dict[str, int]:
