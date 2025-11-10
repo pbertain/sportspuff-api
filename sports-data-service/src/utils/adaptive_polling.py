@@ -112,25 +112,21 @@ class AdaptivePollingManager:
         in_progress_games = [g for g in active_games if g.game_status == 'in_progress']
         
         # NFL-specific polling logic
+        # Strategy: 23:00-06:00: 1x/hour, 07:00-22:59: 60x/hour (968 requests/day)
         if league == 'NFL':
-            if in_progress_games:
-                # Games in progress - check every 2 mins, or 1 min if under API limit
-                # Import here to avoid circular dependency
-                from utils.api_tracker import api_tracker
-                
-                # Check if we're under the API limit (use 80% threshold to be safe)
-                max_per_minute = settings.get_max_requests_per_minute(league)
-                current_requests = len(api_tracker.request_history.get(league, []))
-                usage_percent = (current_requests / max_per_minute) * 100 if max_per_minute > 0 else 0
-                
-                # If under 80% of limit, poll every minute; otherwise every 2 minutes
-                if usage_percent < 80:
-                    return 60  # 1 minute
-                else:
-                    return 120  # 2 minutes
-            else:
-                # No games in progress - check hourly
+            now = datetime.now()
+            current_hour = now.hour
+            
+            # Determine if we're in the low-frequency window (23:00-06:59)
+            # This is 23:00 (11pm) to 06:59 (6:59am) = 8 hours
+            is_low_frequency_window = current_hour >= 23 or current_hour < 7
+            
+            if is_low_frequency_window:
+                # Low frequency window: 1 request per hour
                 return 3600  # 1 hour
+            else:
+                # High frequency window (07:00-22:59): 60 requests per hour = 1 per minute
+                return 60  # 1 minute
         
         # Check for close games (for other leagues)
         close_games = []

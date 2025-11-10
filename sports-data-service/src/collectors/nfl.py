@@ -114,25 +114,13 @@ class NFLCollector(BaseCollector):
                 games = []
                 
                 if isinstance(data, list):
+                    # The getNFLGamesForDate endpoint returns all games for the date
+                    # with sufficient data for live scores - no need for individual game calls
+                    # This allows us to get all scores in a single API call per minute
                     for game in data:
-                        # Get detailed game data for live scores
-                        game_id = game.get('gameID')
-                        if game_id:
-                            try:
-                                detailed_game = self._get_game_details(game_id)
-                                parsed_game = self.parse_live_game_data(detailed_game)
-                                if parsed_game:
-                                    games.append(parsed_game)
-                            except Exception as e:
-                                logger.warning(f"Could not get detailed data for game {game_id}: {e}")
-                                # Fall back to basic game data
-                                parsed_game = self.parse_game_data(game)
-                                if parsed_game:
-                                    games.append(parsed_game)
-                        else:
-                            parsed_game = self.parse_game_data(game)
-                            if parsed_game:
-                                games.append(parsed_game)
+                        parsed_game = self.parse_game_data(game)
+                        if parsed_game:
+                            games.append(parsed_game)
                 
                 return games
             else:

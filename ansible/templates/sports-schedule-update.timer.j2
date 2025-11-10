@@ -3,8 +3,12 @@ Description=Sports Data Schedule Updater Timer ({{ deployment_env }})
 Requires=sports-schedule-update-{{ deployment_env }}.service
 
 [Timer]
+# General schedule updates (all leagues)
 OnCalendar=*-*-* 06:00:00
 OnCalendar=*-*-* 18:00:00
+# NFL-specific schedule updates (4am and 10pm)
+OnCalendar=*-*-* 04:00:00
+OnCalendar=*-*-* 22:00:00
 Persistent=true
 
 [Install]
