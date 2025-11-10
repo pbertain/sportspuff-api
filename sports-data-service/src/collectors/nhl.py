@@ -267,28 +267,35 @@ class NHLCollector(BaseCollector):
                         # and fetch team IDs from the schedule API
                         abbrev_to_id[abbrev] = None  # Will be populated below
                 
-                # Fetch team IDs by getting a recent game schedule and matching abbreviations
+                # Fetch team IDs by getting recent game schedules (check last 7 days to ensure we get all teams)
                 try:
-                    schedule_url = f"{self.base_url}/schedule/{datetime.now().strftime('%Y-%m-%d')}"
-                    schedule_response = requests.get(schedule_url, timeout=self.api_timeout)
-                    if schedule_response.status_code == 200:
-                        schedule_data = schedule_response.json()
-                        game_weeks = schedule_data.get('gameWeek', [])
-                        for week in game_weeks:
-                            games = week.get('games', [])
-                            for game in games:
-                                home_team = game.get('homeTeam', {})
-                                away_team = game.get('awayTeam', {})
-                                
-                                home_abbrev = home_team.get('abbrev', '')
-                                home_id = home_team.get('id')
-                                if home_abbrev and home_id:
-                                    abbrev_to_id[home_abbrev] = home_id
-                                
-                                away_abbrev = away_team.get('abbrev', '')
-                                away_id = away_team.get('id')
-                                if away_abbrev and away_id:
-                                    abbrev_to_id[away_abbrev] = away_id
+                    from datetime import timedelta
+                    for days_ago in range(7):
+                        check_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+                        schedule_url = f"{self.base_url}/schedule/{check_date}"
+                        schedule_response = requests.get(schedule_url, timeout=self.api_timeout)
+                        if schedule_response.status_code == 200:
+                            schedule_data = schedule_response.json()
+                            game_weeks = schedule_data.get('gameWeek', [])
+                            for week in game_weeks:
+                                games = week.get('games', [])
+                                for game in games:
+                                    home_team = game.get('homeTeam', {})
+                                    away_team = game.get('awayTeam', {})
+                                    
+                                    home_abbrev = home_team.get('abbrev', '')
+                                    home_id = home_team.get('id')
+                                    if home_abbrev and home_id and home_abbrev not in abbrev_to_id:
+                                        abbrev_to_id[home_abbrev] = home_id
+                                    
+                                    away_abbrev = away_team.get('abbrev', '')
+                                    away_id = away_team.get('id')
+                                    if away_abbrev and away_id and away_abbrev not in abbrev_to_id:
+                                        abbrev_to_id[away_abbrev] = away_id
+                        
+                        # Stop early if we have all 32 teams
+                        if len(abbrev_to_id) >= 32:
+                            break
                 except Exception as e:
                     logger.debug(f"Could not fetch team IDs from schedule: {e}")
                 
