@@ -39,14 +39,17 @@ class NFLCollector(BaseCollector):
         
         try:
             if date:
-                date_str = date.strftime('%Y-%m-%d')
+                # Tank01 API requires YYYYMMDD format (no dashes)
+                date_str = date.strftime('%Y%m%d')
             else:
-                date_str = datetime.now().strftime('%Y-%m-%d')
+                date_str = datetime.now().strftime('%Y%m%d')
             
-            url = f"{self.base_url}/getNFLGamesForDate/{date_str}"
+            # Tank01 API requires gameDate as a query parameter, not path parameter
+            url = f"{self.base_url}/getNFLGamesForDate"
+            params = {'gameDate': date_str}
             
             start_time = time.time()
-            response = requests.get(url, headers=self.headers, timeout=self.api_timeout)
+            response = requests.get(url, headers=self.headers, params=params, timeout=self.api_timeout)
             response_time = int((time.time() - start_time) * 1000)
             
             if response.status_code == 200:
@@ -106,9 +109,10 @@ class NFLCollector(BaseCollector):
         
         try:
             if date:
-                date_str = date.strftime('%Y-%m-%d')
+                # Tank01 API requires YYYYMMDD format (no dashes)
+                date_str = date.strftime('%Y%m%d')
             else:
-                date_str = datetime.now().strftime('%Y-%m-%d')
+                date_str = datetime.now().strftime('%Y%m%d')
             
             # Tank01 API requires gameDate as a query parameter, not path parameter
             url = f"{self.base_url}/getNFLGamesForDate"
