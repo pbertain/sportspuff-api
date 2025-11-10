@@ -1338,10 +1338,51 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
     collector = get_collector(league)
     
     # For today's games, try to get live data first
+    # But only use live_scores if we actually have games for today
+    # (get_live_scores may include yesterday's games that are still in progress)
     if target_date == today:
         if collector:
-            live_games = collector.get_live_scores(target_date)
-            if live_games:
+            # First try get_schedule to get today's scheduled games
+            schedule_games = collector.get_schedule(target_date)
+            if schedule_games:
+                # We have scheduled games for today, use those
+                seen_game_ids = set()
+                for game_dict in schedule_games:
+                    game_id = game_dict.get('game_id', '')
+                    if game_id and game_id in seen_game_ids:
+                        continue
+                    seen_game_ids.add(game_id)
+                    
+                    game_time = game_dict.get('game_time')
+                    game_date_str = game_dict.get('game_date', '')
+                    
+                    games_list.append({
+                        "game_id": game_id,
+                        "game_date": game_date_str if game_date_str else target_date.isoformat(),
+                        "game_time": game_time.isoformat() if game_time else None,
+                        "home_team": game_dict.get('home_team', ''),
+                        "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
+                        "visitor_team": game_dict.get('visitor_team', ''),
+                        "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
+                        "game_status": game_dict.get('game_status', 'scheduled'),
+                        "game_type": game_dict.get('game_type', 'regular'),
+                        "home_wins": game_dict.get('home_wins', 0),
+                        "home_losses": game_dict.get('home_losses', 0),
+                        "home_otl": game_dict.get('home_otl', 0) if league.upper() == 'NHL' else None,
+                        "visitor_wins": game_dict.get('visitor_wins', 0),
+                        "visitor_losses": game_dict.get('visitor_losses', 0),
+                        "visitor_otl": game_dict.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
+                        "current_period": game_dict.get('current_period', ''),
+                        "time_remaining": game_dict.get('time_remaining', ''),
+                        "home_score_total": game_dict.get('home_score_total', 0),
+                        "visitor_score_total": game_dict.get('visitor_score_total', 0),
+                        "is_final": game_dict.get('is_final', False),
+                    })
+            
+            # If no scheduled games, try live_scores (may include in-progress games from yesterday)
+            if not games_list:
+                live_games = collector.get_live_scores(target_date)
+                if live_games:
                 # Use live data - convert to format expected by frontend
                 seen_game_ids = set()
                 for game_dict in live_games:
