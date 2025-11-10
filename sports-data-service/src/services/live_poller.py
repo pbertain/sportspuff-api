@@ -82,12 +82,13 @@ class LivePoller:
         self.is_running = False
         logger.info("Stopping live polling...")
     
-    def poll_once(self, leagues: Optional[List[str]] = None) -> Dict[str, int]:
+    def poll_once(self, leagues: Optional[List[str]] = None, force: bool = False) -> Dict[str, int]:
         """
         Poll live scores once for specified leagues.
         
         Args:
             leagues: List of leagues to poll (optional, defaults to all)
+            force: If True, bypass date checks and poll anyway
             
         Returns:
             Dictionary mapping league to number of games updated
@@ -99,7 +100,7 @@ class LivePoller:
         
         for league in leagues:
             try:
-                updated_count = self._poll_league(league)
+                updated_count = self._poll_league(league, force=force)
                 results[league] = updated_count
             except Exception as e:
                 logger.error(f"Error polling {league}: {e}")
@@ -107,21 +108,23 @@ class LivePoller:
         
         return results
     
-    def _poll_league(self, league: str) -> int:
+    def _poll_league(self, league: str, force: bool = False) -> int:
         """
         Poll live scores for a specific league.
         
         Args:
             league: League identifier
+            force: If True, bypass date checks and poll anyway
             
         Returns:
             Number of games updated
         """
-        # Check if we should poll this league today
-        with get_db_session() as db:
-            if not self.polling_manager.should_poll_today(db):
-                logger.debug(f"No games scheduled today for {league}")
-                return 0
+        # Check if we should poll this league today (unless forcing)
+        if not force:
+            with get_db_session() as db:
+                if not self.polling_manager.should_poll_today(db):
+                    logger.debug(f"No games scheduled today for {league}")
+                    return 0
         
         # Check rate limits
         if not api_tracker.can_make_request(league):
@@ -264,4 +267,4 @@ class LivePoller:
             Dictionary mapping league to number of games updated
         """
         logger.info("Force updating all active games")
-        return self.poll_once()
+        return self.poll_once(force=True)

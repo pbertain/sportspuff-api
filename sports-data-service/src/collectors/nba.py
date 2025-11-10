@@ -540,35 +540,41 @@ class NBACollector(BaseCollector):
                             logger.debug(f"Error parsing game time {game_time_utc}: {e}")
                             pass
             
-            # If no date specified, get all games (today's games)
+            # If no date specified, get all games (today's games and in-progress games)
             else:
                 # Get today's date in UTC (since gameTimeUTC is in UTC)
-                from datetime import datetime
+                from datetime import datetime, timedelta
                 import pytz
                 utc_now = datetime.now(pytz.UTC)
                 today_utc = utc_now.date()
+                yesterday_utc = today_utc - timedelta(days=1)
                 
                 for game in games_data:
                     game_time_utc = game.get('gameTimeUTC', '')
+                    game_status_text = game.get('gameStatusText', '').strip().lower()
+                    is_in_progress = 'halftime' in game_status_text or 'live' in game_status_text or game.get('gameStatus') == 2
+                    
                     if game_time_utc:
                         try:
                             game_time_obj = parser.parse(game_time_utc)
                             game_date_utc = game_time_obj.date()
-                            # Only include games from today (UTC)
-                            if game_date_utc == today_utc:
+                            # Include games from today or yesterday (if still in progress)
+                            if game_date_utc == today_utc or (game_date_utc == yesterday_utc and is_in_progress):
                                 parsed_game = self._parse_live_scoreboard_game(game)
                                 if parsed_game:
                                     games.append(parsed_game)
                         except:
-                            # If parsing fails, include it anyway (shouldn't happen)
+                            # If parsing fails, include it anyway if it looks like it's in progress
+                            if is_in_progress:
+                                parsed_game = self._parse_live_scoreboard_game(game)
+                                if parsed_game:
+                                    games.append(parsed_game)
+                    else:
+                        # If no time but game is in progress, include it
+                        if is_in_progress:
                             parsed_game = self._parse_live_scoreboard_game(game)
                             if parsed_game:
                                 games.append(parsed_game)
-                    else:
-                        # If no time, include it (shouldn't happen)
-                        parsed_game = self._parse_live_scoreboard_game(game)
-                        if parsed_game:
-                            games.append(parsed_game)
             
             # Deduplicate games by game_id
             seen_game_ids = set()

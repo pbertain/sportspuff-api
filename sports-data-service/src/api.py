@@ -678,7 +678,12 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         else:
             # For other sports, use 'Q' for Quarter
             period_prefix = 'Q'
-            if time_left and time_left.strip():
+            # Check if it's halftime (period 2, time 0:00, and status is in_progress)
+            is_halftime = (period == '2' and time_left in ('0:00', '') and 
+                          game.game_status == 'in_progress')
+            if is_halftime:
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) HT"
+            elif time_left and time_left.strip():
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
             else:
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"

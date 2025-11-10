@@ -158,11 +158,11 @@ class BaseCollector(ABC):
         Returns:
             Normalized game status
         """
-        status_lower = status.lower()
+        status_lower = status.lower().strip()
         
         if status_lower in ['final', 'completed', 'finished', 'off']:
             return 'final'
-        elif status_lower in ['live', 'in progress', 'in_progress', 'active']:
+        elif status_lower in ['live', 'in progress', 'in_progress', 'active', 'halftime']:
             return 'in_progress'
         elif status_lower in ['scheduled', 'upcoming', 'pre']:
             return 'scheduled'
