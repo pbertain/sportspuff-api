@@ -247,9 +247,9 @@ class NFLCollector(BaseCollector):
             # Detect game type
             game_type = self._detect_nfl_game_type(raw_game)
             
-            # Parse quarter scores
-            home_period_scores = self._parse_quarter_scores(home_team.get('quarters', []))
-            visitor_period_scores = self._parse_quarter_scores(away_team.get('quarters', []))
+            # Parse quarter scores (only available for live/finished games)
+            home_period_scores = self._parse_quarter_scores(home_team.get('quarters', [])) if home_team.get('quarters') else []
+            visitor_period_scores = self._parse_quarter_scores(away_team.get('quarters', [])) if away_team.get('quarters') else []
             
             return {
                 'league': 'NFL',
