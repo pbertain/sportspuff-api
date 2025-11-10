@@ -172,18 +172,52 @@ class NFLCollector(BaseCollector):
             Standardized game dictionary
         """
         try:
-            # Extract team information
+            # Tank01 API returns different structures:
+            # - Scheduled games: home/away (abbrevs), teamIDHome/teamIDAway
+            # - Live games: homeTeam/awayTeam (objects with full details)
+            
+            # Check if we have full team objects (live games) or just abbreviations (scheduled)
             home_team = raw_game.get('homeTeam', {})
             away_team = raw_game.get('awayTeam', {})
             
+            # If no team objects, use abbreviations and IDs from scheduled game format
             if not home_team or not away_team:
-                logger.warning(f"No team data found for game {raw_game.get('gameID', 'unknown')}")
-                return None
+                home_abbrev = raw_game.get('home', '')
+                away_abbrev = raw_game.get('away', '')
+                home_id = raw_game.get('teamIDHome', '')
+                away_id = raw_game.get('teamIDAway', '')
+                
+                if not home_abbrev or not away_abbrev:
+                    logger.warning(f"No team data found for game {raw_game.get('gameID', 'unknown')}")
+                    return None
+                
+                # Create minimal team objects for scheduled games
+                home_team = {
+                    'teamName': home_abbrev,  # Will use abbrev as name if full name not available
+                    'teamAbbr': home_abbrev,
+                    'teamID': home_id,
+                    'score': 0,
+                    'wins': 0,
+                    'losses': 0
+                }
+                away_team = {
+                    'teamName': away_abbrev,
+                    'teamAbbr': away_abbrev,
+                    'teamID': away_id,
+                    'score': 0,
+                    'wins': 0,
+                    'losses': 0
+                }
             
-            # Parse game date
+            # Parse game date (can be YYYYMMDD or YYYY-MM-DD format)
             game_date_str = raw_game.get('gameDate', '')
             try:
-                game_date_obj = datetime.strptime(game_date_str, '%Y-%m-%d')
+                # Try YYYYMMDD format first (Tank01 API format)
+                if len(game_date_str) == 8 and game_date_str.isdigit():
+                    game_date_obj = datetime.strptime(game_date_str, '%Y%m%d')
+                else:
+                    # Try YYYY-MM-DD format
+                    game_date_obj = datetime.strptime(game_date_str, '%Y-%m-%d')
                 game_date = game_date_obj.strftime('%Y-%m-%d')
             except ValueError:
                 logger.warning(f"Invalid date format: {game_date_str}")
@@ -194,9 +228,21 @@ class NFLCollector(BaseCollector):
             if raw_game.get('gameTime'):
                 try:
                     game_time_str = raw_game['gameTime']
-                    game_time = datetime.strptime(f"{game_date} {game_time_str}", '%Y-%m-%d %H:%M:%S')
+                    # Handle formats like "8:15p" or "8:15 PM" or "20:15"
+                    if 'p' in game_time_str.lower() or 'a' in game_time_str.lower():
+                        # 12-hour format with a/p suffix
+                        time_clean = game_time_str.replace('p', ' PM').replace('a', ' AM').replace('P', ' PM').replace('A', ' AM')
+                        game_time = datetime.strptime(f"{game_date} {time_clean}", '%Y-%m-%d %I:%M %p')
+                    else:
+                        # Try 24-hour format
+                        game_time = datetime.strptime(f"{game_date} {game_time_str}", '%Y-%m-%d %H:%M:%S')
                 except:
-                    pass
+                    # If parsing fails, try using epoch time if available
+                    if raw_game.get('gameTime_epoch'):
+                        try:
+                            game_time = datetime.fromtimestamp(float(raw_game['gameTime_epoch']))
+                        except:
+                            pass
             
             # Detect game type
             game_type = self._detect_nfl_game_type(raw_game)
