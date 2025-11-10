@@ -1748,16 +1748,23 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                         "is_final": game.get('is_final', False),
                         "game_status": game.get('game_status', 'scheduled'),
                         "current_period": game.get('current_period', ''),
-                        "time_remaining": game.get('time_remaining', '')
+                        "time_remaining": game.get('time_remaining', ''),
+                        "home_wins": game.get('home_wins', 0),
+                        "home_losses": game.get('home_losses', 0),
+                        "home_otl": game.get('home_otl', 0) if league.upper() == 'NHL' else None,
+                        "visitor_wins": game.get('visitor_wins', 0),
+                        "visitor_losses": game.get('visitor_losses', 0),
+                        "visitor_otl": game.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
                     }
                     for game in live_games
                 ]
         
-        # For past dates, try get_schedule (which may have final scores)
-        if target_date < today:
-            schedule_games = collector.get_schedule(target_date)
-            if schedule_games:
-                # Filter for games that have scores (final or in-progress)
+        # For past or future dates, try get_schedule
+        schedule_games = collector.get_schedule(target_date)
+        if schedule_games:
+            # For past dates, filter for games that have scores (final or in-progress)
+            # For future dates, return all scheduled games
+            if target_date < today:
                 scored_games = [
                     game for game in schedule_games
                     if game.get('is_final') or game.get('home_score_total', 0) > 0 or game.get('visitor_score_total', 0) > 0
@@ -1773,17 +1780,44 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                             "is_final": game.get('is_final', False),
                             "game_status": game.get('game_status', 'scheduled'),
                             "current_period": game.get('current_period', ''),
-                            "time_remaining": game.get('time_remaining', '')
+                            "time_remaining": game.get('time_remaining', ''),
+                            "home_wins": game.get('home_wins', 0),
+                            "home_losses": game.get('home_losses', 0),
+                            "home_otl": game.get('home_otl', 0) if league.upper() == 'NHL' else None,
+                            "visitor_wins": game.get('visitor_wins', 0),
+                            "visitor_losses": game.get('visitor_losses', 0),
+                            "visitor_otl": game.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
                         }
                         for game in scored_games
                     ]
+            else:
+                # Future dates - return scheduled games (may not have scores yet)
+                return [
+                    {
+                        "game_id": game.get('game_id', ''),
+                        "home_team": game.get('home_team', ''),
+                        "home_score": game.get('home_score_total', 0),
+                        "visitor_team": game.get('visitor_team', ''),
+                        "visitor_score": game.get('visitor_score_total', 0),
+                        "is_final": game.get('is_final', False),
+                        "game_status": game.get('game_status', 'scheduled'),
+                        "current_period": game.get('current_period', ''),
+                        "time_remaining": game.get('time_remaining', ''),
+                        "home_wins": game.get('home_wins', 0),
+                        "home_losses": game.get('home_losses', 0),
+                        "home_otl": game.get('home_otl', 0) if league.upper() == 'NHL' else None,
+                        "visitor_wins": game.get('visitor_wins', 0),
+                        "visitor_losses": game.get('visitor_losses', 0),
+                        "visitor_otl": game.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
+                    }
+                    for game in schedule_games
+                ]
     
-    # Fallback to database for final games only
+    # Fallback to database
     with get_db_session() as db:
         games = db.query(Game).filter(
             Game.league == league,
-            Game.game_date == target_date,
-            Game.is_final == True
+            Game.game_date == target_date
         ).all()
         
         return [
@@ -1793,7 +1827,16 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                 "home_score": game.home_score_total,
                 "visitor_team": game.visitor_team,
                 "visitor_score": game.visitor_score_total,
-                "is_final": game.is_final
+                "is_final": game.is_final,
+                "game_status": game.game_status,
+                "current_period": game.current_period,
+                "time_remaining": game.time_remaining,
+                "home_wins": game.home_wins or 0,
+                "home_losses": game.home_losses or 0,
+                "home_otl": game.home_otl if league.upper() == 'NHL' and hasattr(game, 'home_otl') else None,
+                "visitor_wins": game.visitor_wins or 0,
+                "visitor_losses": game.visitor_losses or 0,
+                "visitor_otl": game.visitor_otl if league.upper() == 'NHL' and hasattr(game, 'visitor_otl') else None,
             }
             for game in games
         ]
