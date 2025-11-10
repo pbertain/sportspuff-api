@@ -1436,10 +1436,10 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
             if schedule_games:
                 seen_game_ids = set()
                 for game_dict in schedule_games:
-                game_id = game_dict.get('game_id', '')
-                if game_id and game_id in seen_game_ids:
-                    continue
-                seen_game_ids.add(game_id)
+                    game_id = game_dict.get('game_id', '')
+                    if game_id and game_id in seen_game_ids:
+                        continue
+                    seen_game_ids.add(game_id)
                 
                 game_time = game_dict.get('game_time')
                 game_date_str = game_dict.get('game_date', '')
