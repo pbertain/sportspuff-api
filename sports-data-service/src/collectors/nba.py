@@ -60,17 +60,32 @@ class NBACollector(BaseCollector):
         raise TimeoutError("NBA API call timed out")
     
     def _call_with_timeout(self, func, timeout_seconds: int = None):
-        """Call a function with a timeout."""
+        """Call a function with a timeout.
+        
+        Note: signal.SIGALRM only works in the main thread, so we skip timeout
+        in worker threads and just call the function directly.
+        """
         if timeout_seconds is None:
             timeout_seconds = self.api_timeout
-            
-        signal.signal(signal.SIGALRM, self._timeout_handler)
-        signal.alarm(timeout_seconds)
-        try:
-            result = func()
-            return result
-        finally:
-            signal.alarm(0)
+        
+        # Check if we're in the main thread
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGALRM, self._timeout_handler)
+                signal.alarm(timeout_seconds)
+                try:
+                    result = func()
+                    return result
+                finally:
+                    signal.alarm(0)
+            except (ValueError, OSError):
+                # Signal not available (e.g., Windows or not in main thread)
+                # Just call the function without timeout
+                return func()
+        else:
+            # Not in main thread, can't use signals - just call the function
+            return func()
     
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
