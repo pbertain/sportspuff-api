@@ -1468,12 +1468,42 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                 })
     
     # Fallback to database if no collector games found
+    # For NBA, filter by Pacific timezone date since games may be stored with UTC dates
     if not games_list:
         with get_db_session() as db:
-            games = db.query(Game).filter(
-                Game.league == league,
-                Game.game_date == target_date
-            ).order_by(Game.game_time).all()
+            if league.upper() == 'NBA':
+                # For NBA, games may be stored with UTC dates but we want Pacific dates
+                # Get games from target_date and target_date-1 (yesterday) to catch timezone edge cases
+                from datetime import timedelta
+                yesterday = target_date - timedelta(days=1)
+                all_games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date.in_([target_date, yesterday])
+                ).order_by(Game.game_time).all()
+                
+                # Filter by Pacific timezone date
+                pacific_tz = pytz.timezone('US/Pacific')
+                games = []
+                for game in all_games:
+                    if game.game_time:
+                        # Convert game_time to Pacific and check date
+                        if game.game_time.tzinfo is None:
+                            # Assume UTC if no timezone
+                            game_time_utc = pytz.UTC.localize(game.game_time)
+                        else:
+                            game_time_utc = game.game_time
+                        game_time_pacific = game_time_utc.astimezone(pacific_tz)
+                        if game_time_pacific.date() == target_date:
+                            games.append(game)
+                    elif game.game_date == target_date:
+                        # If no game_time, use game_date (should match)
+                        games.append(game)
+            else:
+                # For other leagues, use simple date match
+                games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date
+                ).order_by(Game.game_time).all()
             
             games_list = [
                 {
