@@ -261,11 +261,17 @@ class NHLCollector(BaseCollector):
                 if datetime.now().month < 10:
                     season_start = date_type(current_year - 1, 10, 1)
                 
+                # Get final games - either marked as final OR have scores and game_status is final
                 final_games = db.query(Game).filter(
                     Game.league == 'NHL',
-                    Game.is_final == True,
                     Game.game_type == 'regular',  # Only regular season games
                     Game.game_date >= season_start
+                ).filter(
+                    # Game is final if: is_final flag is true OR (has scores and status is final)
+                    (Game.is_final == True) | 
+                    ((Game.home_score_total.isnot(None)) & 
+                     (Game.visitor_score_total.isnot(None)) & 
+                     (Game.game_status == 'final'))
                 ).all()
                 
                 # Calculate records for each team
