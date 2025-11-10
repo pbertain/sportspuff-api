@@ -1338,17 +1338,59 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
     collector = get_collector(league)
     
     # For today's games, try to get live data first
+    # But only use live_scores if we actually have games for today
+    # (get_live_scores may include yesterday's games that are still in progress)
     if target_date == today:
         if collector:
-            live_games = collector.get_live_scores(target_date)
-            if live_games:
-                # Use live data - convert to format expected by frontend
+            # First try get_schedule to get today's scheduled games
+            schedule_games = collector.get_schedule(target_date)
+            if schedule_games:
+                # We have scheduled games for today, use those
                 seen_game_ids = set()
-                for game_dict in live_games:
+                for game_dict in schedule_games:
                     game_id = game_dict.get('game_id', '')
                     if game_id and game_id in seen_game_ids:
                         continue
                     seen_game_ids.add(game_id)
+                    
+                    game_time = game_dict.get('game_time')
+                    game_date_str = game_dict.get('game_date', '')
+                    
+                    games_list.append({
+                        "game_id": game_id,
+                        "game_date": game_date_str if game_date_str else target_date.isoformat(),
+                        "game_time": game_time.isoformat() if game_time else None,
+                        "home_team": game_dict.get('home_team', ''),
+                        "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
+                        "visitor_team": game_dict.get('visitor_team', ''),
+                        "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
+                        "game_status": game_dict.get('game_status', 'scheduled'),
+                        "game_type": game_dict.get('game_type', 'regular'),
+                        "home_wins": game_dict.get('home_wins', 0),
+                        "home_losses": game_dict.get('home_losses', 0),
+                        "home_otl": game_dict.get('home_otl', 0) if league.upper() == 'NHL' else None,
+                        "visitor_wins": game_dict.get('visitor_wins', 0),
+                        "visitor_losses": game_dict.get('visitor_losses', 0),
+                        "visitor_otl": game_dict.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
+                        "current_period": game_dict.get('current_period', ''),
+                        "time_remaining": game_dict.get('time_remaining', ''),
+                        "home_score_total": game_dict.get('home_score_total', 0),
+                        "visitor_score_total": game_dict.get('visitor_score_total', 0),
+                        "is_final": game_dict.get('is_final', False),
+                    })
+            
+            # If no scheduled games, try live_scores (may include in-progress games from yesterday)
+            if not games_list:
+                live_games = collector.get_live_scores(target_date)
+                if live_games:
+                    # Use live data - convert to format expected by frontend
+                    # But filter to ensure games are actually for today (Pacific time)
+                    seen_game_ids = set()
+                    for game_dict in live_games:
+                        game_id = game_dict.get('game_id', '')
+                        if game_id and game_id in seen_game_ids:
+                            continue
+                        seen_game_ids.add(game_id)
                     
                     # Get game_time from live data if available
                     game_time = game_dict.get('game_time')
@@ -1387,15 +1429,17 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                     })
     
     # For any date (today or past), try get_schedule from collector
-    if not games_list and collector:
-        schedule_games = collector.get_schedule(target_date)
-        if schedule_games:
-            seen_game_ids = set()
-            for game_dict in schedule_games:
-                game_id = game_dict.get('game_id', '')
-                if game_id and game_id in seen_game_ids:
-                    continue
-                seen_game_ids.add(game_id)
+    # Also check database for stored games if collector returns nothing
+    if not games_list:
+        if collector:
+            schedule_games = collector.get_schedule(target_date)
+            if schedule_games:
+                seen_game_ids = set()
+                for game_dict in schedule_games:
+                    game_id = game_dict.get('game_id', '')
+                    if game_id and game_id in seen_game_ids:
+                        continue
+                    seen_game_ids.add(game_id)
                 
                 game_time = game_dict.get('game_time')
                 game_date_str = game_dict.get('game_date', '')
@@ -1424,12 +1468,42 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                 })
     
     # Fallback to database if no collector games found
+    # For NBA, filter by Pacific timezone date since games may be stored with UTC dates
     if not games_list:
         with get_db_session() as db:
-            games = db.query(Game).filter(
-                Game.league == league,
-                Game.game_date == target_date
-            ).order_by(Game.game_time).all()
+            if league.upper() == 'NBA':
+                # For NBA, games may be stored with UTC dates but we want Pacific dates
+                # Get games from target_date and target_date-1 (yesterday) to catch timezone edge cases
+                from datetime import timedelta
+                yesterday = target_date - timedelta(days=1)
+                all_games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date.in_([target_date, yesterday])
+                ).order_by(Game.game_time).all()
+                
+                # Filter by Pacific timezone date
+                pacific_tz = pytz.timezone('US/Pacific')
+                games = []
+                for game in all_games:
+                    if game.game_time:
+                        # Convert game_time to Pacific and check date
+                        if game.game_time.tzinfo is None:
+                            # Assume UTC if no timezone
+                            game_time_utc = pytz.UTC.localize(game.game_time)
+                        else:
+                            game_time_utc = game.game_time
+                        game_time_pacific = game_time_utc.astimezone(pacific_tz)
+                        if game_time_pacific.date() == target_date:
+                            games.append(game)
+                    elif game.game_date == target_date:
+                        # If no game_time, use game_date (should match)
+                        games.append(game)
+            else:
+                # For other leagues, use simple date match
+                games = db.query(Game).filter(
+                    Game.league == league,
+                    Game.game_date == target_date
+                ).order_by(Game.game_time).all()
             
             games_list = [
                 {

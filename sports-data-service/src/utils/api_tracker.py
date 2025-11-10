@@ -21,7 +21,9 @@ class APITracker:
     def __init__(self):
         self.request_history: Dict[str, deque] = defaultdict(lambda: deque())
         self.daily_usage: Dict[str, int] = defaultdict(int)
+        self.monthly_usage: Dict[str, int] = defaultdict(int)
         self.last_reset = datetime.now().date()
+        self.last_monthly_reset = datetime.now().replace(day=1).date()
     
     def can_make_request(self, league: str) -> bool:
         """
@@ -55,6 +57,8 @@ class APITracker:
         now = time.time()
         self.request_history[league].append(now)
         self.daily_usage[league] += 1
+        self._reset_monthly_usage_if_needed()
+        self.monthly_usage[league] += 1
         
         logger.debug(f"Recorded {league} API request to {endpoint}: success={success}")
     
@@ -131,16 +135,54 @@ class APITracker:
         """
         self._cleanup_old_requests()
         self._reset_daily_usage_if_needed()
+        self._reset_monthly_usage_if_needed()
         
         stats = {}
         for league in ['NBA', 'MLB', 'NHL', 'NFL', 'WNBA']:
             stats[league] = {
                 'requests_last_minute': len(self.request_history[league]),
                 'requests_today': self.daily_usage[league],
+                'requests_this_month': self.monthly_usage[league],
                 'max_per_minute': settings.get_max_requests_per_minute(league)
             }
+            # Add monthly limit if configured
+            if league == 'NFL':
+                stats[league]['max_per_month'] = settings.nfl_max_requests_per_month
         
         return stats
+    
+    def get_monthly_usage(self, league: str) -> int:
+        """
+        Get monthly usage count for a league.
+        
+        Args:
+            league: League identifier
+            
+        Returns:
+            Number of requests made this month
+        """
+        self._reset_monthly_usage_if_needed()
+        return self.monthly_usage[league]
+    
+    def can_make_monthly_request(self, league: str) -> bool:
+        """
+        Check if we can make a request without exceeding monthly limits.
+        
+        Args:
+            league: League identifier
+            
+        Returns:
+            True if request is allowed within monthly limit
+        """
+        self._reset_monthly_usage_if_needed()
+        
+        # Only NFL has monthly limit configured
+        if league == 'NFL':
+            monthly_limit = settings.nfl_max_requests_per_month
+            current_monthly = self.monthly_usage[league]
+            return current_monthly < monthly_limit
+        
+        return True  # No monthly limit for other leagues
     
     def _cleanup_old_requests(self):
         """Remove requests older than 1 minute."""
@@ -158,6 +200,15 @@ class APITracker:
             self.daily_usage.clear()
             self.last_reset = today
             logger.info("Reset daily API usage counters")
+    
+    def _reset_monthly_usage_if_needed(self):
+        """Reset monthly usage if it's a new month."""
+        today = datetime.now().date()
+        first_of_month = today.replace(day=1)
+        if first_of_month > self.last_monthly_reset:
+            self.monthly_usage.clear()
+            self.last_monthly_reset = first_of_month
+            logger.info("Reset monthly API usage counters")
 
 
 class APIMonitor:

@@ -60,17 +60,32 @@ class NBACollector(BaseCollector):
         raise TimeoutError("NBA API call timed out")
     
     def _call_with_timeout(self, func, timeout_seconds: int = None):
-        """Call a function with a timeout."""
+        """Call a function with a timeout.
+        
+        Note: signal.SIGALRM only works in the main thread, so we skip timeout
+        in worker threads and just call the function directly.
+        """
         if timeout_seconds is None:
             timeout_seconds = self.api_timeout
-            
-        signal.signal(signal.SIGALRM, self._timeout_handler)
-        signal.alarm(timeout_seconds)
-        try:
-            result = func()
-            return result
-        finally:
-            signal.alarm(0)
+        
+        # Check if we're in the main thread
+        import threading
+        if threading.current_thread() is threading.main_thread():
+            try:
+                signal.signal(signal.SIGALRM, self._timeout_handler)
+                signal.alarm(timeout_seconds)
+                try:
+                    result = func()
+                    return result
+                finally:
+                    signal.alarm(0)
+            except (ValueError, OSError):
+                # Signal not available (e.g., Windows or not in main thread)
+                # Just call the function without timeout
+                return func()
+        else:
+            # Not in main thread, can't use signals - just call the function
+            return func()
     
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
@@ -129,8 +144,11 @@ class NBACollector(BaseCollector):
                     
                     # Filter games by date if specified
                     if date is not None:
-                        # Filter games by date (convert UTC game times to target date)
+                        # Filter games by date (convert UTC game times to Pacific time for date comparison)
+                        # NBA games are scheduled in Eastern/Pacific time, so we need to compare dates in that timezone
                         from dateutil import parser
+                        import pytz
+                        pacific_tz = pytz.timezone('US/Pacific')
                         target_date_str = date.strftime('%Y-%m-%d')
                         filtered_games = []
                         for game in games:
@@ -138,11 +156,16 @@ class NBACollector(BaseCollector):
                             if game_time_utc:
                                 try:
                                     game_time_obj = parser.parse(game_time_utc)
-                                    game_date_str = game_time_obj.date().strftime('%Y-%m-%d')
+                                    # Ensure timezone-aware (assume UTC if not specified)
+                                    if game_time_obj.tzinfo is None:
+                                        game_time_obj = pytz.UTC.localize(game_time_obj)
+                                    # Convert to Pacific time for date comparison
+                                    game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                                    game_date_str = game_time_pacific.date().strftime('%Y-%m-%d')
                                     if game_date_str == target_date_str:
                                         filtered_games.append(game)
                                     else:
-                                        logger.debug(f"Game {game.get('gameId')} date {game_date_str} doesn't match target {target_date_str}")
+                                        logger.debug(f"Game {game.get('gameId')} date {game_date_str} (Pacific) doesn't match target {target_date_str}")
                                 except Exception as e:
                                     logger.warning(f"Error parsing game time {game_time_utc}: {e}, including game")
                                     # If parsing fails, include the game
@@ -151,7 +174,7 @@ class NBACollector(BaseCollector):
                                 # If no time, include the game (for today's games)
                                 filtered_games.append(game)
                         games = filtered_games
-                        logger.info(f"Filtered to {len(games)} games for date {target_date_str}")
+                        logger.info(f"Filtered to {len(games)} games for date {target_date_str} (Pacific time)")
                     
                     # Get date string for return format
                     if date is None:

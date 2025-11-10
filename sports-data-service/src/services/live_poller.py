@@ -122,9 +122,16 @@ class LivePoller:
             Number of games updated
         """
         # Check if we should poll this league (unless forcing)
+        # NFL: Always poll during polling hours (time-based strategy)
         if not force:
             with get_db_session() as db:
-                if check_game_states:
+                if league == 'NFL':
+                    # NFL uses time-based polling (hourly at night, per-minute during day)
+                    # Always poll if we're in polling hours
+                    if not self.polling_manager.should_poll_now():
+                        logger.debug(f"Outside polling hours for {league}")
+                        return 0
+                elif check_game_states:
                     # Use smart polling: poll if games were in_progress or all are upcoming
                     if not self.polling_manager.should_poll_based_on_game_states(db, league):
                         logger.debug(f"Skipping poll for {league} - no active games and not all upcoming")

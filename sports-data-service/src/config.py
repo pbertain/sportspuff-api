@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     nfl_max_requests_per_minute: int = Field(default=30)
     wnba_max_requests_per_minute: int = Field(default=60)
     
+    # Monthly API Limits (for Tank01/RapidAPI)
+    nfl_max_requests_per_month: int = Field(default=10000, description="Monthly limit for NFL API (Tank01/RapidAPI)")
+    
     # API Server
     api_host: str = Field(default="127.0.0.1")
     api_port: int = Field(default=34180)

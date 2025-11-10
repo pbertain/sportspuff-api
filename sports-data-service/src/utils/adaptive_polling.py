@@ -84,23 +84,51 @@ class AdaptivePollingManager:
             Polling interval in seconds, or None to stop polling
         """
         today = datetime.now().date()
+        yesterday = today - timedelta(days=1)
         
-        # Get active games for the league
+        # Get active games for the league (today and yesterday for games spanning midnight)
         active_games = db.query(Game).filter(
             Game.league == league,
-            Game.game_date == today,
+            Game.game_date >= yesterday,
+            Game.game_date <= today,
             Game.is_final == False
         ).all()
         
         if not active_games:
+            # NFL-specific: Check hourly if no games
+            if league == 'NFL':
+                return 3600  # 1 hour
             return None  # No active games, stop polling
         
         # Check if all games are final
         all_final = all(game.is_final for game in active_games)
         if all_final:
+            # NFL-specific: Check hourly if all games are final
+            if league == 'NFL':
+                return 3600  # 1 hour
             return None  # All games final, stop polling
         
-        # Check for close games
+        # Check for games in progress
+        in_progress_games = [g for g in active_games if g.game_status == 'in_progress']
+        
+        # NFL-specific polling logic
+        # Strategy: 23:00-06:00: 1x/hour, 07:00-22:59: 60x/hour (968 requests/day)
+        if league == 'NFL':
+            now = datetime.now()
+            current_hour = now.hour
+            
+            # Determine if we're in the low-frequency window (23:00-06:59)
+            # This is 23:00 (11pm) to 06:59 (6:59am) = 8 hours
+            is_low_frequency_window = current_hour >= 23 or current_hour < 7
+            
+            if is_low_frequency_window:
+                # Low frequency window: 1 request per hour
+                return 3600  # 1 hour
+            else:
+                # High frequency window (07:00-22:59): 60 requests per hour = 1 per minute
+                return 60  # 1 minute
+        
+        # Check for close games (for other leagues)
         close_games = []
         for game in active_games:
             if game.game_status == 'in_progress':
@@ -110,11 +138,11 @@ class AdaptivePollingManager:
                     if score_diff <= threshold:
                         close_games.append(game)
         
-        # Determine interval based on game states
+        # Determine interval based on game states (for non-NFL leagues)
         if close_games:
             # Close games in progress - poll more frequently
             return settings.close_game_poll_interval
-        elif any(game.game_status == 'in_progress' for game in active_games):
+        elif in_progress_games:
             # Games in progress but not close
             # NBA games poll every minute during games
             if league == 'NBA':
