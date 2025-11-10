@@ -2,7 +2,7 @@
 Adaptive polling utilities for live score updates.
 """
 
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from typing import Optional, List, Dict, Any
 import logging
 
@@ -137,14 +137,72 @@ class AdaptivePollingManager:
             List of games that need updates
         """
         today = datetime.now().date()
+        yesterday = today - timedelta(days=1)
         
+        # Get games from today and yesterday (in case games span midnight)
         games = db.query(Game).filter(
             Game.league == league,
-            Game.game_date == today,
+            Game.game_date >= yesterday,
+            Game.game_date <= today,
             Game.is_final == False
         ).all()
         
         return games
+    
+    def should_poll_based_on_game_states(self, db: Session, league: str) -> bool:
+        """
+        Determine if we should poll based on game states.
+        
+        Strategy:
+        - Poll if any game was previously "in_progress" (to keep updating active games)
+        - Poll if all games are "upcoming"/"scheduled" (to catch when games start)
+        - Skip polling if all games are final and no games are scheduled
+        
+        Args:
+            db: Database session
+            league: League to check
+            
+        Returns:
+            True if we should poll, False otherwise
+        """
+        today = datetime.now().date()
+        yesterday = today - timedelta(days=1)
+        
+        # Get games from today and yesterday (in case games span midnight)
+        games = db.query(Game).filter(
+            Game.league == league,
+            Game.game_date >= yesterday,
+            Game.game_date <= today,
+            Game.is_final == False
+        ).all()
+        
+        if not games:
+            # No games at all - don't poll
+            return False
+        
+        # Check if any game was previously in_progress
+        has_in_progress = any(
+            game.game_status == 'in_progress' 
+            for game in games
+        )
+        
+        # Check if all games are upcoming/scheduled
+        all_upcoming = all(
+            game.game_status in ('scheduled', 'upcoming')
+            for game in games
+        )
+        
+        # Poll if:
+        # 1. Any game is in_progress (keep updating active games)
+        # 2. All games are upcoming (catch when games start)
+        should_poll = has_in_progress or all_upcoming
+        
+        if should_poll:
+            logger.debug(f"Should poll {league}: has_in_progress={has_in_progress}, all_upcoming={all_upcoming}, total_games={len(games)}")
+        else:
+            logger.debug(f"Skipping poll for {league}: no active games and not all upcoming (total_games={len(games)})")
+        
+        return should_poll
     
     def update_polling_state(self, db: Session, league: str):
         """

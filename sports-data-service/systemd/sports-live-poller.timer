@@ -3,14 +3,11 @@ Description=Sports Data Live Score Poller Timer
 Requires=sports-live-poller.service
 
 [Timer]
-OnCalendar=*-*-* 12:00:00
-OnCalendar=*-*-* 14:00:00
-OnCalendar=*-*-* 16:00:00
-OnCalendar=*-*-* 18:00:00
-OnCalendar=*-*-* 20:00:00
-OnCalendar=*-*-* 22:00:00
-OnCalendar=*-*-* 00:00:00
-OnCalendar=*-*-* 02:00:00
+# Run every minute
+# The service itself will decide whether to actually poll based on:
+# 1. Polling hours (configured in settings)
+# 2. Game states (poll if games in_progress or all upcoming)
+OnCalendar=minutely
 Persistent=true
 
 [Install]

@@ -82,13 +82,14 @@ class LivePoller:
         self.is_running = False
         logger.info("Stopping live polling...")
     
-    def poll_once(self, leagues: Optional[List[str]] = None, force: bool = False) -> Dict[str, int]:
+    def poll_once(self, leagues: Optional[List[str]] = None, force: bool = False, check_game_states: bool = True) -> Dict[str, int]:
         """
         Poll live scores once for specified leagues.
         
         Args:
             leagues: List of leagues to poll (optional, defaults to all)
-            force: If True, bypass date checks and poll anyway
+            force: If True, bypass all checks and poll anyway
+            check_game_states: If True, use smart polling based on game states
             
         Returns:
             Dictionary mapping league to number of games updated
@@ -100,7 +101,7 @@ class LivePoller:
         
         for league in leagues:
             try:
-                updated_count = self._poll_league(league, force=force)
+                updated_count = self._poll_league(league, force=force, check_game_states=check_game_states)
                 results[league] = updated_count
             except Exception as e:
                 logger.error(f"Error polling {league}: {e}")
@@ -108,29 +109,43 @@ class LivePoller:
         
         return results
     
-    def _poll_league(self, league: str, force: bool = False) -> int:
+    def _poll_league(self, league: str, force: bool = False, check_game_states: bool = True) -> int:
         """
         Poll live scores for a specific league.
         
         Args:
             league: League identifier
-            force: If True, bypass date checks and poll anyway
+            force: If True, bypass all checks and poll anyway
+            check_game_states: If True, use smart polling based on game states
             
         Returns:
             Number of games updated
         """
-        # Check if we should poll this league today (unless forcing)
+        # Check if we should poll this league (unless forcing)
         if not force:
             with get_db_session() as db:
-                if not self.polling_manager.should_poll_today(db):
-                    logger.debug(f"No games scheduled today for {league}")
-                    return 0
+                if check_game_states:
+                    # Use smart polling: poll if games were in_progress or all are upcoming
+                    if not self.polling_manager.should_poll_based_on_game_states(db, league):
+                        logger.debug(f"Skipping poll for {league} - no active games and not all upcoming")
+                        return 0
+                else:
+                    # Legacy check: only poll if games scheduled today
+                    if not self.polling_manager.should_poll_today(db):
+                        logger.debug(f"No games scheduled today for {league}")
+                        return 0
         
         # Check rate limits
         if not api_tracker.can_make_request(league):
             wait_time = api_tracker.get_wait_time(league)
             logger.warning(f"Rate limit reached for {league}, waiting {wait_time:.1f}s")
             return 0
+        
+        # Check if we're in polling hours (unless forcing)
+        if not force:
+            if not self.polling_manager.should_poll_now():
+                logger.debug(f"Outside polling hours for {league}")
+                return 0
         
         try:
             collector = self.collectors[league]
