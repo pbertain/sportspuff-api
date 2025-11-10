@@ -1387,10 +1387,10 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                     # But filter to ensure games are actually for today (Pacific time)
                     seen_game_ids = set()
                     for game_dict in live_games:
-                    game_id = game_dict.get('game_id', '')
-                    if game_id and game_id in seen_game_ids:
-                        continue
-                    seen_game_ids.add(game_id)
+                        game_id = game_dict.get('game_id', '')
+                        if game_id and game_id in seen_game_ids:
+                            continue
+                        seen_game_ids.add(game_id)
                     
                     # Get game_time from live data if available
                     game_time = game_dict.get('game_time')
