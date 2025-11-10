@@ -5,5 +5,5 @@ set -e
 PORT=${API_PORT:-34180}
 
 # Use Python to check health endpoint
-python -c "import urllib.request; urllib.request.urlopen(f'http://localhost:{PORT}/health').read()" || exit 1
+python -c "import urllib.request, os; port = os.environ.get('API_PORT', '34180'); urllib.request.urlopen(f'http://localhost:{port}/health').read()" || python -c "import urllib.request; urllib.request.urlopen('http://localhost:34180/health').read()" || exit 1
 

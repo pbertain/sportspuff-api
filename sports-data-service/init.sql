@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS games (
     home_team_id VARCHAR(20),
     home_wins INTEGER,
     home_losses INTEGER,
+    home_otl INTEGER,  -- Overtime losses (NHL)
     home_score_total INTEGER,
     
     -- Visitor team
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS games (
     visitor_team_id VARCHAR(20),
     visitor_wins INTEGER,
     visitor_losses INTEGER,
+    visitor_otl INTEGER,  -- Overtime losses (NHL)
     visitor_score_total INTEGER,
     
     -- Game state

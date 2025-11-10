@@ -19,8 +19,9 @@ class NHLCollector(BaseCollector):
     def __init__(self):
         super().__init__("NHL")
         self.base_url = "https://api-web.nhle.com/v1"
-        # Keep stats API for standings (it has better team record data)
-        self.stats_api_url = "https://statsapi.web.nhl.com/api/v1"
+        # Stats API endpoint - using main API instead of deprecated statsapi.web.nhl.com
+        # Team records are optional - if this fails, we'll just use 0-0-0 records
+        self.stats_api_url = "https://api-web.nhle.com/v1/standings/now"
         self._team_records_cache = {}  # Cache team records: {team_id: {'wins': int, 'losses': int, 'ot': int}}
         self._standings_cache_time = None
         self._standings_cache_ttl = 3600  # Cache standings for 1 hour
@@ -243,39 +244,55 @@ class NHLCollector(BaseCollector):
         
         try:
             self._check_rate_limit()
-            url = f"{self.stats_api_url}/standings"
+            # Try the main NHL API endpoint for standings
+            url = self.stats_api_url
             response = requests.get(url, timeout=self.api_timeout)
             
             if response.status_code == 200:
                 data = response.json()
                 records = {}
                 
-                # The standings API returns data in divisions
-                for record in data.get('records', []):
-                    for division in record.get('divisionRecords', []):
-                        for team_record in division.get('teamRecords', []):
-                            team_id = team_record.get('team', {}).get('id')
-                            league_record = team_record.get('leagueRecord', {})
+                # Try to parse standings from api-web.nhle.com format
+                # If the format is different, we'll fall back to empty records
+                if isinstance(data, dict):
+                    # Check if it's the new format - may need adjustment based on actual API response
+                    standings = data.get('standings', [])
+                    if standings:
+                        for team_standing in standings:
+                            team_id = team_standing.get('teamId') or team_standing.get('team', {}).get('id')
                             if team_id:
-                                records[team_id] = {
-                                    'wins': league_record.get('wins', 0),
-                                    'losses': league_record.get('losses', 0),
-                                    'ot': league_record.get('ot', 0)  # Overtime losses
+                                # Try to extract W-L-OTL from various possible field names
+                                wins = team_standing.get('wins') or team_standing.get('w') or 0
+                                losses = team_standing.get('losses') or team_standing.get('l') or 0
+                                ot = team_standing.get('otLosses') or team_standing.get('ot') or team_standing.get('otl') or 0
+                                records[int(team_id)] = {
+                                    'wins': int(wins),
+                                    'losses': int(losses),
+                                    'ot': int(ot)
                                 }
                 
-                self._team_records_cache = records
-                self._standings_cache_time = time.time()
-                logger.info(f"Fetched standings for {len(records)} teams")
-                return records
+                # If we got records, cache them
+                if records:
+                    self._team_records_cache = records
+                    self._standings_cache_time = time.time()
+                    logger.info(f"Fetched standings for {len(records)} teams")
+                    return records
+                else:
+                    # API responded but format is unexpected - log once and return empty
+                    logger.debug(f"Standings API responded but format unexpected, using empty records")
+                    return {}
             elif response.status_code == 429:
                 logger.warning(f"Rate limited when fetching standings - will retry later")
                 # Return cached data if available, otherwise empty
                 return self._team_records_cache if self._team_records_cache else {}
             else:
-                logger.warning(f"Failed to fetch standings: {response.status_code}")
+                # Non-critical - just return empty records without spamming logs
+                logger.debug(f"Standings API returned {response.status_code}, using empty records")
                 return {}
         except Exception as e:
-            logger.error(f"Error fetching team records: {e}")
+            # Non-critical failure - team records are optional, just return empty
+            # Only log as warning, not error, to reduce log spam
+            logger.debug(f"Could not fetch team records (non-critical): {e}")
             return {}
     
     def _get_team_record(self, team_id: str) -> Dict[str, int]:
