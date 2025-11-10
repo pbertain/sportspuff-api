@@ -96,6 +96,7 @@
         - ../sports-data-service/Dockerfile
         - ../sports-data-service/docker-compose.yml
         - ../sports-data-service/docker-entrypoint.sh
+        - ../sports-data-service/healthcheck.sh
         - ../sports-data-service/alembic.ini
         - ../sports-data-service/init.sql
         - ../sports-data-service/env.example
@@ -199,11 +200,13 @@
         export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
         export API_PORT="{{ api_port }}"
         export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" down --remove-orphans -v || true
+        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" down --remove-orphans || true
         # Force stop containers by name (environment-specific)
+        sudo docker stop "sports-data-{{ deployment_env }}-postgres" "sports-data-{{ deployment_env }}-service" 2>/dev/null || true
         sudo docker stop "sports-data-{{ deployment_env }}-postgres-1" "sports-data-{{ deployment_env }}-sports-service-1" 2>/dev/null || true
         sudo docker stop "sports-data-postgres" "sports-data-service" 2>/dev/null || true
         # Force remove containers by name (handles stopped containers)
+        sudo docker rm -f "sports-data-{{ deployment_env }}-postgres" "sports-data-{{ deployment_env }}-service" 2>/dev/null || true
         sudo docker rm -f "sports-data-{{ deployment_env }}-postgres-1" "sports-data-{{ deployment_env }}-sports-service-1" 2>/dev/null || true
         sudo docker rm -f "sports-data-postgres" "sports-data-service" 2>/dev/null || true
         # Also find and remove any containers with sports-data in the name for this environment
@@ -220,6 +223,8 @@
         done
         # Remove any orphaned networks that might reference non-existent containers
         sudo docker network prune -f || true
+        # Wait a moment for ports to be released
+        sleep 2
       environment:
         POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
         API_PORT: "{{ api_port }}"
