@@ -658,7 +658,7 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         time_left = game.time_remaining or ''
         
         if sport.lower() == 'nhl':
-            # For NHL: Period 4+ is overtime (OT), format as "P{period} - MM:SS"
+            # For NHL: Period 4+ is overtime (OT), format as "P{period} MM:SS" (matching NBA format)
             try:
                 period_num = int(period) if str(period).isdigit() else 0
                 if period_num >= 4:
@@ -670,8 +670,8 @@ def format_game_for_curl(game: Game, sport: str) -> str:
             
             # Always show time if available, otherwise just show period
             if time_left and time_left.strip():
-                # Format: (score-score) P1 - MM:SS or OT - MM:SS
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display} - {time_left}"
+                # Format: (score-score) P1 MM:SS or OT MM:SS (no dash, matching NBA)
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display} {time_left}"
             else:
                 # If no time available, still show period
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display}"
@@ -973,7 +973,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                     time_left = game.time_remaining or ''
                     
                     if sport == 'nhl':
-                        # For NHL: Period 4+ is overtime (OT), format as "P{period} - MM:SS"
+                        # For NHL: Period 4+ is overtime (OT), format as "P{period} MM:SS" (matching NBA format)
                         try:
                             period_num = int(period) if str(period).isdigit() else 0
                             if period_num >= 4:
@@ -985,7 +985,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                         
                         # Always show time if available, otherwise just show period
                         if time_left and time_left.strip():
-                            status = f"{period_display} - {time_left}"
+                            status = f"{period_display} {time_left}"
                         else:
                             # If no time available, still show period
                             status = period_display
