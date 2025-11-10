@@ -263,7 +263,19 @@
         host: localhost
         port: "{{ api_port }}"
         delay: 10
-        timeout: 120
+        timeout: 180
+      
+    - name: Wait for health endpoint to respond
+      uri:
+        url: "http://localhost:{{ api_port }}/health"
+        method: GET
+        status_code: 200
+        return_content: yes
+      register: health_response
+      until: health_response.status == 200 and 'healthy' in health_response.content
+      retries: 30
+      delay: 5
+      ignore_errors: false
     
     - name: Initialize database (first time only)
       shell: |
