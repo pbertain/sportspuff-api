@@ -129,8 +129,11 @@ class NBACollector(BaseCollector):
                     
                     # Filter games by date if specified
                     if date is not None:
-                        # Filter games by date (convert UTC game times to target date)
+                        # Filter games by date (convert UTC game times to Pacific time for date comparison)
+                        # NBA games are scheduled in Eastern/Pacific time, so we need to compare dates in that timezone
                         from dateutil import parser
+                        import pytz
+                        pacific_tz = pytz.timezone('US/Pacific')
                         target_date_str = date.strftime('%Y-%m-%d')
                         filtered_games = []
                         for game in games:
@@ -138,11 +141,16 @@ class NBACollector(BaseCollector):
                             if game_time_utc:
                                 try:
                                     game_time_obj = parser.parse(game_time_utc)
-                                    game_date_str = game_time_obj.date().strftime('%Y-%m-%d')
+                                    # Ensure timezone-aware (assume UTC if not specified)
+                                    if game_time_obj.tzinfo is None:
+                                        game_time_obj = pytz.UTC.localize(game_time_obj)
+                                    # Convert to Pacific time for date comparison
+                                    game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                                    game_date_str = game_time_pacific.date().strftime('%Y-%m-%d')
                                     if game_date_str == target_date_str:
                                         filtered_games.append(game)
                                     else:
-                                        logger.debug(f"Game {game.get('gameId')} date {game_date_str} doesn't match target {target_date_str}")
+                                        logger.debug(f"Game {game.get('gameId')} date {game_date_str} (Pacific) doesn't match target {target_date_str}")
                                 except Exception as e:
                                     logger.warning(f"Error parsing game time {game_time_utc}: {e}, including game")
                                     # If parsing fails, include the game
@@ -151,7 +159,7 @@ class NBACollector(BaseCollector):
                                 # If no time, include the game (for today's games)
                                 filtered_games.append(game)
                         games = filtered_games
-                        logger.info(f"Filtered to {len(games)} games for date {target_date_str}")
+                        logger.info(f"Filtered to {len(games)} games for date {target_date_str} (Pacific time)")
                     
                     # Get date string for return format
                     if date is None:
