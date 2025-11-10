@@ -53,6 +53,13 @@ class NFLCollector(BaseCollector):
                 data = response.json()
                 games = []
                 
+                # Tank01 API returns data in a wrapper: {"statusCode": 200, "body": [...]}
+                if isinstance(data, dict):
+                    if 'body' in data:
+                        data = data['body']
+                    elif 'games' in data:
+                        data = data['games']
+                
                 if isinstance(data, list):
                     for game in data:
                         parsed_game = self.parse_game_data(game)
@@ -61,7 +68,7 @@ class NFLCollector(BaseCollector):
                 
                 return games
             else:
-                logger.error(f"NFL API error: {response.status_code}")
+                logger.error(f"NFL API error: {response.status_code} - {response.text[:200]}")
                 return []
                 
         except Exception as e:
@@ -103,15 +110,24 @@ class NFLCollector(BaseCollector):
             else:
                 date_str = datetime.now().strftime('%Y-%m-%d')
             
-            url = f"{self.base_url}/getNFLGamesForDate/{date_str}"
+            # Tank01 API requires gameDate as a query parameter, not path parameter
+            url = f"{self.base_url}/getNFLGamesForDate"
+            params = {'gameDate': date_str}
             
             start_time = time.time()
-            response = requests.get(url, headers=self.headers, timeout=self.api_timeout)
+            response = requests.get(url, headers=self.headers, params=params, timeout=self.api_timeout)
             response_time = int((time.time() - start_time) * 1000)
             
             if response.status_code == 200:
                 data = response.json()
                 games = []
+                
+                # Tank01 API returns data in a wrapper: {"statusCode": 200, "body": [...]}
+                if isinstance(data, dict):
+                    if 'body' in data:
+                        data = data['body']
+                    elif 'games' in data:
+                        data = data['games']
                 
                 if isinstance(data, list):
                     # The getNFLGamesForDate endpoint returns all games for the date
@@ -124,7 +140,7 @@ class NFLCollector(BaseCollector):
                 
                 return games
             else:
-                logger.error(f"NFL API error: {response.status_code}")
+                logger.error(f"NFL API error: {response.status_code} - {response.text[:200]}")
                 return []
                 
         except Exception as e:
