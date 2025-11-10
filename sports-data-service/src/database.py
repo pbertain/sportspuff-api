@@ -7,12 +7,50 @@ from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 from contextlib import contextmanager
 from typing import Generator
+from urllib.parse import urlparse, quote, urlunparse
 
 from config import settings
 
+# Fix DATABASE_URL if password contains special characters that need URL encoding
+def _fix_database_url(url: str) -> str:
+    """
+    Fix DATABASE_URL by properly URL-encoding the password if needed.
+    
+    Args:
+        url: Database URL string
+        
+    Returns:
+        Fixed database URL with properly encoded password
+    """
+    try:
+        parsed = urlparse(url)
+        # If password contains special characters, URL-encode it
+        if parsed.password and ('/' in parsed.password or '=' in parsed.password or '@' in parsed.password or ':' in parsed.password):
+            # Reconstruct URL with encoded password
+            encoded_password = quote(parsed.password, safe='')
+            netloc = f"{parsed.username}:{encoded_password}@{parsed.hostname}"
+            if parsed.port:
+                netloc += f":{parsed.port}"
+            fixed_url = urlunparse((
+                parsed.scheme,
+                netloc,
+                parsed.path,
+                parsed.params,
+                parsed.query,
+                parsed.fragment
+            ))
+            return fixed_url
+        return url
+    except Exception:
+        # If parsing fails, return original URL
+        return url
+
+# Get database URL, fixing password encoding if needed
+database_url = _fix_database_url(settings.database_url)
+
 # Create database engine
 engine = create_engine(
-    settings.database_url,
+    database_url,
     pool_pre_ping=True,
     pool_recycle=300,
     echo=False  # Set to True for SQL query logging
