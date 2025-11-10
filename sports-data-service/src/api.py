@@ -1383,9 +1383,10 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
             if not games_list:
                 live_games = collector.get_live_scores(target_date)
                 if live_games:
-                # Use live data - convert to format expected by frontend
-                seen_game_ids = set()
-                for game_dict in live_games:
+                    # Use live data - convert to format expected by frontend
+                    # But filter to ensure games are actually for today (Pacific time)
+                    seen_game_ids = set()
+                    for game_dict in live_games:
                     game_id = game_dict.get('game_id', '')
                     if game_id and game_id in seen_game_ids:
                         continue
@@ -1428,11 +1429,13 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                     })
     
     # For any date (today or past), try get_schedule from collector
-    if not games_list and collector:
-        schedule_games = collector.get_schedule(target_date)
-        if schedule_games:
-            seen_game_ids = set()
-            for game_dict in schedule_games:
+    # Also check database for stored games if collector returns nothing
+    if not games_list:
+        if collector:
+            schedule_games = collector.get_schedule(target_date)
+            if schedule_games:
+                seen_game_ids = set()
+                for game_dict in schedule_games:
                 game_id = game_dict.get('game_id', '')
                 if game_id and game_id in seen_game_ids:
                     continue
