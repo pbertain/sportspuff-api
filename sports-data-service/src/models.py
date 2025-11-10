@@ -67,6 +67,23 @@ class Game(Base):
         return f"<Game(league={self.league}, game_id={self.game_id}, home={self.home_team} vs visitor={self.visitor_team})>"
 
 
+class Team(Base):
+    """Teams table for tracking team IDs across leagues."""
+    
+    __tablename__ = "teams"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    league = Column(String(10), nullable=False, index=True)
+    team_name = Column(String(100), nullable=False)
+    team_abbrev = Column(String(10), nullable=False, index=True)
+    api_team_id = Column(String(20), nullable=True, index=True)  # NHL/NBA/etc API team ID
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+    updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    
+    def __repr__(self):
+        return f"<Team(league={self.league}, abbrev={self.team_abbrev}, api_id={self.api_team_id})>"
+
+
 class ApiUsage(Base):
     """API usage tracking table."""
     

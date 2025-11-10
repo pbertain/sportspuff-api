@@ -231,9 +231,88 @@ class NHLCollector(BaseCollector):
         else:
             raise Exception(f"Failed to get game details: {response.status_code}")
     
+    def _sync_teams_from_api(self):
+        """
+        Sync team IDs and abbreviations from NHL API to teams table.
+        This ensures we have a reliable mapping of abbreviations to team IDs.
+        """
+        try:
+            from database import get_db_session
+            from models import Team
+            
+            # Get team IDs from a recent schedule (check last 7 days to get all teams)
+            abbrev_to_id = {}
+            team_info = {}  # abbrev -> {id, name}
+            
+            from datetime import timedelta
+            for days_ago in range(7):
+                check_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
+                schedule_url = f"{self.base_url}/schedule/{check_date}"
+                schedule_response = requests.get(schedule_url, timeout=self.api_timeout)
+                if schedule_response.status_code == 200:
+                    schedule_data = schedule_response.json()
+                    game_weeks = schedule_data.get('gameWeek', [])
+                    for week in game_weeks:
+                        games = week.get('games', [])
+                        for game in games:
+                            for team_key in ['homeTeam', 'awayTeam']:
+                                team = game.get(team_key, {})
+                                abbrev = team.get('abbrev', '')
+                                team_id = team.get('id')
+                                
+                                if abbrev and team_id and abbrev not in abbrev_to_id:
+                                    abbrev_to_id[abbrev] = team_id
+                                    # Get team name
+                                    place_name = team.get('placeName', {})
+                                    common_name = team.get('commonName', {})
+                                    if isinstance(place_name, dict):
+                                        place_name = place_name.get('default', '')
+                                    if isinstance(common_name, dict):
+                                        common_name = common_name.get('default', '')
+                                    team_name = f"{place_name} {common_name}".strip()
+                                    team_info[abbrev] = {'id': team_id, 'name': team_name}
+                    
+                    # Stop early if we have all 32 teams
+                    if len(abbrev_to_id) >= 32:
+                        break
+            
+            # Update teams table
+            with get_db_session() as db:
+                for abbrev, team_id in abbrev_to_id.items():
+                    team_name = team_info.get(abbrev, {}).get('name', abbrev)
+                    
+                    # Check if team exists
+                    existing_team = db.query(Team).filter(
+                        Team.league == 'NHL',
+                        Team.team_abbrev == abbrev
+                    ).first()
+                    
+                    if existing_team:
+                        # Update API team ID if it's missing or different
+                        if existing_team.api_team_id != str(team_id):
+                            existing_team.api_team_id = str(team_id)
+                            existing_team.team_name = team_name
+                            db.commit()
+                    else:
+                        # Create new team
+                        new_team = Team(
+                            league='NHL',
+                            team_name=team_name,
+                            team_abbrev=abbrev,
+                            api_team_id=str(team_id)
+                        )
+                        db.add(new_team)
+                        db.commit()
+                
+                logger.info(f"Synced {len(abbrev_to_id)} NHL teams to database")
+                
+        except Exception as e:
+            logger.debug(f"Could not sync teams from API (non-critical): {e}")
+    
     def _fetch_team_records(self) -> Dict[int, Dict[str, int]]:
         """
         Fetch team records (W-L-OTL) from NHL standings API.
+        Uses teams table for abbreviation-to-ID mapping.
         
         Returns:
             Dictionary mapping team_id to {'wins': int, 'losses': int, 'ot': int}
@@ -243,6 +322,31 @@ class NHLCollector(BaseCollector):
             return self._team_records_cache
         
         try:
+            # Sync teams from API if needed (ensures we have up-to-date team IDs)
+            self._sync_teams_from_api()
+            
+            # Get abbreviation-to-ID mapping from teams table
+            from database import get_db_session
+            from models import Team
+            
+            abbrev_to_id = {}
+            with get_db_session() as db:
+                teams = db.query(Team).filter(Team.league == 'NHL').all()
+                for team in teams:
+                    if team.team_abbrev and team.api_team_id:
+                        abbrev_to_id[team.team_abbrev] = team.api_team_id
+            
+            if not abbrev_to_id:
+                logger.warning("No teams found in database, falling back to schedule lookup")
+                # Fallback: try to sync teams now
+                self._sync_teams_from_api()
+                with get_db_session() as db:
+                    teams = db.query(Team).filter(Team.league == 'NHL').all()
+                    for team in teams:
+                        if team.team_abbrev and team.api_team_id:
+                            abbrev_to_id[team.team_abbrev] = team.api_team_id
+            
+            # Fetch standings from API
             self._check_rate_limit()
             response = requests.get(self.stats_api_url, timeout=self.api_timeout)
             
@@ -251,9 +355,7 @@ class NHLCollector(BaseCollector):
                 standings = data.get('standings', [])
                 records = {}
                 
-                # Build a mapping from team abbreviation to team ID first
-                # We'll need to fetch team info to match abbreviations to IDs
-                abbrev_to_id = {}
+                # Build records dictionary using team IDs from teams table
                 for team_standing in standings:
                     team_abbrev = team_standing.get('teamAbbrev', {})
                     if isinstance(team_abbrev, dict):
@@ -261,64 +363,18 @@ class NHLCollector(BaseCollector):
                     else:
                         abbrev = str(team_abbrev)
                     
-                    if abbrev:
-                        # Try to get team ID from a team info endpoint or match by name
-                        # For now, we'll create a lookup that matches by abbreviation
-                        # and fetch team IDs from the schedule API
-                        abbrev_to_id[abbrev] = None  # Will be populated below
-                
-                # Fetch team IDs by getting recent game schedules (check last 7 days to ensure we get all teams)
-                try:
-                    from datetime import timedelta
-                    for days_ago in range(7):
-                        check_date = (datetime.now() - timedelta(days=days_ago)).strftime('%Y-%m-%d')
-                        schedule_url = f"{self.base_url}/schedule/{check_date}"
-                        schedule_response = requests.get(schedule_url, timeout=self.api_timeout)
-                        if schedule_response.status_code == 200:
-                            schedule_data = schedule_response.json()
-                            game_weeks = schedule_data.get('gameWeek', [])
-                            for week in game_weeks:
-                                games = week.get('games', [])
-                                for game in games:
-                                    home_team = game.get('homeTeam', {})
-                                    away_team = game.get('awayTeam', {})
-                                    
-                                    home_abbrev = home_team.get('abbrev', '')
-                                    home_id = home_team.get('id')
-                                    if home_abbrev and home_id and home_abbrev not in abbrev_to_id:
-                                        abbrev_to_id[home_abbrev] = home_id
-                                    
-                                    away_abbrev = away_team.get('abbrev', '')
-                                    away_id = away_team.get('id')
-                                    if away_abbrev and away_id and away_abbrev not in abbrev_to_id:
-                                        abbrev_to_id[away_abbrev] = away_id
-                        
-                        # Stop early if we have all 32 teams
-                        if len(abbrev_to_id) >= 32:
-                            break
-                except Exception as e:
-                    logger.debug(f"Could not fetch team IDs from schedule: {e}")
-                
-                # Now build records dictionary using team IDs
-                for team_standing in standings:
-                    team_abbrev = team_standing.get('teamAbbrev', {})
-                    if isinstance(team_abbrev, dict):
-                        abbrev = team_abbrev.get('default', '')
-                    else:
-                        abbrev = str(team_abbrev)
+                    team_id_str = abbrev_to_id.get(abbrev) if abbrev else None
                     
-                    team_id = abbrev_to_id.get(abbrev) if abbrev else None
-                    
-                    if team_id:
+                    if team_id_str:
                         try:
-                            team_id_int = int(team_id)
+                            team_id_int = int(team_id_str)
                             records[team_id_int] = {
                                 'wins': team_standing.get('wins', 0),
                                 'losses': team_standing.get('losses', 0),
                                 'ot': team_standing.get('otLosses', 0)  # Overtime losses
                             }
                         except (ValueError, TypeError):
-                            logger.debug(f"Invalid team_id format: {team_id}")
+                            logger.debug(f"Invalid team_id format: {team_id_str}")
                             continue
                     else:
                         logger.debug(f"Could not find team ID for abbreviation: {abbrev}")

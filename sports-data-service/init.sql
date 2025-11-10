@@ -64,6 +64,24 @@ CREATE INDEX IF NOT EXISTS idx_games_league_status ON games(league, game_status)
 CREATE INDEX IF NOT EXISTS idx_games_game_date ON games(game_date);
 CREATE INDEX IF NOT EXISTS idx_games_league_game_date ON games(league, game_date);
 
+-- Create teams table for tracking team IDs across leagues
+CREATE TABLE IF NOT EXISTS teams (
+    id SERIAL PRIMARY KEY,
+    league VARCHAR(10) NOT NULL,
+    team_name VARCHAR(100) NOT NULL,
+    team_abbrev VARCHAR(10) NOT NULL,
+    api_team_id VARCHAR(20),  -- NHL/NBA/etc API team ID (e.g., "16" for CHI, "17" for DET)
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW(),
+    UNIQUE(league, api_team_id),
+    UNIQUE(league, team_abbrev)
+);
+
+-- Create indexes for teams table
+CREATE INDEX IF NOT EXISTS idx_teams_league ON teams(league);
+CREATE INDEX IF NOT EXISTS idx_teams_api_team_id ON teams(api_team_id);
+CREATE INDEX IF NOT EXISTS idx_teams_abbrev ON teams(team_abbrev);
+
 -- Create API usage tracking table
 CREATE TABLE IF NOT EXISTS api_usage (
     id SERIAL PRIMARY KEY,
