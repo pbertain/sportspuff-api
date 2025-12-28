@@ -133,17 +133,46 @@ class NFLCollector(BaseCollector):
                 
                 # Tank01 API returns data in a wrapper: {"statusCode": 200, "body": [...]}
                 if isinstance(data, dict):
+                    # Check for statusCode first - if it's not 200, log it
+                    if 'statusCode' in data and data['statusCode'] != 200:
+                        logger.warning(f"NFL API returned non-200 statusCode: {data.get('statusCode')} for date {date_str}")
+                    
                     if 'body' in data:
-                        data = data['body']
+                        body_data = data['body']
+                        # Handle case where body might be a dict with games inside
+                        if isinstance(body_data, dict):
+                            if 'games' in body_data:
+                                data = body_data['games']
+                            elif len(body_data) > 0:
+                                # Body might be a dict keyed by gameID
+                                data = list(body_data.values())
+                            else:
+                                data = []
+                        else:
+                            data = body_data
                     elif 'games' in data:
                         data = data['games']
+                    else:
+                        # Check if data itself is a dict of games (keyed by gameID)
+                        if len(data) > 0 and not any(k in data for k in ['statusCode', 'body', 'games']):
+                            # Might be a dict of games
+                            data = list(data.values())
+                        else:
+                            logger.warning(f"No games found in NFL API response for date {date_str}. Keys: {list(data.keys())}")
+                            data = []
                 
                 if isinstance(data, list):
+                    logger.debug(f"Found {len(data)} raw games from NFL API for date {date_str}")
                     for game in data:
                         parsed_game = self.parse_game_data(game)
                         if parsed_game:
                             games.append(parsed_game)
+                        else:
+                            logger.debug(f"Failed to parse NFL game: {game.get('gameID', 'unknown')}")
+                elif data:
+                    logger.warning(f"Unexpected NFL API response format for date {date_str}: {type(data)} - {str(data)[:200]}")
                 
+                logger.info(f"Returning {len(games)} parsed NFL games for date {date_str}")
                 return games
             else:
                 logger.error(f"NFL API error: {response.status_code} - {response.text[:200]}")
@@ -221,6 +250,7 @@ class NFLCollector(BaseCollector):
                 
                 # If no live scores found, fallback to getNFLGamesForDate for scheduled games
                 if not games:
+                    logger.debug(f"No live scores found, trying schedule endpoint for date {date_str}")
                     url_schedule = f"{self.base_url}/getNFLGamesForDate"
                     params_schedule = {'gameDate': date_str}
                     response_schedule = requests.get(url_schedule, headers=self.headers, params=params_schedule, timeout=self.api_timeout)
@@ -234,11 +264,19 @@ class NFLCollector(BaseCollector):
                                 schedule_data = schedule_data['games']
                         
                         if isinstance(schedule_data, list):
+                            logger.debug(f"Found {len(schedule_data)} scheduled games from fallback endpoint")
                             for game in schedule_data:
                                 parsed_game = self.parse_game_data(game)
                                 if parsed_game:
                                     games.append(parsed_game)
+                                else:
+                                    logger.debug(f"Failed to parse scheduled NFL game: {game.get('gameID', 'unknown')}")
+                        else:
+                            logger.warning(f"Unexpected schedule API response format: {type(schedule_data)} - {str(schedule_data)[:200]}")
+                    else:
+                        logger.warning(f"Schedule fallback API error: {response_schedule.status_code} - {response_schedule.text[:200]}")
                 
+                logger.info(f"Returning {len(games)} NFL games (live+scheduled) for date {date_str}")
                 return games
             else:
                 logger.error(f"NFL API error: {response.status_code} - {response.text[:200]}")
@@ -399,7 +437,7 @@ class NFLCollector(BaseCollector):
                 away_id = raw_game.get('teamIDAway', '')
                 
                 if not home_abbrev_raw or not away_abbrev_raw:
-                    logger.warning(f"No team data found for game {raw_game.get('gameID', 'unknown')}")
+                    logger.warning(f"No team data found for game {raw_game.get('gameID', 'unknown')}. Raw data: {str(raw_game)[:300]}")
                     return None
                 
                 # Normalize abbreviations to standard format
