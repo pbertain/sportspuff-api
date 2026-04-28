@@ -649,7 +649,19 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     # Priority: Show scores if game is final or in progress, otherwise show scheduled time
     if game.is_final:
         if game.home_score_total is not None and game.visitor_score_total is not None:
-            time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
+            # For NHL, show F for regulation, F/OT for overtime
+            if sport.lower() == 'nhl':
+                period = game.current_period or '?'
+                try:
+                    period_num = int(period) if str(period).isdigit() else 0
+                    if period_num >= 4:
+                        time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F/OT"
+                    else:
+                        time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
+                except (ValueError, TypeError):
+                    time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
+            else:
+                time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
         else:
             time_status = "F"
     elif game.game_status == 'in_progress' or (game.visitor_score_total and game.visitor_score_total > 0) or (game.home_score_total and game.home_score_total > 0):
@@ -676,17 +688,21 @@ def format_game_for_curl(game: Game, sport: str) -> str:
                 # If no time available, still show period
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display}"
         else:
-            # For other sports, use 'Q' for Quarter
-            period_prefix = 'Q'
-            # Check if it's halftime (period 2, time 0:00, and status is in_progress)
-            is_halftime = (period == '2' and time_left in ('0:00', '') and 
-                          game.game_status == 'in_progress')
-            if is_halftime:
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) HT"
-            elif time_left and time_left.strip():
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
+            # For other sports, use 'Q' for Quarter (only during game, not for final)
+            # Check if period is "Final" or similar - don't add Q prefix
+            if period and period.upper() in ('FINAL', 'F', 'END', 'FIN'):
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) F"
             else:
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
+                period_prefix = 'Q'
+                # Check if it's halftime (period 2, time 0:00, and status is in_progress)
+                is_halftime = (period == '2' and time_left in ('0:00', '') and 
+                              game.game_status == 'in_progress')
+                if is_halftime:
+                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) HT"
+                elif time_left and time_left.strip():
+                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
+                else:
+                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
     else:
         # Scheduled game - show time
         if game.game_time:
@@ -971,7 +987,19 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                 home_score = game.home_score_total or 0
                 
                 if game.is_final:
-                    status = "F"
+                    # For NHL, show F for regulation, F/OT for overtime
+                    if sport == 'nhl':
+                        period = game.current_period or '?'
+                        try:
+                            period_num = int(period) if str(period).isdigit() else 0
+                            if period_num >= 4:
+                                status = "F/OT"
+                            else:
+                                status = "F"
+                        except (ValueError, TypeError):
+                            status = "F"
+                    else:
+                        status = "F"
                     output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
                 elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
                     period = game.current_period or '?'
@@ -995,12 +1023,16 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                             # If no time available, still show period
                             status = period_display
                     else:
-                        # For other sports, use 'Q' for Quarter
-                        period_prefix = 'Q'
-                        if time_left and time_left.strip():
-                            status = f"{period_prefix}{period} {time_left}"
+                        # For other sports, use 'Q' for Quarter (only during game, not for final)
+                        # Check if period is "Final" or similar - don't add Q prefix
+                        if period and period.upper() in ('FINAL', 'F', 'END', 'FIN'):
+                            status = "F"
                         else:
-                            status = f"{period_prefix}{period}"
+                            period_prefix = 'Q'
+                            if time_left and time_left.strip():
+                                status = f"{period_prefix}{period} {time_left}"
+                            else:
+                                status = f"{period_prefix}{period}"
                     
                     output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
         else:
@@ -1344,6 +1376,16 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
         if collector:
             # First try get_schedule to get today's scheduled games
             schedule_games = collector.get_schedule(target_date)
+            
+            # Handle both list and dict formats from NBA collector
+            if isinstance(schedule_games, dict) and 'leagueSchedule' in schedule_games:
+                # NBA collector sometimes returns dict format
+                game_dates = schedule_games['leagueSchedule'].get('gameDates', [])
+                schedule_games = []
+                for gd in game_dates:
+                    games = gd.get('games', [])
+                    schedule_games.extend(games)
+            
             if schedule_games:
                 # We have scheduled games for today, use those
                 seen_game_ids = set()
@@ -1355,6 +1397,29 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                     
                     game_time = game_dict.get('game_time')
                     game_date_str = game_dict.get('game_date', '')
+                    
+                    # For NBA, convert game_date to Pacific timezone if game_time is available
+                    # (game_date from collector may be UTC date, but we want Pacific date)
+                    if league.upper() == 'NBA' and game_time:
+                        try:
+                            if isinstance(game_time, str):
+                                from dateutil import parser
+                                game_time_obj = parser.parse(game_time)
+                            elif hasattr(game_time, 'isoformat'):
+                                # Already a datetime object
+                                game_time_obj = game_time
+                            else:
+                                game_time_obj = None
+                            
+                            if game_time_obj:
+                                if game_time_obj.tzinfo is None:
+                                    game_time_obj = pytz.UTC.localize(game_time_obj)
+                                pacific_tz = pytz.timezone('US/Pacific')
+                                game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                                game_date_str = game_time_pacific.date().isoformat()
+                        except Exception as e:
+                            logger.debug(f"Error converting NBA game_date to Pacific: {e}")
+                            # Keep original game_date_str
                     
                     games_list.append({
                         "game_id": game_id,
@@ -1380,53 +1445,101 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                     })
             
             # If no scheduled games, try live_scores (may include in-progress games from yesterday)
+            # If no scheduled games, try live_scores as fallback
+            # For NBA, we'll filter by date to ensure games are actually for today
             if not games_list:
                 live_games = collector.get_live_scores(target_date)
                 if live_games:
-                    # Use live data - convert to format expected by frontend
-                    # But filter to ensure games are actually for today (Pacific time)
-                    seen_game_ids = set()
-                    for game_dict in live_games:
-                        game_id = game_dict.get('game_id', '')
-                        if game_id and game_id in seen_game_ids:
-                            continue
-                        seen_game_ids.add(game_id)
-                    
-                    # Get game_time from live data if available
-                    game_time = game_dict.get('game_time')
-                    game_date_str = game_dict.get('game_date', '')
-                    
-                    # If game_time is not in live data, try to get it from database
-                    if not game_time:
-                        with get_db_session() as db:
-                            db_game = db.query(Game).filter(
-                                Game.game_id == game_id
-                            ).first()
-                            if db_game and db_game.game_time:
-                                game_time = db_game.game_time
-                    
-                    games_list.append({
-                        "game_id": game_id,
-                        "game_date": game_date_str if game_date_str else target_date.isoformat(),
-                        "game_time": game_time.isoformat() if game_time else None,
-                        "home_team": game_dict.get('home_team', ''),
-                        "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
-                        "visitor_team": game_dict.get('visitor_team', ''),
-                        "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
-                        "game_status": game_dict.get('game_status', 'scheduled'),
-                        "game_type": game_dict.get('game_type', 'regular'),
-                        "home_wins": game_dict.get('home_wins', 0),
-                        "home_losses": game_dict.get('home_losses', 0),
-                        "home_otl": game_dict.get('home_otl', 0) if league.upper() == 'NHL' else None,
-                        "visitor_wins": game_dict.get('visitor_wins', 0),
-                        "visitor_losses": game_dict.get('visitor_losses', 0),
-                        "visitor_otl": game_dict.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
-                        "current_period": game_dict.get('current_period', ''),
-                        "time_remaining": game_dict.get('time_remaining', ''),
-                        "home_score_total": game_dict.get('home_score_total', 0),
-                        "visitor_score_total": game_dict.get('visitor_score_total', 0),
-                        "is_final": game_dict.get('is_final', False),
-                    })
+                        # Filter live games to ensure they're actually for today (Pacific time)
+                        # This is especially important for NBA where get_live_scores may return games from other dates
+                        seen_game_ids = set()
+                        pacific_tz = pytz.timezone('US/Pacific')
+                        target_date_str = target_date.strftime('%Y-%m-%d')
+                        
+                        for game_dict in live_games:
+                            game_id = game_dict.get('game_id', '')
+                            if game_id and game_id in seen_game_ids:
+                                continue
+                            
+                            # For NBA, verify the game is actually for today by checking both game_date and game_time
+                            # The game_date field should match, and game_time should be for today in Pacific time
+                            if league.upper() == 'NBA':
+                                game_date_from_dict = game_dict.get('game_date', '')
+                                game_time = game_dict.get('game_time')
+                            
+                                # First check: game_date should match target_date (this is the actual scheduled date)
+                                # If game_date is "2025-11-13" but target is "2025-11-12", skip it
+                                if game_date_from_dict:
+                                    # Normalize game_date (remove time if present)
+                                    game_date_normalized = game_date_from_dict.split()[0] if ' ' in game_date_from_dict else game_date_from_dict
+                                    if game_date_normalized != target_date_str:
+                                        # Skip games that don't match the target date
+                                        continue
+                            
+                                # Second check: game_time should also be for today in Pacific time
+                                if game_time:
+                                    try:
+                                        from dateutil import parser
+                                        if isinstance(game_time, str):
+                                            game_time_obj = parser.parse(game_time)
+                                        elif hasattr(game_time, 'isoformat'):
+                                            game_time_obj = game_time
+                                        else:
+                                            # Can't parse game_time, skip this game
+                                            continue
+                                        
+                                        if game_time_obj.tzinfo is None:
+                                            game_time_obj = pytz.UTC.localize(game_time_obj)
+                                        game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                                        game_date_pacific = game_time_pacific.date().strftime('%Y-%m-%d')
+                                        
+                                        # Only include if the game is actually for today
+                                        if game_date_pacific != target_date_str:
+                                            continue
+                                    except Exception as e:
+                                        continue
+                                elif game_date_from_dict and game_date_from_dict != target_date_str:
+                                    # If no game_time but game_date doesn't match, skip
+                                    logger.debug(f"Skipping NBA game {game_id} - game_date {game_date_from_dict} doesn't match target {target_date_str}")
+                                    continue
+                            
+                            seen_game_ids.add(game_id)
+                            
+                            # Get game_time from live data if available
+                            game_time = game_dict.get('game_time')
+                            game_date_str = game_dict.get('game_date', '')
+                            
+                            # If game_time is not in live data, try to get it from database
+                            if not game_time:
+                                with get_db_session() as db:
+                                    db_game = db.query(Game).filter(
+                                        Game.game_id == game_id
+                                    ).first()
+                                    if db_game and db_game.game_time:
+                                        game_time = db_game.game_time
+                            
+                            games_list.append({
+                                "game_id": game_id,
+                                "game_date": game_date_str if game_date_str else target_date.isoformat(),
+                                "game_time": game_time.isoformat() if hasattr(game_time, 'isoformat') else (str(game_time) if game_time else None),
+                                "home_team": game_dict.get('home_team', ''),
+                                "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
+                                "visitor_team": game_dict.get('visitor_team', ''),
+                                "visitor_team_abbrev": game_dict.get('visitor_team_abbrev', ''),
+                                "game_status": game_dict.get('game_status', 'scheduled'),
+                                "game_type": game_dict.get('game_type', 'regular'),
+                                "home_wins": game_dict.get('home_wins', 0),
+                                "home_losses": game_dict.get('home_losses', 0),
+                                "home_otl": game_dict.get('home_otl', 0) if league.upper() == 'NHL' else None,
+                                "visitor_wins": game_dict.get('visitor_wins', 0),
+                                "visitor_losses": game_dict.get('visitor_losses', 0),
+                                "visitor_otl": game_dict.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
+                                "current_period": game_dict.get('current_period', ''),
+                                "time_remaining": game_dict.get('time_remaining', ''),
+                                "home_score_total": game_dict.get('home_score_total', 0),
+                                "visitor_score_total": game_dict.get('visitor_score_total', 0),
+                                "is_final": game_dict.get('is_final', False),
+                            })
     
     # For any date (today or past), try get_schedule from collector
     # Also check database for stored games if collector returns nothing
@@ -1444,10 +1557,33 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                 game_time = game_dict.get('game_time')
                 game_date_str = game_dict.get('game_date', '')
                 
+                # For NBA, convert game_date to Pacific timezone if game_time is available
+                # (game_date from collector may be UTC date, but we want Pacific date)
+                if league.upper() == 'NBA' and game_time:
+                    try:
+                        if isinstance(game_time, str):
+                            from dateutil import parser
+                            game_time_obj = parser.parse(game_time)
+                        elif hasattr(game_time, 'isoformat'):
+                            # Already a datetime object
+                            game_time_obj = game_time
+                        else:
+                            game_time_obj = None
+                        
+                        if game_time_obj:
+                            if game_time_obj.tzinfo is None:
+                                game_time_obj = pytz.UTC.localize(game_time_obj)
+                            pacific_tz = pytz.timezone('US/Pacific')
+                            game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                            game_date_str = game_time_pacific.date().isoformat()
+                    except Exception as e:
+                        logger.debug(f"Error converting NBA game_date to Pacific: {e}")
+                        # Keep original game_date_str
+                
                 games_list.append({
                     "game_id": game_id,
                     "game_date": game_date_str if game_date_str else target_date.isoformat(),
-                    "game_time": game_time.isoformat() if game_time else None,
+                    "game_time": game_time.isoformat() if hasattr(game_time, 'isoformat') else (str(game_time) if game_time else None),
                     "home_team": game_dict.get('home_team', ''),
                     "home_team_abbrev": game_dict.get('home_team_abbrev', ''),
                     "visitor_team": game_dict.get('visitor_team', ''),

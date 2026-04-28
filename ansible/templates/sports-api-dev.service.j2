@@ -1,0 +1,23 @@
+[Unit]
+Description=SportsPuff API - Development
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+WorkingDirectory={{ dev_dir }}
+Environment="PATH={{ dev_dir }}/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="DATABASE_URL=postgresql://sports_user:{{ postgres_password }}@localhost:5432/sports_data_dev"
+Environment="API_PORT=34181"
+Environment="DEPLOYMENT_ENV=dev"
+ExecStart={{ dev_dir }}/venv/bin/uvicorn src.api:app --host 0.0.0.0 --port 34181
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
