@@ -651,7 +651,7 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         if game.home_score_total is not None and game.visitor_score_total is not None:
             # For NHL, show F for regulation, F/OT for overtime
             if sport.lower() == 'nhl':
-                period = game.current_period or '?'
+                period = str(game.current_period) if game.current_period is not None else '?'
                 try:
                     period_num = int(period) if str(period).isdigit() else 0
                     if period_num >= 4:
@@ -666,7 +666,7 @@ def format_game_for_curl(game: Game, sport: str) -> str:
             time_status = "F"
     elif game.game_status == 'in_progress' or (game.visitor_score_total and game.visitor_score_total > 0) or (game.home_score_total and game.home_score_total > 0):
         # Game is in progress or has a score - show the score in schedule format
-        period = game.current_period or '?'
+        period = str(game.current_period) if game.current_period is not None else '?'
         time_left = game.time_remaining or ''
         
         if sport.lower() == 'nhl':
@@ -989,7 +989,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                 if game.is_final:
                     # For NHL, show F for regulation, F/OT for overtime
                     if sport == 'nhl':
-                        period = game.current_period or '?'
+                        period = str(game.current_period) if game.current_period is not None else '?'
                         try:
                             period_num = int(period) if str(period).isdigit() else 0
                             if period_num >= 4:
@@ -1002,7 +1002,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                         status = "F"
                     output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
                 elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
-                    period = game.current_period or '?'
+                    period = str(game.current_period) if game.current_period is not None else '?'
                     time_left = game.time_remaining or ''
                     
                     if sport == 'nhl':
