@@ -1091,10 +1091,199 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
     return output
 
 
-@app.get("/")
+@app.get("/", response_class=HTMLResponse)
 def root():
-    """Root endpoint."""
-    return {"message": "Sports Data Service API", "version": "1.0.0"}
+    """Landing page."""
+    return """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SportsPuff API</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,sans-serif;
+  background:linear-gradient(135deg,#1A0B3D 0%,#2D1B69 50%,#3D2A7A 100%);
+  color:#F5F5F5;
+  min-height:100vh;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+}
+header{
+  width:100%;
+  background:linear-gradient(135deg,#2D1B69 0%,#FF3B30 100%);
+  padding:2rem 0;
+  text-align:center;
+  box-shadow:0 2px 10px rgba(26,42,108,0.3);
+}
+header img{height:120px;margin-bottom:0.5rem}
+header h1{font-size:2.5rem;font-weight:700;text-shadow:2px 2px 4px rgba(0,0,0,0.5)}
+header p{font-size:1.1rem;color:rgba(245,245,245,0.8);margin-top:0.25rem}
+.container{
+  max-width:800px;width:100%;
+  padding:2rem;margin:2rem auto;
+  background:rgba(26,11,61,0.9);
+  border-radius:20px;
+  border:1px solid rgba(255,255,255,0.2);
+  box-shadow:0 10px 30px rgba(0,0,0,0.4);
+}
+h2{font-size:1.5rem;font-weight:700;margin-bottom:1rem;color:#FFB400}
+.blurb{font-size:1rem;line-height:1.6;margin-bottom:2rem;color:#B8B8B8}
+.blurb a{color:#FF3B30;text-decoration:none}
+.blurb a:hover{text-decoration:underline}
+.section{margin-bottom:2rem}
+.endpoint-group h3{
+  font-size:1.1rem;font-weight:600;margin:1.25rem 0 0.5rem;
+  padding-bottom:0.25rem;border-bottom:2px solid rgba(255,255,255,0.1);
+}
+table{width:100%;border-collapse:collapse}
+td{padding:0.35rem 0.5rem;vertical-align:top;font-size:0.9rem}
+td:first-child{white-space:nowrap}
+td a{
+  color:#F5F5F5;text-decoration:none;
+  font-family:'SF Mono',SFMono-Regular,Consolas,'Liberation Mono',Menlo,monospace;
+  font-size:0.85rem;
+  padding:0.15rem 0.4rem;
+  background:rgba(255,255,255,0.08);
+  border-radius:4px;
+  transition:all 0.2s ease;
+}
+td a:hover{background:rgba(255,59,48,0.25);color:#fff}
+td:last-child{color:#B8B8B8}
+.tag{
+  display:inline-block;font-size:0.7rem;font-weight:600;
+  padding:0.1rem 0.45rem;border-radius:10px;margin-left:0.4rem;
+  vertical-align:middle;
+}
+.tag-json{background:rgba(112,40,228,0.3);color:#c4a0ff}
+.tag-text{background:rgba(255,180,0,0.2);color:#FFB400}
+footer{
+  text-align:center;padding:2rem 1rem;
+  font-size:0.8rem;color:rgba(245,245,245,0.4);
+}
+@media(max-width:600px){
+  header img{height:80px}
+  header h1{font-size:1.8rem}
+  .container{margin:1rem;padding:1.25rem;border-radius:14px}
+  td a{font-size:0.78rem}
+}
+</style>
+</head>
+<body>
+<header>
+  <img src="https://www.splitsp.lat/logos/sportspuff/sportspuff-logo.png" alt="SportsPuff"
+       onerror="this.style.display='none'">
+  <h1>SportsPuff API</h1>
+  <p>v1.0.0</p>
+</header>
+
+<div class="container">
+  <div class="section">
+    <h2>About</h2>
+    <p class="blurb">
+      This is the API backend for
+      <a href="https://www.sportspuff.org">www.sportspuff.org</a>.
+      It serves live scores, schedules, and standings for MLB, NBA, NFL, NHL, and WNBA.
+      Responses are available as JSON (for apps) or plain text (for curl/terminal use).
+    </p>
+  </div>
+
+  <div class="section endpoint-group">
+    <h2>Endpoints</h2>
+
+    <h3>Scores</h3>
+    <table>
+      <tr>
+        <td><a href="/api/v1/scores/today">/api/v1/scores/today</a> <span class="tag tag-json">JSON</span></td>
+        <td>All sports</td>
+      </tr>
+      <tr>
+        <td><a href="/api/v1/scores/nba/today">/api/v1/scores/{sport}/today</a> <span class="tag tag-json">JSON</span></td>
+        <td>Single sport</td>
+      </tr>
+      <tr>
+        <td><a href="/curl/v1/scores/today">/curl/v1/scores/today</a> <span class="tag tag-text">TEXT</span></td>
+        <td>All sports</td>
+      </tr>
+      <tr>
+        <td><a href="/curl/v1/scores/nba/today">/curl/v1/scores/{sport}/today</a> <span class="tag tag-text">TEXT</span></td>
+        <td>Single sport</td>
+      </tr>
+    </table>
+
+    <h3>Schedules</h3>
+    <table>
+      <tr>
+        <td><a href="/api/v1/schedules/today">/api/v1/schedules/today</a> <span class="tag tag-json">JSON</span></td>
+        <td>All sports</td>
+      </tr>
+      <tr>
+        <td><a href="/api/v1/schedule/nba/today">/api/v1/schedule/{sport}/today</a> <span class="tag tag-json">JSON</span></td>
+        <td>Single sport</td>
+      </tr>
+      <tr>
+        <td><a href="/curl/v1/schedules/today">/curl/v1/schedules/today</a> <span class="tag tag-text">TEXT</span></td>
+        <td>All sports</td>
+      </tr>
+      <tr>
+        <td><a href="/curl/v1/schedule/nba/today">/curl/v1/schedule/{sport}/today</a> <span class="tag tag-text">TEXT</span></td>
+        <td>Single sport</td>
+      </tr>
+    </table>
+
+    <h3>Standings</h3>
+    <table>
+      <tr>
+        <td><a href="/api/v1/standings/nba">/api/v1/standings/{sport}</a> <span class="tag tag-json">JSON</span></td>
+        <td>JSON</td>
+      </tr>
+      <tr>
+        <td><a href="/curl/v1/standings/nba">/curl/v1/standings/{sport}</a> <span class="tag tag-text">TEXT</span></td>
+        <td>Plain text</td>
+      </tr>
+    </table>
+
+    <h3>Help</h3>
+    <table>
+      <tr>
+        <td><a href="/help">/help</a></td>
+        <td>Full endpoint reference (HTML)</td>
+      </tr>
+      <tr>
+        <td><a href="/api/help">/api/help</a> <span class="tag tag-json">JSON</span></td>
+        <td>Full endpoint reference</td>
+      </tr>
+      <tr>
+        <td><a href="/curl/help">/curl/help</a> <span class="tag tag-text">TEXT</span></td>
+        <td>Full endpoint reference</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h2>Usage</h2>
+    <p class="blurb">
+      Replace <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">today</code>
+      with <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">yesterday</code>,
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">tomorrow</code>,
+      or a date like <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">2026-04-28</code>.
+      Sports: <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">mlb</code>,
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">nba</code>,
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">nfl</code>,
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">nhl</code>,
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">wnba</code>,
+      or <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">all</code>.
+      Add <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">?tz=et</code>
+      for Eastern time (default is Pacific).
+    </p>
+  </div>
+</div>
+
+<footer>SportsPuff &mdash; sportspuff.org</footer>
+</body>
+</html>"""
 
 
 @app.get("/help", response_class=HTMLResponse)
