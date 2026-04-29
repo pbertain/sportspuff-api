@@ -424,11 +424,38 @@ class NHLCollector(BaseCollector):
             return self._playoff_series_cache
         try:
             now = datetime.now()
-            season = f"{now.year - 1}{now.year}" if now.month < 9 else f"{now.year}{now.year + 1}"
-            url = f"{self.base_url}/playoff-series/carousel/{season}"
+            end_year = now.year if now.month < 9 else now.year + 1
+
+            # Try playoff-bracket endpoint first (simpler YYYY format)
+            self._check_rate_limit()
+            url = f"{self.base_url}/playoff-bracket/{end_year}"
+            response = requests.get(url, timeout=self.api_timeout)
+
+            if response.status_code == 200 and response.text.strip():
+                data = response.json()
+                series_map = {}
+                for series in data.get('series', []):
+                    top_team = series.get('topSeedTeam', {})
+                    bottom_team = series.get('bottomSeedTeam', {})
+                    top_id = top_team.get('id')
+                    bottom_id = bottom_team.get('id')
+                    top_wins = series.get('topSeedWins', 0)
+                    bottom_wins = series.get('bottomSeedWins', 0)
+                    if top_id and bottom_id:
+                        series_map[(top_id, bottom_id)] = {'top_wins': top_wins, 'bottom_wins': bottom_wins}
+                        series_map[(bottom_id, top_id)] = {'top_wins': bottom_wins, 'bottom_wins': top_wins}
+                if series_map:
+                    self._playoff_series_cache = series_map
+                    self._playoff_series_cache_time = time.time()
+                    logger.info(f"Fetched {len(series_map) // 2} playoff series from bracket API")
+                    return series_map
+
+            # Fallback: carousel endpoint (needs trailing slash)
+            season = f"{end_year - 1}{end_year}"
+            url = f"{self.base_url}/playoff-series/carousel/{season}/"
             self._check_rate_limit()
             response = requests.get(url, timeout=self.api_timeout)
-            if response.status_code == 200:
+            if response.status_code == 200 and response.text.strip():
                 data = response.json()
                 series_map = {}
                 for rnd in data.get('rounds', []):
@@ -442,9 +469,11 @@ class NHLCollector(BaseCollector):
                         if top_id and bottom_id:
                             series_map[(top_id, bottom_id)] = {'top_wins': top_wins, 'bottom_wins': bottom_wins}
                             series_map[(bottom_id, top_id)] = {'top_wins': bottom_wins, 'bottom_wins': top_wins}
-                self._playoff_series_cache = series_map
-                self._playoff_series_cache_time = time.time()
-                return series_map
+                if series_map:
+                    self._playoff_series_cache = series_map
+                    self._playoff_series_cache_time = time.time()
+                    logger.info(f"Fetched {len(series_map) // 2} playoff series from carousel API")
+                    return series_map
         except Exception as e:
             logger.debug(f"Could not fetch playoff series: {e}")
         return self._playoff_series_cache
