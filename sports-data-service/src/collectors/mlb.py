@@ -88,45 +88,39 @@ class MLBCollector(BaseCollector):
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
         Get live MLB scores for specified date.
-        
-        Args:
-            date: Date to get scores for (optional, defaults to today)
-            
-        Returns:
-            List of game dictionaries with live score data
+        Uses schedule data for all games (already includes scores, status, innings).
+        Only fetches detailed per-game data for games currently in progress.
         """
         self._check_rate_limit()
-        
+
         try:
             if date:
                 date_str = date.strftime('%Y-%m-%d')
                 games = statsapi.schedule(date=date_str)
             else:
                 games = statsapi.schedule()
-            
+
             parsed_games = []
             for game in games:
-                # Get detailed game data for live scores
+                status = game.get('status', '')
                 game_id = game.get('game_id')
-                if game_id:
+
+                if status in ('In Progress', 'Live') and game_id:
                     try:
                         detailed_game = statsapi.get('game', {'gamePk': game_id})
                         parsed_game = self.parse_live_game_data(detailed_game)
                         if parsed_game:
                             parsed_games.append(parsed_game)
+                            continue
                     except Exception as e:
                         logger.warning(f"Could not get detailed data for game {game_id}: {e}")
-                        # Fall back to basic game data
-                        parsed_game = self.parse_game_data(game)
-                        if parsed_game:
-                            parsed_games.append(parsed_game)
-                else:
-                    parsed_game = self.parse_game_data(game)
-                    if parsed_game:
-                        parsed_games.append(parsed_game)
-            
+
+                parsed_game = self.parse_game_data(game)
+                if parsed_game:
+                    parsed_games.append(parsed_game)
+
             return parsed_games
-            
+
         except Exception as e:
             logger.error(f"Error fetching MLB live scores: {e}")
             return []
