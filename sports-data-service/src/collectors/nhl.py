@@ -25,6 +25,9 @@ class NHLCollector(BaseCollector):
         self._team_records_cache = {}  # Cache team records: {team_id: {'wins': int, 'losses': int, 'ot': int}}
         self._standings_cache_time = None
         self._standings_cache_ttl = 3600  # Cache standings for 1 hour
+        self._playoff_series_cache = {}  # {(home_id, away_id): {'home_wins': int, 'away_wins': int}}
+        self._playoff_series_cache_time = None
+        self._playoff_series_cache_ttl = 300
     
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
@@ -415,7 +418,49 @@ class NHLCollector(BaseCollector):
             return self._team_records_cache.get(team_id_int, {'wins': 0, 'losses': 0, 'ot': 0})
         except (ValueError, TypeError):
             return {'wins': 0, 'losses': 0, 'ot': 0}
-    
+
+    def _fetch_playoff_series(self) -> Dict:
+        if self._playoff_series_cache_time and time.time() - self._playoff_series_cache_time < self._playoff_series_cache_ttl:
+            return self._playoff_series_cache
+        try:
+            now = datetime.now()
+            season = f"{now.year - 1}{now.year}" if now.month < 9 else f"{now.year}{now.year + 1}"
+            url = f"{self.base_url}/playoff-series/carousel/{season}"
+            self._check_rate_limit()
+            response = requests.get(url, timeout=self.api_timeout)
+            if response.status_code == 200:
+                data = response.json()
+                series_map = {}
+                for rnd in data.get('rounds', []):
+                    for series in rnd.get('series', []):
+                        top_seed = series.get('topSeed', {})
+                        bottom_seed = series.get('bottomSeed', {})
+                        top_id = top_seed.get('id')
+                        bottom_id = bottom_seed.get('id')
+                        top_wins = top_seed.get('wins', 0)
+                        bottom_wins = bottom_seed.get('wins', 0)
+                        if top_id and bottom_id:
+                            series_map[(top_id, bottom_id)] = {'top_wins': top_wins, 'bottom_wins': bottom_wins}
+                            series_map[(bottom_id, top_id)] = {'top_wins': bottom_wins, 'bottom_wins': top_wins}
+                self._playoff_series_cache = series_map
+                self._playoff_series_cache_time = time.time()
+                return series_map
+        except Exception as e:
+            logger.debug(f"Could not fetch playoff series: {e}")
+        return self._playoff_series_cache
+
+    def _get_series_record(self, home_team_id, away_team_id):
+        series = self._fetch_playoff_series()
+        try:
+            h_id = int(home_team_id)
+            a_id = int(away_team_id)
+        except (ValueError, TypeError):
+            return None
+        rec = series.get((h_id, a_id))
+        if rec:
+            return {'home_wins': rec['top_wins'], 'away_wins': rec['bottom_wins']}
+        return None
+
     def parse_game_data(self, raw_game: Dict[str, Any]) -> Dict[str, Any]:
         """
         Parse raw NHL game data into standardized format.
@@ -501,13 +546,32 @@ class NHLCollector(BaseCollector):
             away_team_name = f"{away_place_name} {away_common_name}".strip()
             if not away_team_name:
                 logger.warning(f"Empty away team name for game {raw_game.get('id', 'unknown')}")
-            
-            # Get team records from standings API
+
+            # Get team records - use series record for playoffs, standings for regular season
             home_team_id_str = str(home_team.get('id', ''))
             away_team_id_str = str(away_team.get('id', ''))
-            home_record = self._get_team_record(home_team_id_str)
-            away_record = self._get_team_record(away_team_id_str)
-            
+
+            if game_type == 'playoffs':
+                series_rec = self._get_series_record(home_team_id_str, away_team_id_str)
+                if series_rec:
+                    home_wins = series_rec['home_wins']
+                    home_losses = series_rec['away_wins']
+                    away_wins = series_rec['away_wins']
+                    away_losses = series_rec['home_wins']
+                else:
+                    home_wins = home_losses = away_wins = away_losses = 0
+                home_otl = 0
+                away_otl = 0
+            else:
+                home_record = self._get_team_record(home_team_id_str)
+                away_record = self._get_team_record(away_team_id_str)
+                home_wins = home_record.get('wins', 0)
+                home_losses = home_record.get('losses', 0)
+                home_otl = home_record.get('ot', 0)
+                away_wins = away_record.get('wins', 0)
+                away_losses = away_record.get('losses', 0)
+                away_otl = away_record.get('ot', 0)
+
             return {
                 'league': 'NHL',
                 'game_id': str(raw_game.get('id', '')),
@@ -517,16 +581,16 @@ class NHLCollector(BaseCollector):
                 'home_team': home_team_name,
                 'home_team_abbrev': home_team.get('abbrev', ''),
                 'home_team_id': home_team_id_str,
-                'home_wins': home_record.get('wins', 0),
-                'home_losses': home_record.get('losses', 0),
-                'home_otl': home_record.get('ot', 0),
+                'home_wins': home_wins,
+                'home_losses': home_losses,
+                'home_otl': home_otl,
                 'home_score_total': home_team.get('score', 0),
                 'visitor_team': away_team_name,
                 'visitor_team_abbrev': away_team.get('abbrev', ''),
                 'visitor_team_id': away_team_id_str,
-                'visitor_wins': away_record.get('wins', 0),
-                'visitor_losses': away_record.get('losses', 0),
-                'visitor_otl': away_record.get('ot', 0),
+                'visitor_wins': away_wins,
+                'visitor_losses': away_losses,
+                'visitor_otl': away_otl,
                 'visitor_score_total': away_team.get('score', 0),
                 'game_status': self.normalize_game_status(raw_game.get('gameState', 'scheduled')),
                 'current_period': raw_game.get('periodDescriptor', {}).get('number', ''),
@@ -610,12 +674,31 @@ class NHLCollector(BaseCollector):
             home_score = raw_game.get('homeTeam', {}).get('score', 0)
             away_score = raw_game.get('awayTeam', {}).get('score', 0)
             
-            # Get team records from standings API
+            # Get team records - use series record for playoffs, standings for regular season
             home_team_id_str = str(home_team.get('id', ''))
             away_team_id_str = str(away_team.get('id', ''))
-            home_record = self._get_team_record(home_team_id_str)
-            away_record = self._get_team_record(away_team_id_str)
-            
+
+            if game_type == 'playoffs':
+                series_rec = self._get_series_record(home_team_id_str, away_team_id_str)
+                if series_rec:
+                    home_wins = series_rec['home_wins']
+                    home_losses = series_rec['away_wins']
+                    away_wins = series_rec['away_wins']
+                    away_losses = series_rec['home_wins']
+                else:
+                    home_wins = home_losses = away_wins = away_losses = 0
+                home_otl = 0
+                away_otl = 0
+            else:
+                home_record = self._get_team_record(home_team_id_str)
+                away_record = self._get_team_record(away_team_id_str)
+                home_wins = home_record.get('wins', 0)
+                home_losses = home_record.get('losses', 0)
+                home_otl = home_record.get('ot', 0)
+                away_wins = away_record.get('wins', 0)
+                away_losses = away_record.get('losses', 0)
+                away_otl = away_record.get('ot', 0)
+
             return {
                 'league': 'NHL',
                 'game_id': str(raw_game.get('id', '')),
@@ -635,12 +718,12 @@ class NHLCollector(BaseCollector):
                 'time_remaining': raw_game.get('clock', {}).get('timeRemaining', ''),
                 'is_final': raw_game.get('gameState') in ('FINAL', 'OFF'),
                 'is_overtime': raw_game.get('periodDescriptor', {}).get('periodType') == 'OVERTIME',
-                'home_wins': home_record.get('wins', 0),
-                'home_losses': home_record.get('losses', 0),
-                'home_otl': home_record.get('ot', 0),
-                'visitor_wins': away_record.get('wins', 0),
-                'visitor_losses': away_record.get('losses', 0),
-                'visitor_otl': away_record.get('ot', 0),
+                'home_wins': home_wins,
+                'home_losses': home_losses,
+                'home_otl': home_otl,
+                'visitor_wins': away_wins,
+                'visitor_losses': away_losses,
+                'visitor_otl': away_otl,
                 'home_period_scores': {},
                 'visitor_period_scores': {},
             }

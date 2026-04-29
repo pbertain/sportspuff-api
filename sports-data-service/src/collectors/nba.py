@@ -1024,7 +1024,7 @@ class NBACollector(BaseCollector):
             
             # Determine if game is final
             game_status_text = raw_game.get('gameStatusText', '').strip().lower()
-            is_final = 'final' in game_status_text or game_status_text == ''
+            is_final = 'final' in game_status_text
             
             return {
                 'league': 'NBA',

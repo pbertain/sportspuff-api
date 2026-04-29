@@ -639,8 +639,13 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     if sport.lower() == 'nhl':
         visitor_otl = getattr(game, 'visitor_otl', 0) or 0
         home_otl = getattr(game, 'home_otl', 0) or 0
-        away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}-{visitor_otl:2d}]"
-        home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}-{home_otl:2d}]"
+        game_type = getattr(game, 'game_type', 'regular')
+        if game_type == 'playoffs':
+            away_team = f"{visitor_abbrev} [{visitor_wins:d}-{visitor_losses:d}]"
+            home_team = f"{home_abbrev} [{home_wins:d}-{home_losses:d}]"
+        else:
+            away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}-{visitor_otl:2d}]"
+            home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}-{home_otl:2d}]"
     else:
         away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}]"
         home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}]"
@@ -688,10 +693,16 @@ def format_game_for_curl(game: Game, sport: str) -> str:
                 # If no time available, still show period
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display}"
         else:
-            # For other sports, use 'Q' for Quarter (only during game, not for final)
-            # Check if period is "Final" or similar - don't add Q prefix
-            if period and period.upper() in ('FINAL', 'F', 'END', 'FIN'):
+            # For other sports
+            if period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) F"
+            elif sport.lower() == 'mlb':
+                inning_state = time_left.strip().upper() if time_left else ''
+                inning_abbrev = {'TOP': 'TOP', 'BOTTOM': 'BOT', 'MIDDLE': 'MID', 'END': 'END'}.get(inning_state, inning_state)
+                if inning_abbrev:
+                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {inning_abbrev} {period}"
+                else:
+                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) INN {period}"
             else:
                 period_prefix = 'Q'
                 # Check if it's halftime (period 2, time 0:00, and status is in_progress)
@@ -706,10 +717,15 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     else:
         # Scheduled game - show time
         if game.game_time:
-            # Convert to Pacific time
-            pt = pytz.timezone('America/Los_Angeles')
-            game_time_pt = game.game_time.astimezone(pt)
-            time_status = game_time_pt.strftime('%H:%M')
+            try:
+                pt = pytz.timezone('America/Los_Angeles')
+                gt = game.game_time
+                if hasattr(gt, 'tzinfo') and gt.tzinfo is None:
+                    gt = pytz.UTC.localize(gt)
+                game_time_pt = gt.astimezone(pt)
+                time_status = game_time_pt.strftime('%H:%M')
+            except Exception:
+                time_status = "TBD"
         else:
             time_status = "TBD"
     
@@ -1023,10 +1039,16 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                             # If no time available, still show period
                             status = period_display
                     else:
-                        # For other sports, use 'Q' for Quarter (only during game, not for final)
-                        # Check if period is "Final" or similar - don't add Q prefix
-                        if period and period.upper() in ('FINAL', 'F', 'END', 'FIN'):
+                        # For other sports
+                        if period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
                             status = "F"
+                        elif sport == 'mlb':
+                            inning_state = time_left.strip().upper() if time_left else ''
+                            inning_abbrev = {'TOP': 'TOP', 'BOTTOM': 'BOT', 'MIDDLE': 'MID', 'END': 'END'}.get(inning_state, inning_state)
+                            if inning_abbrev:
+                                status = f"{inning_abbrev} {period}"
+                            else:
+                                status = f"INN {period}"
                         else:
                             period_prefix = 'Q'
                             if time_left and time_left.strip():
