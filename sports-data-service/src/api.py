@@ -1391,20 +1391,22 @@ def get_schedules_all_sports_curl_v1(
                         'visitor_team_abbrev': game.visitor_team_abbrev,
                         'visitor_wins': game.visitor_wins,
                         'visitor_losses': game.visitor_losses,
+                        'visitor_score_total': game.visitor_score_total,
+                        'home_score_total': game.home_score_total,
                         'game_status': game.game_status,
                         'current_period': game.current_period,
                         'time_remaining': game.time_remaining,
                         'is_final': game.is_final,
                     })
-        
+
         # Convert back to Game-like objects
         class GameProxy:
             def __init__(self, data):
                 for k, v in data.items():
                     setattr(self, k, v)
-        
+
         all_games = [GameProxy(g) for g in games_data]
-        
+
         return format_schedule_curl(all_games, target_date, timezone)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
