@@ -248,6 +248,14 @@ class MLBCollector(BaseCollector):
                 home_period_scores[f'inning_{inning_num}'] = home_score
                 visitor_period_scores[f'inning_{inning_num}'] = away_score
             
+            # Get status from gameData (not root level)
+            status_obj = game_data.get('status', {})
+            detailed_state = status_obj.get('detailedState', 'scheduled')
+
+            # Get team records from gameData
+            home_record = home_team.get('record', {})
+            away_record = away_team.get('record', {})
+
             return {
                 'league': 'MLB',
                 'game_id': str(raw_game.get('gamePk', '')),
@@ -256,15 +264,19 @@ class MLBCollector(BaseCollector):
                 'home_team': home_team.get('name', ''),
                 'home_team_abbrev': home_team.get('abbreviation', ''),
                 'home_team_id': str(home_team.get('id', '')),
+                'home_wins': home_record.get('wins', 0),
+                'home_losses': home_record.get('losses', 0),
                 'home_score_total': linescore.get('teams', {}).get('home', {}).get('runs', 0),
                 'visitor_team': away_team.get('name', ''),
                 'visitor_team_abbrev': away_team.get('abbreviation', ''),
                 'visitor_team_id': str(away_team.get('id', '')),
+                'visitor_wins': away_record.get('wins', 0),
+                'visitor_losses': away_record.get('losses', 0),
                 'visitor_score_total': linescore.get('teams', {}).get('away', {}).get('runs', 0),
-                'game_status': self.normalize_game_status(raw_game.get('status', {}).get('detailedState', 'scheduled')),
+                'game_status': self.normalize_game_status(detailed_state),
                 'current_period': linescore.get('currentInning', ''),
                 'time_remaining': linescore.get('inningState', ''),
-                'is_final': raw_game.get('status', {}).get('detailedState') == 'Final',
+                'is_final': detailed_state in ('Final', 'Game Over', 'Completed Early'),
                 'is_overtime': False,
                 'home_period_scores': home_period_scores,
                 'visitor_period_scores': visitor_period_scores,
