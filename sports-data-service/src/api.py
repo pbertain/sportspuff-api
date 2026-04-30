@@ -1875,18 +1875,18 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
                         'visitor_team': game_dict.get('visitor_team', ''),
                         'visitor_team_abbrev': game_dict.get('visitor_team_abbrev', ''),
-                        'home_score_total': game_dict.get('home_score_total', 0),
-                        'visitor_score_total': game_dict.get('visitor_score_total', 0),
+                        'home_score_total': int(game_dict.get('home_score_total', 0) or 0),
+                        'visitor_score_total': int(game_dict.get('visitor_score_total', 0) or 0),
                         'game_status': game_dict.get('game_status', 'scheduled'),
                         'current_period': current_period,
                         'time_remaining': time_remaining,
                         'is_final': game_dict.get('is_final', False),
-                        'home_wins': game_dict.get('home_wins', 0),
-                        'home_losses': game_dict.get('home_losses', 0),
-                        'home_otl': game_dict.get('home_otl', 0),
-                        'visitor_wins': game_dict.get('visitor_wins', 0),
-                        'visitor_losses': game_dict.get('visitor_losses', 0),
-                        'visitor_otl': game_dict.get('visitor_otl', 0)
+                        'home_wins': int(game_dict.get('home_wins', 0) or 0),
+                        'home_losses': int(game_dict.get('home_losses', 0) or 0),
+                        'home_otl': int(game_dict.get('home_otl', 0) or 0),
+                        'visitor_wins': int(game_dict.get('visitor_wins', 0) or 0),
+                        'visitor_losses': int(game_dict.get('visitor_losses', 0) or 0),
+                        'visitor_otl': int(game_dict.get('visitor_otl', 0) or 0)
                     }
                     games.append(GameWrapper(game_data))
     
@@ -1925,18 +1925,18 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'home_team_abbrev': home_abbrev,
                         'visitor_team': visitor_team,
                         'visitor_team_abbrev': visitor_abbrev,
-                        'home_score_total': game_dict.get('home_score_total', 0),
-                        'visitor_score_total': game_dict.get('visitor_score_total', 0),
+                        'home_score_total': int(game_dict.get('home_score_total', 0) or 0),
+                        'visitor_score_total': int(game_dict.get('visitor_score_total', 0) or 0),
                         'game_status': game_dict.get('game_status', 'scheduled'),
                         'current_period': game_dict.get('current_period', ''),
                         'time_remaining': game_dict.get('time_remaining', ''),
                         'is_final': game_dict.get('is_final', False),
-                        'home_wins': game_dict.get('home_wins', 0),
-                        'home_losses': game_dict.get('home_losses', 0),
-                        'home_otl': game_dict.get('home_otl', 0),
-                        'visitor_wins': game_dict.get('visitor_wins', 0),
-                        'visitor_losses': game_dict.get('visitor_losses', 0),
-                        'visitor_otl': game_dict.get('visitor_otl', 0)
+                        'home_wins': int(game_dict.get('home_wins', 0) or 0),
+                        'home_losses': int(game_dict.get('home_losses', 0) or 0),
+                        'home_otl': int(game_dict.get('home_otl', 0) or 0),
+                        'visitor_wins': int(game_dict.get('visitor_wins', 0) or 0),
+                        'visitor_losses': int(game_dict.get('visitor_losses', 0) or 0),
+                        'visitor_otl': int(game_dict.get('visitor_otl', 0) or 0)
                     }
                     games.append(GameWrapper(game_data))
     
@@ -2255,8 +2255,8 @@ def get_scores_curl_v1(
                         'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
                         'visitor_team': game_dict.get('visitor_team', ''),
                         'visitor_team_abbrev': game_dict.get('visitor_team_abbrev', ''),
-                        'home_score_total': game_dict.get('home_score_total', 0),
-                        'visitor_score_total': game_dict.get('visitor_score_total', 0),
+                        'home_score_total': int(game_dict.get('home_score_total', 0) or 0),
+                        'visitor_score_total': int(game_dict.get('visitor_score_total', 0) or 0),
                         'game_status': game_dict.get('game_status', 'scheduled'),
                         'current_period': game_dict.get('current_period', ''),
                         'time_remaining': game_dict.get('time_remaining', ''),
