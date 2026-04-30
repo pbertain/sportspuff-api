@@ -627,13 +627,13 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     # Use abbreviation if available, otherwise fall back to full team name (first 3 chars)
     visitor_abbrev = game.visitor_team_abbrev
     if not visitor_abbrev or visitor_abbrev.strip() == '':
-        # Fallback to first 3 characters of team name, or full name if shorter
         visitor_abbrev = (game.visitor_team or '???')[:3].upper()
-    
+    visitor_abbrev = visitor_abbrev.ljust(3)
+
     home_abbrev = game.home_team_abbrev
     if not home_abbrev or home_abbrev.strip() == '':
-        # Fallback to first 3 characters of team name, or full name if shorter
         home_abbrev = (game.home_team or '???')[:3].upper()
+    home_abbrev = home_abbrev.ljust(3)
     
     # For NHL, format records as W-L-OTL (overtime losses)
     if sport.lower() == 'nhl':
@@ -996,8 +996,8 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
         
         if scored_games:
             for game in scored_games:
-                away_abbr = game.visitor_team_abbrev
-                home_abbr = game.home_team_abbrev
+                away_abbr = (game.visitor_team_abbrev or '???').ljust(3)
+                home_abbr = (game.home_team_abbrev or '???').ljust(3)
                 
                 away_score = game.visitor_score_total or 0
                 home_score = game.home_score_total or 0
