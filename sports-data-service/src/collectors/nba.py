@@ -878,12 +878,15 @@ class NBACollector(BaseCollector):
             
             # Extract game time
             game_time = None
-            if raw_game.get('gameTimeEst'):
+            game_time_utc = raw_game.get('gameTimeUTC') or raw_game.get('gameDateTimeUTC') or raw_game.get('gameTimeEst') or ''
+            if game_time_utc:
                 try:
-                    # Parse EST time and convert to UTC
-                    game_time_str = raw_game['gameTimeEst']
-                    # This is a simplified parsing - you might need more robust timezone handling
-                    game_time = datetime.strptime(f"{game_date} {game_time_str}", '%Y-%m-%d %H:%M:%S')
+                    from dateutil import parser as dtparser
+                    game_time_obj = dtparser.parse(game_time_utc)
+                    if game_time_obj.tzinfo is None:
+                        import pytz
+                        game_time_obj = pytz.UTC.localize(game_time_obj)
+                    game_time = game_time_obj
                 except:
                     pass
             
