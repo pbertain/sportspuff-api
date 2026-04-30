@@ -614,15 +614,16 @@ def parse_date_param(date_param: Optional[str], tz: pytz.BaseTzInfo = None) -> d
             detail=f"Invalid date format: '{date_param}'. Supported formats: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, M-D-YYYY, etc."
         )
 
-def format_game_for_curl(game: Game, sport: str) -> str:
+def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> str:
     """Format a single game for curl-style output."""
-    # Format team names with wins/losses (handle None values)
+    if tz is None:
+        tz = pytz.timezone('US/Pacific')
+
     visitor_wins = game.visitor_wins or 0
     visitor_losses = game.visitor_losses or 0
     home_wins = game.home_wins or 0
     home_losses = game.home_losses or 0
-    
-    # Use abbreviation if available, otherwise fall back to full team name (first 3 chars)
+
     visitor_abbrev = game.visitor_team_abbrev
     if not visitor_abbrev or visitor_abbrev.strip() == '':
         visitor_abbrev = (game.visitor_team or '???')[:3].upper()
@@ -632,27 +633,27 @@ def format_game_for_curl(game: Game, sport: str) -> str:
     if not home_abbrev or home_abbrev.strip() == '':
         home_abbrev = (game.home_team or '???')[:3].upper()
     home_abbrev = home_abbrev.ljust(3)
-    
-    # For NHL, format records as W-L-OTL (overtime losses)
+
+    game_type = getattr(game, 'game_type', 'regular')
+
     if sport.lower() == 'nhl':
         visitor_otl = getattr(game, 'visitor_otl', 0) or 0
         home_otl = getattr(game, 'home_otl', 0) or 0
-        game_type = getattr(game, 'game_type', 'regular')
         if game_type == 'playoffs':
-            away_team = f"{visitor_abbrev} [{visitor_wins:d}-{visitor_losses:d}]"
-            home_team = f"{home_abbrev} [{home_wins:d}-{home_losses:d}]"
+            away_team = f"{visitor_abbrev} [{visitor_wins}-{visitor_losses}]"
+            home_team = f"{home_abbrev} [{home_wins}-{home_losses}]"
         else:
-            away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}-{visitor_otl:2d}]"
-            home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}-{home_otl:2d}]"
+            away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:3d}-{visitor_otl:2d}]"
+            home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:3d}-{home_otl:2d}]"
+    elif game_type == 'playoffs':
+        away_team = f"{visitor_abbrev} [{visitor_wins}-{visitor_losses}]"
+        home_team = f"{home_abbrev} [{home_wins}-{home_losses}]"
     else:
-        away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:2d}]"
-        home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:2d}]"
-    
-    # Format time/status
-    # Priority: Show scores if game is final or in progress, otherwise show scheduled time
+        away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:3d}]"
+        home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:3d}]"
+
     if game.is_final:
         if game.home_score_total is not None and game.visitor_score_total is not None:
-            # For NHL, show F for regulation, F/OT for overtime
             if sport.lower() == 'nhl':
                 period = str(game.current_period) if game.current_period is not None else '?'
                 try:
@@ -668,69 +669,62 @@ def format_game_for_curl(game: Game, sport: str) -> str:
         else:
             time_status = "F"
     elif game.game_status == 'in_progress' or (game.visitor_score_total and game.visitor_score_total > 0) or (game.home_score_total and game.home_score_total > 0):
-        # Game is in progress or has a score - show the score in schedule format
         period = str(game.current_period) if game.current_period is not None else '?'
         time_left = game.time_remaining or ''
-        
+
         if sport.lower() == 'nhl':
-            # For NHL: Period 4+ is overtime (OT), format as "P{period} MM:SS" (matching NBA format)
             try:
                 period_num = int(period) if str(period).isdigit() else 0
-                if period_num >= 4:
-                    period_display = 'OT'
-                else:
-                    period_display = f'P{period_num}'
+                period_display = 'OT' if period_num >= 4 else f'P{period_num}'
             except (ValueError, TypeError):
                 period_display = f'P{period}'
-            
-            # Always show time if available, otherwise just show period
             if time_left and time_left.strip():
-                # Format: (score-score) P1 MM:SS or OT MM:SS (no dash, matching NBA)
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display} {time_left}"
             else:
-                # If no time available, still show period
                 time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display}"
-        else:
-            # For other sports
-            if period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) F"
-            elif sport.lower() == 'mlb':
-                inning_state = time_left.strip().upper() if time_left else ''
-                inning_abbrev = {'TOP': 'TOP', 'BOTTOM': 'BOT', 'MIDDLE': 'MID', 'END': 'END'}.get(inning_state, inning_state)
-                if inning_abbrev:
-                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {inning_abbrev} {period}"
-                else:
-                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) INN {period}"
+        elif period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
+            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) F"
+        elif sport.lower() == 'mlb':
+            inning_state = time_left.strip().upper() if time_left else ''
+            inning_abbrev = {'TOP': 'TOP', 'BOTTOM': 'BOT', 'MIDDLE': 'MID', 'END': 'END'}.get(inning_state, inning_state)
+            if inning_abbrev:
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {inning_abbrev} {period}"
             else:
-                period_prefix = 'Q'
-                # Check if it's halftime (period 2, time 0:00, and status is in_progress)
-                is_halftime = (period == '2' and time_left in ('0:00', '') and 
-                              game.game_status == 'in_progress')
-                if is_halftime:
-                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) HT"
-                elif time_left and time_left.strip():
-                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
-                else:
-                    time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) INN {period}"
+        else:
+            period_prefix = 'Q'
+            is_halftime = (period == '2' and time_left in ('0:00', '') and
+                          game.game_status == 'in_progress')
+            if is_halftime:
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) HT"
+            elif time_left and time_left.strip():
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
+            else:
+                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
     else:
-        # Scheduled game - show time
         if game.game_time:
             try:
-                pt = pytz.timezone('America/Los_Angeles')
                 gt = game.game_time
                 if hasattr(gt, 'tzinfo') and gt.tzinfo is None:
                     gt = pytz.UTC.localize(gt)
-                game_time_pt = gt.astimezone(pt)
-                time_status = game_time_pt.strftime('%H:%M')
+                game_time_local = gt.astimezone(tz)
+                tz_abbrev = game_time_local.strftime('%Z')
+                time_str = game_time_local.strftime('%-I:%M %p')
+                now = datetime.now(tz)
+                diff = game_time_local - now
+                total_seconds = int(diff.total_seconds())
+                if total_seconds > 0:
+                    hours, remainder = divmod(total_seconds, 3600)
+                    minutes = remainder // 60
+                    time_status = f"{time_str} {tz_abbrev} - in {hours}h{minutes:02d}m"
+                else:
+                    time_status = f"{time_str} {tz_abbrev}"
             except Exception:
                 time_status = "TBD"
         else:
             time_status = "TBD"
-    
-    if game.game_status == 'in_progress':
-        return f" {away_team}@{home_team} {time_status}"
-    else:
-        return f" {away_team}@{home_team} {time_status}"
+
+    return f" {away_team} @ {home_team} {time_status}"
 
 def _get_season_type_for_sport(sport: str, target_date: date) -> str:
     """Get season type for a sport from database when there are no games for the date."""
@@ -796,8 +790,9 @@ def _format_curl_header(tz, target_date, label):
 def _format_curl_footer(tz):
     now_tz = datetime.now(tz)
     tz_abbrev = now_tz.strftime('%Z')
-    output = f"       All times in {tz_abbrev}\n"
-    output += f"  Sent from SportsPuff@{now_tz.strftime('%H:%M')}\n"
+    output = f"          All times in {tz_abbrev}\n"
+    output += f"      Sent from SportsPuff@{now_tz.strftime('%H:%M')}\n"
+    output += f"   CricketPuff is part of SportsPuff\n"
     output += "-" * 39 + "\n"
     return output
 
@@ -818,9 +813,15 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
     output = _format_curl_header(tz, target_date, "Here is the schedule:")
 
-    sport_order = ['mlb', 'wnba', 'nba', 'nfl', 'nhl']
+    sport_order = ['mlb', 'nba', 'nhl', 'wnba', 'nfl']
     sport_to_league = {
-        'mlb': 'MLB', 'wnba': 'WNBA', 'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL'
+        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL', 'wnba': 'WNBA', 'nfl': 'NFL'
+    }
+
+    game_type_map = {
+        'preseason': 'Preseason', 'regular': 'Regular Season',
+        'playoffs': 'Post Season (Playoffs)', 'postseason': 'Post Season (Playoffs)',
+        'allstar': 'All-Star', 'nba_cup': 'Emirates NBA Cup'
     }
 
     for sport in sport_order:
@@ -831,23 +832,18 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
         if sport_games:
             first_game = sport_games[0]
-            game_type_map = {
-                'preseason': 'Preseason', 'regular': 'Regular Season',
-                'playoffs': 'Playoffs', 'allstar': 'All-Star',
-                'nba_cup': 'Emirates NBA Cup', 'postseason': 'Playoffs'
-            }
             season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
             league_name = first_game.league
         else:
             league_name = sport_to_league.get(sport, sport.upper())
             season_type = _get_season_type_for_sport(sport, target_date)
 
-        output += f"{league_name} - {season_type}:\n"
+        output += f"{league_name} [{season_type}]\n"
         output += "-" * 39 + "\n"
 
         if sport_games:
             for game in sport_games:
-                output += format_game_for_curl(game, sport)
+                output += format_game_for_curl(game, sport, tz)
                 output += "\n"
         else:
             output += " No games scheduled\n"
@@ -871,9 +867,15 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
 
     output = _format_curl_header(tz, target_date, "Here are the scores:")
 
-    sport_order = ['mlb', 'wnba', 'nba', 'nfl', 'nhl']
+    sport_order = ['mlb', 'nba', 'nhl', 'wnba', 'nfl']
     sport_to_league = {
-        'mlb': 'MLB', 'wnba': 'WNBA', 'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL'
+        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL', 'wnba': 'WNBA', 'nfl': 'NFL'
+    }
+
+    game_type_map = {
+        'preseason': 'Preseason', 'regular': 'Regular Season',
+        'playoffs': 'Post Season (Playoffs)', 'postseason': 'Post Season (Playoffs)',
+        'allstar': 'All-Star', 'nba_cup': 'Emirates NBA Cup'
     }
     
     for sport in sport_order:
@@ -904,23 +906,13 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
         if scored_games:
             # Determine season info from first game
             first_game = scored_games[0]
-            # Map game_type to display format
-            game_type_map = {
-                'preseason': 'Preseason',
-                'regular': 'Regular Season',
-                'playoffs': 'Playoffs',
-                'allstar': 'All-Star',
-                'nba_cup': 'Emirates NBA Cup',
-                'postseason': 'Playoffs'
-            }
             season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
             league_name = first_game.league
         else:
-            # No scores for this sport - try to get season info from database
             league_name = sport_to_league.get(sport, sport.upper())
             season_type = _get_season_type_for_sport(sport, target_date)
-        
-        output += f"{league_name} - {season_type}:\n"
+
+        output += f"{league_name} [{season_type}]\n"
         output += "-" * 39 + "\n"
 
         if scored_games:
