@@ -774,29 +774,6 @@ def _get_season_type_for_sport(sport: str, target_date: date) -> str:
     # Default fallback
     return "Off Season"
 
-def _get_tz_display(tz, explicit_param=False):
-    """Get display name for a timezone in the footer.
-
-    If the user explicitly passed a tz param, show the friendly name
-    (Pacific, Eastern, etc.). Otherwise default to the abbreviation (PDT, PST, etc.).
-    """
-    now_tz = datetime.now(tz)
-    tz_abbrev = now_tz.strftime('%Z')
-
-    if not explicit_param:
-        return tz_abbrev
-
-    tz_name = tz.zone if hasattr(tz, 'zone') else str(tz)
-    if '/' in tz_name:
-        city_name = tz_name.split('/')[-1].replace('_', ' ')
-        display_map = {
-            'New York': 'Eastern', 'Los Angeles': 'Pacific',
-            'Chicago': 'Central', 'Denver': 'Mountain',
-            'Anchorage': 'Alaska', 'Honolulu': 'Hawaii',
-        }
-        return display_map.get(city_name, tz_abbrev)
-    return tz_abbrev
-
 
 def _format_curl_header(tz, target_date, label):
     greeting = get_greeting(tz)
@@ -809,22 +786,23 @@ def _format_curl_header(tz, target_date, label):
 
     output = f"{greeting}\n"
     output += f"       {date_str}:\n"
-    output += f"{label}\n"
     output += f"SportsPuff - {local_time} {tz_abbrev} / {utc_time} UTC\n"
-    output += "-" * 30 + "\n"
+    output += "\n"
+    output += f"{label}\n"
+    output += "-" * 39 + "\n"
     return output
 
 
-def _format_curl_footer(tz, explicit_tz_param=False):
-    tz_display = _get_tz_display(tz, explicit_tz_param)
+def _format_curl_footer(tz):
     now_tz = datetime.now(tz)
-    output = f"       All times in {tz_display}\n"
+    tz_abbrev = now_tz.strftime('%Z')
+    output = f"       All times in {tz_abbrev}\n"
     output += f"  Sent from SportsPuff@{now_tz.strftime('%H:%M')}\n"
-    output += "-" * 30 + "\n"
+    output += "-" * 39 + "\n"
     return output
 
 
-def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None, show_all_sports: bool = False, explicit_tz: bool = False) -> str:
+def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None, show_all_sports: bool = False) -> str:
     if tz is None:
         tz = pytz.timezone('US/Pacific')
 
@@ -865,7 +843,7 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
             season_type = _get_season_type_for_sport(sport, target_date)
 
         output += f"{league_name} - {season_type}:\n"
-        output += "-" * 30 + "\n"
+        output += "-" * 39 + "\n"
 
         if sport_games:
             for game in sport_games:
@@ -874,13 +852,13 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
         else:
             output += " No games scheduled\n"
 
-        output += "-" * 30 + "\n"
+        output += "-" * 39 + "\n"
 
-    output += _format_curl_footer(tz, explicit_tz)
+    output += _format_curl_footer(tz)
     return output
 
 
-def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None, show_all_sports: bool = False, explicit_tz: bool = False) -> str:
+def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo = None, show_all_sports: bool = False) -> str:
     if tz is None:
         tz = pytz.timezone('US/Pacific')
 
@@ -943,7 +921,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
             season_type = _get_season_type_for_sport(sport, target_date)
         
         output += f"{league_name} - {season_type}:\n"
-        output += "-" * 30 + "\n"
+        output += "-" * 39 + "\n"
 
         if scored_games:
             for game in scored_games:
@@ -1011,9 +989,9 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
         else:
             output += " No games scheduled\n"
         
-        output += "-" * 30 + "\n"
+        output += "-" * 39 + "\n"
 
-    output += _format_curl_footer(tz, explicit_tz)
+    output += _format_curl_footer(tz)
     return output
 @app.get("/", response_class=HTMLResponse)
 def root():
@@ -1297,7 +1275,8 @@ def get_schedules_all_sports_curl_v1(
             games = _get_games_for_curl(league, target_date, timezone)
             all_games.extend(games)
 
-        return format_schedule_curl(all_games, target_date, timezone, explicit_tz=bool(tz))
+        return format_schedule_curl(all_games, target_date, timezone)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1357,7 +1336,8 @@ def get_scores_all_sports_curl_v1(
             games = _get_games_for_curl(league, target_date, timezone)
             all_games.extend(games)
 
-        return format_scores_curl(all_games, target_date, timezone, explicit_tz=bool(tz))
+        return format_scores_curl(all_games, target_date, timezone)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -1911,7 +1891,8 @@ def get_schedule_curl_v1(
                 games = _get_games_for_curl(league, target_date, timezone)
                 all_games.extend(games)
             
-            return format_schedule_curl(all_games, target_date, timezone, show_all_sports=True, explicit_tz=bool(tz))
+            return format_schedule_curl(all_games, target_date, timezone, show_all_sports=True)
+
         
         # Single sport logic
         league = SPORT_MAPPINGS.get(sport_lower)
@@ -1934,7 +1915,8 @@ def get_schedule_curl_v1(
                 # If no game_id, include it (shouldn't happen)
                 unique_games.append(game)
         
-        return format_schedule_curl(unique_games, target_date, timezone, explicit_tz=bool(tz))
+        return format_schedule_curl(unique_games, target_date, timezone)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -2121,7 +2103,8 @@ def get_scores_curl_v1(
                 games = _get_games_for_curl(league, target_date, timezone)
                 all_games.extend(games)
             
-            return format_scores_curl(all_games, target_date, timezone, show_all_sports=True, explicit_tz=bool(tz))
+            return format_scores_curl(all_games, target_date, timezone, show_all_sports=True)
+
         
         # Single sport logic
         league = SPORT_MAPPINGS.get(sport_lower)
@@ -2169,7 +2152,8 @@ def get_scores_curl_v1(
         
         # If we have live games, use them (they're always more up-to-date)
         if game_objects:
-            return format_scores_curl(game_objects, target_date, timezone, explicit_tz=bool(tz))
+            return format_scores_curl(game_objects, target_date, timezone)
+
         
         # Fallback to database only if no live games
         with get_db_session() as db:
@@ -2188,7 +2172,8 @@ def get_scores_curl_v1(
                 elif not game.game_id:
                     unique_games.append(game)
             
-            return format_scores_curl(unique_games, target_date, timezone, explicit_tz=bool(tz))
+            return format_scores_curl(unique_games, target_date, timezone)
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
