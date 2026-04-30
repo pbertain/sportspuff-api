@@ -19,7 +19,7 @@ sys.path.insert(0, '/app/src')
 from database import get_db_session
 from models import Game
 from config import settings
-from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector
+from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector
 
 def get_collector(league: str):
     """Get collector instance for a league."""
@@ -29,6 +29,8 @@ def get_collector(league: str):
         'NHL': NHLCollector(),
         'NFL': NFLCollector(),
         'WNBA': WNBACollector(),
+        'IPL': CricketCollector('IPL'),
+        'MLC': CricketCollector('MLC'),
     }
     return collectors.get(league)
 
@@ -44,7 +46,9 @@ SPORT_MAPPINGS = {
     'mlb': 'MLB',
     'nfl': 'NFL',
     'nhl': 'NHL',
-    'wnba': 'WNBA'
+    'wnba': 'WNBA',
+    'ipl': 'IPL',
+    'mlc': 'MLC',
 }
 
 def get_help_json() -> Dict[str, Any]:
@@ -619,6 +623,10 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
     if tz is None:
         tz = pytz.timezone('US/Pacific')
 
+    # Cricket has its own format
+    if sport.lower() in ('ipl', 'mlc'):
+        return _format_cricket_game(game, tz)
+
     visitor_wins = game.visitor_wins or 0
     visitor_losses = game.visitor_losses or 0
     home_wins = game.home_wins or 0
@@ -726,6 +734,42 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
 
     return f" {away_team} @ {home_team} {time_status}"
 
+
+def _format_cricket_game(game, tz):
+    """Format a cricket match for curl output."""
+    home_abbrev = (getattr(game, 'home_team_abbrev', '') or '???').ljust(3)
+    away_abbrev = (getattr(game, 'visitor_team_abbrev', '') or '???').ljust(3)
+
+    home_w = game.home_wins or 0
+    home_l = game.home_losses or 0
+    home_nr = getattr(game, 'cricket_home_nr', 0) or 0
+    away_w = game.visitor_wins or 0
+    away_l = game.visitor_losses or 0
+    away_nr = getattr(game, 'cricket_away_nr', 0) or 0
+
+    away_rec = f"{away_abbrev} [{away_w}-{away_l}-{away_nr}]"
+    home_rec = f"{home_abbrev} [{home_w}-{home_l}-{home_nr}]"
+
+    cricket_status = getattr(game, 'cricket_status', '') or ''
+    start_time = getattr(game, 'cricket_start_time', {}) or {}
+
+    if game.is_final and cricket_status:
+        time_status = cricket_status
+    elif start_time:
+        pt_str = start_time.get('pt', '')
+        ist_str = start_time.get('ist', '')
+        if pt_str and ist_str:
+            time_status = f"{pt_str}/{ist_str}"
+        elif pt_str:
+            time_status = pt_str
+        else:
+            time_status = "TBD"
+    else:
+        time_status = "TBD"
+
+    return f" {away_rec} @ {home_rec}: {time_status}"
+
+
 def _get_season_type_for_sport(sport: str, target_date: date) -> str:
     """Get season type for a sport from database when there are no games for the date."""
     sport_to_league = {
@@ -813,9 +857,10 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
     output = _format_curl_header(tz, target_date, "Here is the schedule:")
 
-    sport_order = ['mlb', 'nba', 'nhl', 'wnba', 'nfl']
+    sport_order = ['mlb', 'nba', 'nhl', 'ipl', 'mlc', 'wnba', 'nfl']
     sport_to_league = {
-        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL', 'wnba': 'WNBA', 'nfl': 'NFL'
+        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL',
+        'ipl': 'IPL', 'mlc': 'MLC', 'wnba': 'WNBA', 'nfl': 'NFL'
     }
 
     game_type_map = {
@@ -867,9 +912,10 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
 
     output = _format_curl_header(tz, target_date, "Here are the scores:")
 
-    sport_order = ['mlb', 'nba', 'nhl', 'wnba', 'nfl']
+    sport_order = ['mlb', 'nba', 'nhl', 'ipl', 'mlc', 'wnba', 'nfl']
     sport_to_league = {
-        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL', 'wnba': 'WNBA', 'nfl': 'NFL'
+        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL',
+        'ipl': 'IPL', 'mlc': 'MLC', 'wnba': 'WNBA', 'nfl': 'NFL'
     }
 
     game_type_map = {
@@ -1810,7 +1856,12 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'home_otl': int(game_dict.get('home_otl', 0) or 0),
                         'visitor_wins': int(game_dict.get('visitor_wins', 0) or 0),
                         'visitor_losses': int(game_dict.get('visitor_losses', 0) or 0),
-                        'visitor_otl': int(game_dict.get('visitor_otl', 0) or 0)
+                        'visitor_otl': int(game_dict.get('visitor_otl', 0) or 0),
+                        'cricket_status': game_dict.get('cricket_status', ''),
+                        'cricket_venue': game_dict.get('cricket_venue', ''),
+                        'cricket_start_time': game_dict.get('cricket_start_time', {}),
+                        'cricket_home_nr': int(game_dict.get('cricket_home_nr', 0) or 0),
+                        'cricket_away_nr': int(game_dict.get('cricket_away_nr', 0) or 0),
                     }
                     games.append(GameWrapper(game_data))
     
