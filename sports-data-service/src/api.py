@@ -542,15 +542,13 @@ def get_greeting(tz: pytz.BaseTzInfo = None) -> str:
     hour = now.hour
     
     if 0 <= hour < 5:
-        return "Good God! It's so early (or late!)!!"
+        return "Good god... it's late! ⏾"
     elif 5 <= hour < 12:
-        return "Good morning"
+        return "Good morning! 🌇"
     elif 12 <= hour < 17:
-        return "Good afternoon"
-    elif 17 <= hour < 24:
-        return "Good evening"
+        return "Good afternoon! 🌞"
     else:
-        return "Good God! It's so early (or late!)!!"
+        return "Good evening! ✨"
 
 def parse_date_param(date_param: Optional[str], tz: pytz.BaseTzInfo = None) -> date:
     """
