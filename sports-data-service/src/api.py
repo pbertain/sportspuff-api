@@ -2268,6 +2268,106 @@ def get_standings_curl_v1(
     return f"Standings endpoint - TODO\nSport: {sport}\n"
 
 
+# Season info cache: {league: {'data': ..., 'timestamp': float}}
+_season_info_cache: Dict[str, Any] = {}
+_SEASON_INFO_TTL = 86400  # 24 hours
+
+
+def _get_season_info_from_db(league: str) -> Optional[Dict[str, Any]]:
+    """Derive season phase dates from game records in the database."""
+    from sqlalchemy import func
+    try:
+        with get_db_session() as db:
+            rows = db.query(
+                Game.game_type,
+                func.min(Game.game_date).label('start_date'),
+                func.max(Game.game_date).label('end_date'),
+            ).filter(
+                Game.league == league,
+            ).group_by(Game.game_type).all()
+
+            if not rows:
+                return None
+
+            type_display = {
+                'preseason': 'Preseason',
+                'regular': 'Regular Season',
+                'playoffs': 'Post Season (Playoffs)',
+                'postseason': 'Post Season (Playoffs)',
+                'allstar': 'All-Star',
+                'nba_cup': 'Emirates NBA Cup',
+            }
+            type_order = ['preseason', 'regular', 'allstar', 'nba_cup', 'playoffs', 'postseason']
+
+            season_types = []
+            latest_year = None
+            for game_type, start_d, end_d in rows:
+                if game_type in ('postseason',) and any(r[0] == 'playoffs' for r in rows):
+                    continue
+                name = type_display.get(game_type, game_type.title().replace('_', ' '))
+                season_types.append({
+                    'name': name,
+                    'start_date': start_d.isoformat(),
+                    'end_date': end_d.isoformat(),
+                    'game_type': game_type,
+                })
+                if latest_year is None or end_d.year > latest_year:
+                    latest_year = end_d.year
+
+            season_types.sort(key=lambda x: type_order.index(x['game_type']) if x['game_type'] in type_order else 99)
+            for t in season_types:
+                del t['game_type']
+
+            today = datetime.now().strftime('%Y-%m-%d')
+            current_phase = 'Off Season'
+            for t in season_types:
+                if t['start_date'] <= today <= t['end_date']:
+                    current_phase = t['name']
+
+            return {
+                'year': latest_year or datetime.now().year,
+                'current_phase': current_phase,
+                'season_types': season_types,
+            }
+    except Exception as e:
+        logger.error(f"Error deriving season info from DB for {league}: {e}")
+        return None
+
+
+@app.get("/api/v1/season-info/{league}")
+def get_season_info(
+    league: str = Path(..., description="League (mlb, nba, nfl, nhl, wnba)"),
+):
+    """Get season phase dates for a league."""
+    league_upper = league.upper()
+
+    if league_upper in ('IPL', 'MLC'):
+        return {"year": datetime.now().year, "current_phase": "Unknown", "season_types": []}
+
+    if league_upper not in ('MLB', 'NBA', 'NFL', 'NHL', 'WNBA'):
+        raise HTTPException(status_code=400, detail=f"Invalid league: {league}")
+
+    import time as _time
+    cached = _season_info_cache.get(league_upper)
+    if cached and (_time.time() - cached['timestamp'] < _SEASON_INFO_TTL):
+        return cached['data']
+
+    collector = get_collector(league_upper)
+    result = None
+
+    if collector:
+        result = collector.get_season_info()
+
+    if not result:
+        result = _get_season_info_from_db(league_upper)
+
+    if not result:
+        result = {"year": datetime.now().year, "current_phase": "Off Season", "season_types": []}
+
+    _season_info_cache[league_upper] = {'data': result, 'timestamp': _time.time()}
+    return result
+
+
 @app.get("/health")
 def health_check():
     """Health check endpoint."""

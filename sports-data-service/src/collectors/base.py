@@ -80,6 +80,19 @@ class BaseCollector(ABC):
         """
         pass
     
+    def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
+        """
+        Get season phase dates (preseason, regular season, playoffs, etc.).
+
+        Args:
+            year: Season year. If None, uses current year.
+
+        Returns:
+            Dict with 'year', 'current_phase', and 'season_types' list,
+            or None if not supported by this collector.
+        """
+        return None
+
     def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get full season schedule for the league.

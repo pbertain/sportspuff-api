@@ -89,11 +89,54 @@ class MLBCollector(BaseCollector):
                     parsed_games.append(parsed_game)
             
             return parsed_games
-            
+
         except Exception as e:
             logger.error(f"Error fetching MLB schedule: {e}")
             return []
-    
+
+    def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
+        if year is None:
+            now = datetime.now()
+            year = now.year if now.month >= 3 else now.year - 1
+        try:
+            data = statsapi.get("season", {"seasonId": str(year), "sportId": 1})
+            seasons = data.get('seasons', [])
+            if not seasons:
+                return None
+            s = seasons[0]
+            season_types = []
+            if s.get('preSeasonStartDate') and s.get('preSeasonEndDate'):
+                season_types.append({
+                    'name': 'Spring Training',
+                    'start_date': s['preSeasonStartDate'],
+                    'end_date': s['preSeasonEndDate'],
+                })
+            if s.get('regularSeasonStartDate') and s.get('regularSeasonEndDate'):
+                season_types.append({
+                    'name': 'Regular Season',
+                    'start_date': s['regularSeasonStartDate'],
+                    'end_date': s['regularSeasonEndDate'],
+                })
+            if s.get('postSeasonStartDate') and s.get('postSeasonEndDate'):
+                season_types.append({
+                    'name': 'Postseason',
+                    'start_date': s['postSeasonStartDate'],
+                    'end_date': s['postSeasonEndDate'],
+                })
+            today = datetime.now().strftime('%Y-%m-%d')
+            current_phase = 'Off Season'
+            for t in season_types:
+                if t['start_date'] <= today <= t['end_date']:
+                    current_phase = t['name']
+            return {
+                'year': year,
+                'current_phase': current_phase,
+                'season_types': season_types,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching MLB season info: {e}")
+            return None
+
     def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get full MLB season schedule.
