@@ -67,7 +67,7 @@ def get_help_json() -> Dict[str, Any]:
                     "/curl/v1/schedules/{date} - All sports schedules",
                     "/curl/v1/schedule/{sport}/{date} - Single sport schedule"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "all"],
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
                 "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
                 "note": "Use 'all' as sport to get schedules for all sports"
             },
@@ -81,7 +81,7 @@ def get_help_json() -> Dict[str, Any]:
                     "/curl/v1/scores/{date} - All sports scores",
                     "/curl/v1/scores/{sport}/{date} - Single sport scores"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "all"],
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
                 "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
                 "note": "Use 'all' as sport to get scores for all sports"
             },
@@ -93,8 +93,16 @@ def get_help_json() -> Dict[str, Any]:
                 "curl": [
                     "/curl/v1/standings/{sport} - Single sport standings"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "all"],
+                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
                 "note": "Standings endpoint is currently under development"
+            },
+            "season_info": {
+                "description": "Get season phase dates (preseason, regular season, playoffs, etc.)",
+                "json": [
+                    "/api/v1/season-info/{league} - Season dates for a league"
+                ],
+                "leagues": ["mlb", "nba", "nfl", "nhl", "wnba", "ipl", "mlc"],
+                "note": "Returns year, current_phase, and season_types with start/end dates. Cached for 24 hours."
             }
         },
         "timezone": {
@@ -136,7 +144,7 @@ Schedules:
   JSON Format:
     /api/v1/schedules/{date}              - All sports schedules
     /api/v1/schedule/{sport}/{date}        - Single sport schedule
-  
+
   cURL Format:
     /curl/v1/schedules/{date}              - All sports schedules
     /curl/v1/schedule/{sport}/{date}       - Single sport schedule
@@ -145,7 +153,7 @@ Scores:
   JSON Format:
     /api/v1/scores/{date}                  - All sports scores
     /api/v1/scores/{sport}/{date}          - Single sport scores
-  
+
   cURL Format:
     /curl/v1/scores/{date}                 - All sports scores
     /curl/v1/scores/{sport}/{date}         - Single sport scores
@@ -153,16 +161,26 @@ Scores:
 Standings:
   JSON Format:
     /api/v1/standings/{sport}               - Single sport standings
-  
+
   cURL Format:
     /curl/v1/standings/{sport}              - Single sport standings
 
   Note: Standings endpoint is currently under development
 
+Season Info:
+  JSON Format:
+    /api/v1/season-info/{league}           - Season phase dates
+
+  Returns year, current_phase, and season_types with start/end dates.
+  Cached for 24 hours.
+
 SPORTS:
-  nba, mlb, nfl, nhl, wnba, all
-  
+  nba, mlb, nfl, nhl, wnba, ipl, mlc, all
+
   Use 'all' to get data for all sports combined
+
+LEAGUES (for season-info):
+  mlb, nba, nfl, nhl, wnba, ipl, mlc
 
 DATE FORMATS:
   today, tomorrow, yesterday
@@ -173,7 +191,7 @@ DATE FORMATS:
 
 TIMEZONE:
   Change timezone using the 'tz' query parameter: ?tz=<timezone>
-  
+
   Examples:
     ?tz=et              - Eastern Time
     ?tz=pt              - Pacific Time
@@ -181,7 +199,7 @@ TIMEZONE:
     ?tz=mt              - Mountain Time
     ?tz=America/New_York - Full timezone name
     ?tz=Europe/London   - International timezone
-  
+
   Supported Aliases:
     et, est, edt, eastern     -> US/Eastern
     pt, pst, pdt, pacific     -> US/Pacific
@@ -189,7 +207,7 @@ TIMEZONE:
     mt, mst, mdt, mountain    -> US/Mountain
     akst, akdt, alaska, ak    -> US/Alaska
     hst, hawaii, hi           -> US/Hawaii
-  
+
   Default: US/Pacific (Pacific Time)
 
 HELP:
@@ -201,6 +219,8 @@ EXAMPLES:
   curl http://localhost:34180/api/v1/schedule/nba/today
   curl http://localhost:34180/curl/v1/scores/mlb/today?tz=et
   curl http://localhost:34180/api/v1/standings/nba
+  curl http://localhost:34180/api/v1/season-info/mlb
+  curl http://localhost:34180/curl/v1/schedule/ipl/today
 """
     return help_text
 
@@ -338,17 +358,30 @@ def get_help_html() -> str:
         <div class="note">
             <strong>Note:</strong> Standings endpoint is currently under development
         </div>
-        
+
+        <h3>Season Info</h3>
+        <div class="endpoint">
+            <strong>JSON Format:</strong><br>
+            <code>/api/v1/season-info/{league}</code> - Season phase dates for a league
+        </div>
+        <div class="note">
+            Returns year, current_phase, and season_types with start/end dates. Cached for 24 hours.<br>
+            <strong>Leagues:</strong> mlb, nba, nfl, nhl, wnba, ipl, mlc
+        </div>
+
         <h2>Sports</h2>
         <p>
-            <span class="sport-list">nba</span>
             <span class="sport-list">mlb</span>
+            <span class="sport-list">nba</span>
             <span class="sport-list">nfl</span>
             <span class="sport-list">nhl</span>
             <span class="sport-list">wnba</span>
+            <span class="sport-list">ipl</span>
+            <span class="sport-list">mlc</span>
             <span class="sport-list">all</span>
         </p>
-        <p><strong>Note:</strong> Use <code>all</code> as the sport parameter to get data for all sports combined.</p>
+        <p><strong>Note:</strong> Use <code>all</code> as the sport parameter to get data for all sports combined.
+           IPL and MLC data is provided by <a href="https://ipl.cloud-puff.net">CricketPuff</a>.</p>
         
         <h2>Date Formats</h2>
         <p>The <code>{date}</code> parameter accepts:</p>
@@ -446,7 +479,13 @@ curl http://localhost:34180/api/v1/schedule/nba/today
 curl http://localhost:34180/curl/v1/scores/mlb/today?tz=et
 
 # Get NBA standings (JSON)
-curl http://localhost:34180/api/v1/standings/nba</pre>
+curl http://localhost:34180/api/v1/standings/nba
+
+# Get MLB season info
+curl http://localhost:34180/api/v1/season-info/mlb
+
+# Get IPL schedule (cricket)
+curl http://localhost:34180/curl/v1/schedule/ipl/today</pre>
     </div>
 </body>
 </html>"""
@@ -1185,6 +1224,14 @@ footer{
       </tr>
     </table>
 
+    <h3>Season Info</h3>
+    <table>
+      <tr>
+        <td><a href="/api/v1/season-info/mlb">/api/v1/season-info/{league}</a> <span class="tag tag-json">JSON</span></td>
+        <td>Season phase dates (cached 24h)</td>
+      </tr>
+    </table>
+
     <h3>Help</h3>
     <table>
       <tr>
@@ -1214,6 +1261,8 @@ footer{
       <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">nfl</code>,
       <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">nhl</code>,
       <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">wnba</code>,
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">ipl</code>,
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">mlc</code>,
       or <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">all</code>.
       Add <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">?tz=et</code>
       for Eastern time (default is Pacific).
