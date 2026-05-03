@@ -2341,10 +2341,8 @@ def get_season_info(
     """Get season phase dates for a league."""
     league_upper = league.upper()
 
-    if league_upper in ('IPL', 'MLC'):
-        return {"year": datetime.now().year, "current_phase": "Unknown", "season_types": []}
-
-    if league_upper not in ('MLB', 'NBA', 'NFL', 'NHL', 'WNBA'):
+    valid_leagues = set(v for v in SPORT_MAPPINGS.values())
+    if league_upper not in valid_leagues:
         raise HTTPException(status_code=400, detail=f"Invalid league: {league}")
 
     import time as _time

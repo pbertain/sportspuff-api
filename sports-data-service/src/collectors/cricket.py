@@ -124,6 +124,17 @@ class CricketCollector(BaseCollector):
             'cricket_venue': raw.get('venue', ''),
         }
 
+    def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
+        try:
+            url = f"{CRICKETPUFF_BASE}/season-info/{self.league_slug}"
+            response = requests.get(url, timeout=self.api_timeout)
+            if response.status_code == 200:
+                return response.json()
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching {self.league} season info: {e}")
+            return None
+
     def _parse_record(self, record_str: str):
         """Parse W-L-NR record string. Returns (wins, losses, no_result)."""
         if not record_str:
