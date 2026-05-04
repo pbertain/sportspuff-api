@@ -155,15 +155,25 @@ class NBACollector(BaseCollector):
                                     game_id = line_row[0]
                                     line_score_map[game_id] = line_row
                             
-                            # Parse each game
+                            # Parse each game, filtering to only games matching the requested date
                             for game_row in game_rows:
                                 if len(game_row) >= 8:
-                                    # GameHeader format: [GAME_ID, GAME_DATE_EST, GAME_SEQUENCE, GAME_STATUS_ID, 
+                                    # GameHeader format: [GAME_ID, GAME_DATE_EST, GAME_SEQUENCE, GAME_STATUS_ID,
                                     #                     GAME_STATUS_TEXT, GAME_STATUS, HOME_TEAM_ID, VISITOR_TEAM_ID, ...]
                                     game_id = game_row[0]
                                     game_date_est = game_row[1]
                                     home_team_id = game_row[6]
                                     visitor_team_id = game_row[7]
+
+                                    # Verify game date matches requested date
+                                    if game_date_est and date is not None:
+                                        try:
+                                            from dateutil import parser as dateutil_parser
+                                            parsed_gd = dateutil_parser.parse(game_date_est).date()
+                                            if parsed_gd != date:
+                                                continue
+                                        except Exception:
+                                            pass
                                     
                                     # Get line score data for this game
                                     line_data = line_score_map.get(game_id, [])
@@ -178,7 +188,8 @@ class NBACollector(BaseCollector):
                                         'awayTeam': {
                                             'teamId': visitor_team_id,
                                         },
-                                        'gameStatus': game_row[5] if len(game_row) > 5 else 'scheduled',
+                                        'gameStatusText': game_row[4] if len(game_row) > 4 else '',
+                                        'gameStatus': game_row[4] if len(game_row) > 4 else 'scheduled',
                                         '_lineScore': line_data,  # Store for parsing
                                     }
                                     
@@ -300,24 +311,17 @@ class NBACollector(BaseCollector):
                                                 game_time_obj = parser.parse(game_time)
                                             else:
                                                 game_time_obj = game_time
-                                            
+
                                             if game_time_obj.tzinfo is None:
                                                 game_time_obj = pytz.UTC.localize(game_time_obj)
-                                            
+
                                             game_time_pacific = game_time_obj.astimezone(pacific_tz)
                                             game_date_pacific = game_time_pacific.date()
-                                            
+
                                             if game_date_pacific == date:
                                                 parsed_games_list.append(parsed_game)
-                                            # Also check if it's within 1 day (games might span midnight)
-                                            elif abs((game_date_pacific - date).days) <= 1:
-                                                parsed_games_list.append(parsed_game)
                                         except Exception:
-                                            # If date parsing fails, include the game (be lenient)
-                                            parsed_games_list.append(parsed_game)
-                                    else:
-                                        # No game_time available - include it (live scoreboard only has "today" games)
-                                        parsed_games_list.append(parsed_game)
+                                            pass
                                 else:
                                     # No date specified - include all games
                                     parsed_games_list.append(parsed_game)
