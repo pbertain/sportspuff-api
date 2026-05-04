@@ -1648,6 +1648,10 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
                                 "home_score_total": game_dict.get('home_score_total', 0),
                                 "visitor_score_total": game_dict.get('visitor_score_total', 0),
                                 "is_final": game_dict.get('is_final', False),
+                                "cricket_home_score": game_dict.get('cricket_home_score', ''),
+                                "cricket_away_score": game_dict.get('cricket_away_score', ''),
+                                "cricket_winner": game_dict.get('cricket_winner', ''),
+                                "cricket_result": game_dict.get('cricket_result', ''),
                             })
     
     # For any date (today or past), try get_schedule from collector
@@ -2096,6 +2100,10 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                         "visitor_wins": game.get('visitor_wins', 0),
                         "visitor_losses": game.get('visitor_losses', 0),
                         "visitor_otl": game.get('visitor_otl', 0) if league.upper() == 'NHL' else None,
+                        "cricket_home_score": game.get('cricket_home_score', ''),
+                        "cricket_away_score": game.get('cricket_away_score', ''),
+                        "cricket_winner": game.get('cricket_winner', ''),
+                        "cricket_result": game.get('cricket_result', ''),
                     }
                     for game in live_games
                 ]
