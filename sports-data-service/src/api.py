@@ -775,38 +775,52 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
 
 
 def _format_cricket_game(game, tz):
-    """Format a cricket match for curl output."""
-    home_abbrev = (getattr(game, 'home_team_abbrev', '') or '???').ljust(3)
-    away_abbrev = (getattr(game, 'visitor_team_abbrev', '') or '???').ljust(3)
+    """Format a cricket match for curl output.
 
-    home_w = game.home_wins or 0
-    home_l = game.home_losses or 0
-    home_nr = getattr(game, 'cricket_home_nr', 0) or 0
-    away_w = game.visitor_wins or 0
-    away_l = game.visitor_losses or 0
-    away_nr = getattr(game, 'cricket_away_nr', 0) or 0
+    Final:     ' PBKS (163/9[20])  lost @ GT   (167/6[19.5])'
+    Scheduled: ' KKR              TBD  @ SRH                  3:00AM PDT/15:30 IST - in 4h30m'
+    """
+    home_abbrev = (getattr(game, 'home_team_abbrev', '') or '???').ljust(4)
+    away_abbrev = (getattr(game, 'visitor_team_abbrev', '') or '???').ljust(4)
 
-    away_rec = f"{away_abbrev} [{away_w}-{away_l}-{away_nr}]"
-    home_rec = f"{home_abbrev} [{home_w}-{home_l}-{home_nr}]"
-
-    cricket_status = getattr(game, 'cricket_status', '') or ''
+    home_score_str = getattr(game, 'cricket_home_score', '') or ''
+    away_score_str = getattr(game, 'cricket_away_score', '') or ''
+    away_outcome = getattr(game, 'cricket_away_outcome', '') or ''
     start_time = getattr(game, 'cricket_start_time', {}) or {}
 
-    if game.is_final and cricket_status:
-        time_status = cricket_status
-    elif start_time:
+    if game.is_final and (home_score_str or away_score_str):
+        away_score_fmt = f"({away_score_str})" if away_score_str else ''
+        home_score_fmt = f"({home_score_str})" if home_score_str else ''
+        outcome = away_outcome.ljust(4) if away_outcome else '    '
+        return f" {away_abbrev} {away_score_fmt:>16s} {outcome} @ {home_abbrev} {home_score_fmt}"
+    elif game.is_final:
+        cricket_status = getattr(game, 'cricket_status', '') or ''
+        return f" {cricket_status}" if cricket_status else f" {away_abbrev} @ {home_abbrev} F"
+    else:
         pt_str = start_time.get('pt', '')
         ist_str = start_time.get('ist', '')
         if pt_str and ist_str:
-            time_status = f"{pt_str}/{ist_str}"
+            time_str = f"{pt_str}/{ist_str}"
         elif pt_str:
-            time_status = pt_str
+            time_str = pt_str
         else:
-            time_status = "TBD"
-    else:
-        time_status = "TBD"
+            time_str = "TBD"
 
-    return f" {away_rec} @ {home_rec}: {time_status}"
+        countdown = ''
+        gt = getattr(game, 'game_time', None)
+        if gt:
+            try:
+                now = datetime.now(tz)
+                diff = gt.astimezone(tz) - now
+                total_seconds = int(diff.total_seconds())
+                if total_seconds > 0:
+                    hours, remainder = divmod(total_seconds, 3600)
+                    minutes = remainder // 60
+                    countdown = f" - in {hours}h{minutes:02d}m"
+            except Exception:
+                pass
+
+        return f" {away_abbrev} @ {home_abbrev} {time_str}{countdown}"
 
 
 def _get_season_type_for_sport(sport: str, target_date: date) -> str:
@@ -1911,6 +1925,11 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'cricket_start_time': game_dict.get('cricket_start_time', {}),
                         'cricket_home_nr': int(game_dict.get('cricket_home_nr', 0) or 0),
                         'cricket_away_nr': int(game_dict.get('cricket_away_nr', 0) or 0),
+                        'cricket_home_score': game_dict.get('cricket_home_score', ''),
+                        'cricket_away_score': game_dict.get('cricket_away_score', ''),
+                        'cricket_winner': game_dict.get('cricket_winner', ''),
+                        'cricket_result': game_dict.get('cricket_result', ''),
+                        'cricket_away_outcome': game_dict.get('cricket_away_outcome', ''),
                     }
                     games.append(GameWrapper(game_data))
     
