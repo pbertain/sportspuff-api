@@ -898,7 +898,7 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
     output = _format_curl_header(tz, target_date, "Here is the schedule:")
 
-    sport_order = ['mlb', 'nba', 'nhl', 'ipl', 'mlc', 'wnba', 'nfl']
+    sport_order = ['ipl', 'mlb', 'mlc', 'nba', 'nfl', 'nhl', 'wnba']
     sport_to_league = {
         'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL',
         'ipl': 'IPL', 'mlc': 'MLC', 'wnba': 'WNBA', 'nfl': 'NFL'
@@ -953,7 +953,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
 
     output = _format_curl_header(tz, target_date, "Here are the scores:")
 
-    sport_order = ['mlb', 'nba', 'nhl', 'ipl', 'mlc', 'wnba', 'nfl']
+    sport_order = ['ipl', 'mlb', 'mlc', 'nba', 'nfl', 'nhl', 'wnba']
     sport_to_league = {
         'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL',
         'ipl': 'IPL', 'mlc': 'MLC', 'wnba': 'WNBA', 'nfl': 'NFL'
