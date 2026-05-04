@@ -851,17 +851,27 @@ class NBACollector(BaseCollector):
             # Handle date parsing
             if not game_date_str:
                 game_date_str = raw_game.get('gameDate', '')
-            
+
             if ' ' in game_date_str:
-                # Format: "10/02/2025 00:00:00"
                 game_date_str = game_date_str.split(' ')[0]
-            
-            try:
-                game_date_obj = datetime.strptime(game_date_str, '%m/%d/%Y')
-                game_date = game_date_obj.strftime('%Y-%m-%d')
-            except ValueError:
-                logger.warning(f"Invalid date format: {game_date_str}")
-                return None
+            if 'T' in game_date_str:
+                game_date_str = game_date_str.split('T')[0]
+
+            game_date = None
+            for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%Y%m%d'):
+                try:
+                    game_date_obj = datetime.strptime(game_date_str, fmt)
+                    game_date = game_date_obj.strftime('%Y-%m-%d')
+                    break
+                except ValueError:
+                    continue
+            if not game_date:
+                try:
+                    from dateutil import parser as dateutil_parser
+                    game_date = dateutil_parser.parse(game_date_str).strftime('%Y-%m-%d')
+                except Exception:
+                    logger.warning(f"Invalid date format: {game_date_str}")
+                    return None
             
             # Detect season type using NBA API fields
             game_type = self._detect_nba_season_type(raw_game)
