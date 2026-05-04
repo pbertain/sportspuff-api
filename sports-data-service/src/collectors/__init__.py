@@ -9,6 +9,7 @@ from .nhl import NHLCollector
 from .nfl import NFLCollector
 from .wnba import WNBACollector
 from .cricket import CricketCollector
+from .mls import MLSCollector
 
 __all__ = [
     'BaseCollector',
@@ -18,4 +19,5 @@ __all__ = [
     'NFLCollector',
     'WNBACollector',
     'CricketCollector',
+    'MLSCollector',
 ]

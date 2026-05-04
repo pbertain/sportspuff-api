@@ -19,7 +19,7 @@ sys.path.insert(0, '/app/src')
 from database import get_db_session
 from models import Game
 from config import settings
-from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector
+from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 
 def get_collector(league: str):
     """Get collector instance for a league."""
@@ -31,6 +31,7 @@ def get_collector(league: str):
         'WNBA': WNBACollector(),
         'IPL': CricketCollector('IPL'),
         'MLC': CricketCollector('MLC'),
+        'MLS': MLSCollector(),
     }
     return collectors.get(league)
 
@@ -49,6 +50,7 @@ SPORT_MAPPINGS = {
     'wnba': 'WNBA',
     'ipl': 'IPL',
     'mlc': 'MLC',
+    'mls': 'MLS',
 }
 
 def get_help_json() -> Dict[str, Any]:
@@ -696,6 +698,11 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
         else:
             away_rec = f"[{visitor_wins:3d}-{visitor_losses:3d}-{visitor_otl:2d}]"
             home_rec = f"[{home_wins:3d}-{home_losses:3d}-{home_otl:2d}]"
+    elif sport.lower() == 'mls':
+        visitor_draws = getattr(game, 'visitor_draws', 0) or 0
+        home_draws = getattr(game, 'home_draws', 0) or 0
+        away_rec = f"[{visitor_wins:2d}-{visitor_draws:2d}-{visitor_losses:2d}]"
+        home_rec = f"[{home_wins:2d}-{home_draws:2d}-{home_losses:2d}]"
     elif game_type == 'playoffs':
         away_rec = f"[{visitor_wins}-{visitor_losses}]"
         home_rec = f"[{home_wins}-{home_losses}]"
@@ -719,6 +726,8 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
                 status = "F/OT" if period_num >= 4 else "F"
             except (ValueError, TypeError):
                 status = "F"
+        elif sport.lower() == 'mls':
+            status = "FT"
         else:
             status = "F"
 
@@ -903,10 +912,10 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
     output = _format_curl_header(tz, target_date, "Here is the schedule:")
 
-    sport_order = ['ipl', 'mlb', 'mlc', 'nba', 'nfl', 'nhl', 'wnba']
+    sport_order = ['ipl', 'mlb', 'mlc', 'mls', 'nba', 'nfl', 'nhl', 'wnba']
     sport_to_league = {
-        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL',
-        'ipl': 'IPL', 'mlc': 'MLC', 'wnba': 'WNBA', 'nfl': 'NFL'
+        'ipl': 'IPL', 'mlb': 'MLB', 'mlc': 'MLC', 'mls': 'MLS',
+        'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL', 'wnba': 'WNBA'
     }
 
     game_type_map = {
@@ -958,10 +967,10 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
 
     output = _format_curl_header(tz, target_date, "Here are the scores:")
 
-    sport_order = ['ipl', 'mlb', 'mlc', 'nba', 'nfl', 'nhl', 'wnba']
+    sport_order = ['ipl', 'mlb', 'mlc', 'mls', 'nba', 'nfl', 'nhl', 'wnba']
     sport_to_league = {
-        'mlb': 'MLB', 'nba': 'NBA', 'nhl': 'NHL',
-        'ipl': 'IPL', 'mlc': 'MLC', 'wnba': 'WNBA', 'nfl': 'NFL'
+        'ipl': 'IPL', 'mlb': 'MLB', 'mlc': 'MLC', 'mls': 'MLS',
+        'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL', 'wnba': 'WNBA'
     }
 
     game_type_map = {
@@ -1028,6 +1037,8 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                                 status = "F/OT" if period_num >= 4 else "F"
                             except (ValueError, TypeError):
                                 status = "F"
+                        elif sport == 'mls':
+                            status = "FT"
                         else:
                             status = "F"
                         output += f" {away_abbr} {away_score:2d}-{home_score:2d} {home_abbr} {status}\n"
@@ -1863,6 +1874,9 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'cricket_winner': game_dict.get('cricket_winner', ''),
                         'cricket_result': game_dict.get('cricket_result', ''),
                         'cricket_away_outcome': game_dict.get('cricket_away_outcome', ''),
+                        'home_draws': int(game_dict.get('home_draws', 0) or 0),
+                        'visitor_draws': int(game_dict.get('visitor_draws', 0) or 0),
+                        'mls_detail': game_dict.get('mls_detail', ''),
                     }
                     games.append(GameWrapper(game_data))
 
@@ -1923,6 +1937,9 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'cricket_winner': game_dict.get('cricket_winner', ''),
                         'cricket_result': game_dict.get('cricket_result', ''),
                         'cricket_away_outcome': game_dict.get('cricket_away_outcome', ''),
+                        'home_draws': int(game_dict.get('home_draws', 0) or 0),
+                        'visitor_draws': int(game_dict.get('visitor_draws', 0) or 0),
+                        'mls_detail': game_dict.get('mls_detail', ''),
                     }
                     games.append(GameWrapper(game_data))
     
