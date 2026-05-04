@@ -155,7 +155,7 @@ class NBACollector(BaseCollector):
                                     game_id = line_row[0]
                                     line_score_map[game_id] = line_row
                             
-                            # Parse each game, filtering to only games matching the requested date
+                            # Parse each game (scoreboardv2 already filtered by requested date)
                             for game_row in game_rows:
                                 if len(game_row) >= 8:
                                     # GameHeader format: [GAME_ID, GAME_DATE_EST, GAME_SEQUENCE, GAME_STATUS_ID,
@@ -164,16 +164,6 @@ class NBACollector(BaseCollector):
                                     game_date_est = game_row[1]
                                     home_team_id = game_row[6]
                                     visitor_team_id = game_row[7]
-
-                                    # Verify game date matches requested date
-                                    if game_date_est and date is not None:
-                                        try:
-                                            from dateutil import parser as dateutil_parser
-                                            parsed_gd = dateutil_parser.parse(game_date_est).date()
-                                            if parsed_gd != date:
-                                                continue
-                                        except Exception:
-                                            pass
                                     
                                     # Get line score data for this game
                                     line_data = line_score_map.get(game_id, [])
