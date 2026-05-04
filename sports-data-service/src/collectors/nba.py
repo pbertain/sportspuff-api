@@ -144,69 +144,79 @@ class NBACollector(BaseCollector):
                             # Get game header data
                             game_header = scoreboard_dict['resultSets'][0]
                             line_score = scoreboard_dict['resultSets'][1] if len(scoreboard_dict['resultSets']) > 1 else None
-                            
+
+                            game_headers = game_header.get('headers', [])
                             game_rows = game_header.get('rowSet', [])
+                            line_headers = line_score.get('headers', []) if line_score else []
                             line_rows = line_score.get('rowSet', []) if line_score else []
-                            
-                            # Create a mapping of game_id to line score data
+
+                            # Build column index maps
+                            gh = {name: idx for idx, name in enumerate(game_headers)}
+                            lh = {name: idx for idx, name in enumerate(line_headers)}
+
+                            # Create a mapping of game_id to line score rows (multiple per game)
                             line_score_map = {}
+                            game_id_col = lh.get('GAME_ID', 0)
                             for line_row in line_rows:
-                                if len(line_row) > 0:
-                                    game_id = line_row[0]
-                                    line_score_map[game_id] = line_row
-                            
+                                if len(line_row) > game_id_col:
+                                    gid = line_row[game_id_col]
+                                    if gid not in line_score_map:
+                                        line_score_map[gid] = []
+                                    line_score_map[gid].append(line_row)
+
                             # Parse each game (scoreboardv2 already filtered by requested date)
                             for game_row in game_rows:
                                 if len(game_row) >= 8:
-                                    # GameHeader format: [GAME_ID, GAME_DATE_EST, GAME_SEQUENCE, GAME_STATUS_ID,
-                                    #                     GAME_STATUS_TEXT, GAME_STATUS, HOME_TEAM_ID, VISITOR_TEAM_ID, ...]
-                                    game_id = game_row[0]
-                                    game_date_est = game_row[1]
-                                    home_team_id = game_row[6]
-                                    visitor_team_id = game_row[7]
-                                    
-                                    # Get line score data for this game
-                                    line_data = line_score_map.get(game_id, [])
-                                    
+                                    game_id = game_row[gh.get('GAME_ID', 2)]
+                                    game_date_est = game_row[gh.get('GAME_DATE_EST', 0)]
+                                    home_team_id = game_row[gh.get('HOME_TEAM_ID', 6)]
+                                    visitor_team_id = game_row[gh.get('VISITOR_TEAM_ID', 7)]
+                                    game_status_text = game_row[gh.get('GAME_STATUS_TEXT', 4)] if gh.get('GAME_STATUS_TEXT', 4) < len(game_row) else ''
+
+                                    # Get line score rows for this game
+                                    game_line_rows = line_score_map.get(game_id, [])
+
                                     # Build game object compatible with parse_game_data
                                     game_obj = {
                                         'gameId': str(game_id) if game_id else '',
                                         'gameDate': game_date_est,
+                                        'gameTimeUTC': game_date_est,
                                         'homeTeam': {
                                             'teamId': home_team_id,
                                         },
                                         'awayTeam': {
                                             'teamId': visitor_team_id,
                                         },
-                                        'gameStatusText': game_row[4] if len(game_row) > 4 else '',
-                                        'gameStatus': game_row[4] if len(game_row) > 4 else 'scheduled',
-                                        '_lineScore': line_data,  # Store for parsing
+                                        'gameStatusText': game_status_text,
+                                        'gameStatus': game_status_text,
+                                        '_lineScore': game_line_rows[0] if game_line_rows else [],
                                     }
-                                    
-                                    # Add team info from line score if available
-                                    if len(line_data) >= 20:
-                                        # LineScore format: [GAME_ID, TEAM_ID, TEAM_ABBREVIATION, TEAM_CITY_NAME, 
-                                        #                     TEAM_NAME, MIN, FGM, FGA, FG_PCT, FG3M, FG3A, FG3_PCT, 
-                                        #                     FTM, FTA, FT_PCT, OREB, DREB, REB, AST, STL, ...]
-                                        # We need to find home and visitor team data
-                                        for line_row in line_rows:
-                                            if len(line_row) >= 5 and line_row[0] == game_id:
-                                                team_id = line_row[1]
-                                                if team_id == home_team_id:
-                                                    game_obj['homeTeam'].update({
-                                                        'teamCity': line_row[3] if len(line_row) > 3 else '',
-                                                        'teamName': line_row[4] if len(line_row) > 4 else '',
-                                                        'teamTricode': line_row[2] if len(line_row) > 2 else '',
-                                                        'score': line_row[21] if len(line_row) > 21 else 0,
-                                                    })
-                                                elif team_id == visitor_team_id:
-                                                    game_obj['awayTeam'].update({
-                                                        'teamCity': line_row[3] if len(line_row) > 3 else '',
-                                                        'teamName': line_row[4] if len(line_row) > 4 else '',
-                                                        'teamTricode': line_row[2] if len(line_row) > 2 else '',
-                                                        'score': line_row[21] if len(line_row) > 21 else 0,
-                                                    })
-                                    
+
+                                    # Add team info from line score rows
+                                    team_id_col = lh.get('TEAM_ID', 1)
+                                    abbrev_col = lh.get('TEAM_ABBREVIATION', 2)
+                                    city_col = lh.get('TEAM_CITY_NAME', 3)
+                                    name_col = lh.get('TEAM_NAME', 4)
+                                    pts_col = lh.get('PTS', 21)
+
+                                    for lr in game_line_rows:
+                                        if len(lr) > max(team_id_col, abbrev_col, name_col):
+                                            tid = lr[team_id_col]
+                                            if tid == home_team_id:
+                                                game_obj['homeTeam'].update({
+                                                    'teamCity': lr[city_col] if len(lr) > city_col else '',
+                                                    'teamName': lr[name_col] if len(lr) > name_col else '',
+                                                    'teamTricode': lr[abbrev_col] if len(lr) > abbrev_col else '',
+                                                    'score': lr[pts_col] if len(lr) > pts_col else 0,
+                                                })
+                                            elif tid == visitor_team_id:
+                                                game_obj['awayTeam'].update({
+                                                    'teamCity': lr[city_col] if len(lr) > city_col else '',
+                                                    'teamName': lr[name_col] if len(lr) > name_col else '',
+                                                    'teamTricode': lr[abbrev_col] if len(lr) > abbrev_col else '',
+                                                    'score': lr[pts_col] if len(lr) > pts_col else 0,
+                                                })
+
                                     games.append(game_obj)
                         
                         # Wrap in leagueSchedule format for compatibility with existing parser
@@ -882,8 +892,10 @@ class NBACollector(BaseCollector):
             
             # Extract game time
             game_time = None
-            game_time_utc = raw_game.get('gameTimeUTC') or raw_game.get('gameDateTimeUTC') or raw_game.get('gameTimeEst') or ''
-            if game_time_utc:
+            game_time_utc = raw_game.get('gameTimeUTC') or raw_game.get('gameDateTimeUTC') or ''
+            game_status_str = raw_game.get('gameStatusText', '') or raw_game.get('gameStatus', '') or ''
+
+            if game_time_utc and 'T' in game_time_utc and game_time_utc.split('T')[1] != '00:00:00':
                 try:
                     from dateutil import parser as dtparser
                     game_time_obj = dtparser.parse(game_time_utc)
@@ -893,6 +905,22 @@ class NBACollector(BaseCollector):
                     game_time = game_time_obj
                 except:
                     pass
+
+            if not game_time and game_status_str:
+                import re
+                time_match = re.match(r'(\d{1,2}:\d{2}\s*(?:PM|AM)\s*(?:ET|EST|EDT))', game_status_str, re.IGNORECASE)
+                if time_match:
+                    try:
+                        from dateutil import parser as dtparser
+                        import pytz
+                        time_part = time_match.group(1).strip()
+                        time_part = re.sub(r'\s*(ET|EST|EDT)$', '', time_part, flags=re.IGNORECASE).strip()
+                        date_part = game_date if game_date else datetime.now().strftime('%Y-%m-%d')
+                        dt = dtparser.parse(f"{date_part} {time_part}")
+                        eastern = pytz.timezone('US/Eastern')
+                        game_time = eastern.localize(dt)
+                    except:
+                        pass
             
             return {
                 'league': 'NBA',
