@@ -585,13 +585,13 @@ def get_greeting(tz: pytz.BaseTzInfo = None) -> str:
     hour = now.hour
     
     if 0 <= hour < 5:
-        return "Good god... it's late! ⏾"
+        return "Good god... it's late ⏾, from SportsPuff!"
     elif 5 <= hour < 12:
-        return "Good morning! 🌇"
+        return "Good morning 🌇, from SportsPuff!"
     elif 12 <= hour < 17:
-        return "Good afternoon! 🌞"
+        return "Good afternoon 🌞, from SportsPuff!"
     else:
-        return "Good evening! ✨"
+        return "Good evening ✨, from SportsPuff!"
 
 def parse_date_param(date_param: Optional[str], tz: pytz.BaseTzInfo = None) -> date:
     """
@@ -775,11 +775,7 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
 
 
 def _format_cricket_game(game, tz):
-    """Format a cricket match for curl output.
-
-    Final:     ' PBKS (163/9[20])  lost @ GT   (167/6[19.5])'
-    Scheduled: ' KKR              TBD  @ SRH                  3:00AM PDT/15:30 IST - in 4h30m'
-    """
+    """Format a cricket match for curl output."""
     home_abbrev = (getattr(game, 'home_team_abbrev', '') or '???').ljust(4)
     away_abbrev = (getattr(game, 'visitor_team_abbrev', '') or '???').ljust(4)
 
@@ -789,10 +785,10 @@ def _format_cricket_game(game, tz):
     start_time = getattr(game, 'cricket_start_time', {}) or {}
 
     if game.is_final and (home_score_str or away_score_str):
-        away_score_fmt = f"({away_score_str})" if away_score_str else ''
-        home_score_fmt = f"({home_score_str})" if home_score_str else ''
+        away_part = f"{away_abbrev} ({away_score_str})" if away_score_str else away_abbrev
+        home_part = f"{home_abbrev} ({home_score_str})" if home_score_str else home_abbrev
         outcome = away_outcome.ljust(4) if away_outcome else '    '
-        return f" {away_abbrev} {away_score_fmt:>16s} {outcome} @ {home_abbrev} {home_score_fmt}"
+        return f" {away_part} {outcome} @ {home_part}"
     elif game.is_final:
         cricket_status = getattr(game, 'cricket_status', '') or ''
         return f" {cricket_status}" if cricket_status else f" {away_abbrev} @ {home_abbrev} F"
@@ -868,29 +864,21 @@ def _get_season_type_for_sport(sport: str, target_date: date) -> str:
 
 def _format_curl_header(tz, target_date, label):
     greeting = get_greeting(tz)
-    date_str = target_date.strftime('%a %d %b %Y')
-    now_tz = datetime.now(tz)
-    now_utc = datetime.now(pytz.UTC)
-    tz_abbrev = now_tz.strftime('%Z')
-    local_time = now_tz.strftime('%I:%M%p')
-    utc_time = now_utc.strftime('%I:%M%p')
-
     output = f"{greeting}\n"
-    output += f"       {date_str}:\n"
-    output += f"SportsPuff - {local_time} {tz_abbrev} / {utc_time} UTC\n"
     output += "\n"
     output += f"{label}\n"
-    output += "-" * 39 + "\n"
+    output += "-" * 45 + "\n"
     return output
 
 
 def _format_curl_footer(tz):
     now_tz = datetime.now(tz)
     tz_abbrev = now_tz.strftime('%Z')
+    date_str = now_tz.strftime('%a %b %d %Y')
+    time_str = now_tz.strftime('%H:%M')
     output = f"          All times in {tz_abbrev}\n"
-    output += f"      Sent from SportsPuff@{now_tz.strftime('%H:%M')}\n"
-    output += f"   CricketPuff is part of SportsPuff\n"
-    output += "-" * 39 + "\n"
+    output += f"    Sent on {date_str} @{time_str}{tz_abbrev}\n"
+    output += "-" * 45 + "\n"
     return output
 
 
@@ -937,7 +925,7 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
             season_type = _get_season_type_for_sport(sport, target_date)
 
         output += f"{league_name} [{season_type}]\n"
-        output += "-" * 39 + "\n"
+        output += "-" * 45 + "\n"
 
         if sport_games:
             for game in sport_games:
@@ -946,7 +934,7 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
         else:
             output += " No games scheduled\n"
 
-        output += "-" * 39 + "\n"
+        output += "-" * 45 + "\n"
 
     output += _format_curl_footer(tz)
     return output
@@ -1012,7 +1000,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
             season_type = _get_season_type_for_sport(sport, target_date)
 
         output += f"{league_name} [{season_type}]\n"
-        output += "-" * 39 + "\n"
+        output += "-" * 45 + "\n"
 
         if scored_games:
             if sport in ('ipl', 'mlc'):
@@ -1072,7 +1060,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
         else:
             output += " No games scheduled\n"
         
-        output += "-" * 39 + "\n"
+        output += "-" * 45 + "\n"
 
     output += _format_curl_footer(tz)
     return output
