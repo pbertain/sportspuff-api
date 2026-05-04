@@ -658,11 +658,15 @@ def parse_date_param(date_param: Optional[str], tz: pytz.BaseTzInfo = None) -> d
         )
 
 def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> str:
-    """Format a single game for curl-style output."""
+    """Format a single game for curl-style schedule output.
+
+    Final:       *PHI [ 14- 20] ( 7@ 2)  MIA [ 16- 18]  F
+    In-progress:  PHI [ 14- 20] ( 2@ 1)  MIA [ 16- 18]  TOP 5
+    Scheduled:    PHI [ 14- 20]    @      MIA [ 16- 18]  7:00 PM PDT - in 3h
+    """
     if tz is None:
         tz = pytz.timezone('US/Pacific')
 
-    # Cricket has its own format
     if sport.lower() in ('ipl', 'mlc'):
         return _format_cricket_game(game, tz)
 
@@ -687,35 +691,40 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
         visitor_otl = getattr(game, 'visitor_otl', 0) or 0
         home_otl = getattr(game, 'home_otl', 0) or 0
         if game_type == 'playoffs':
-            away_team = f"{visitor_abbrev} [{visitor_wins}-{visitor_losses}]"
-            home_team = f"{home_abbrev} [{home_wins}-{home_losses}]"
+            away_rec = f"[{visitor_wins}-{visitor_losses}]"
+            home_rec = f"[{home_wins}-{home_losses}]"
         else:
-            away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:3d}-{visitor_otl:2d}]"
-            home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:3d}-{home_otl:2d}]"
+            away_rec = f"[{visitor_wins:3d}-{visitor_losses:3d}-{visitor_otl:2d}]"
+            home_rec = f"[{home_wins:3d}-{home_losses:3d}-{home_otl:2d}]"
     elif game_type == 'playoffs':
-        away_team = f"{visitor_abbrev} [{visitor_wins}-{visitor_losses}]"
-        home_team = f"{home_abbrev} [{home_wins}-{home_losses}]"
+        away_rec = f"[{visitor_wins}-{visitor_losses}]"
+        home_rec = f"[{home_wins}-{home_losses}]"
     else:
-        away_team = f"{visitor_abbrev} [{visitor_wins:3d}-{visitor_losses:3d}]"
-        home_team = f"{home_abbrev} [{home_wins:3d}-{home_losses:3d}]"
+        away_rec = f"[{visitor_wins:3d}-{visitor_losses:3d}]"
+        home_rec = f"[{home_wins:3d}-{home_losses:3d}]"
+
+    vs = game.visitor_score_total or 0
+    hs = game.home_score_total or 0
 
     if game.is_final:
-        if game.home_score_total is not None and game.visitor_score_total is not None:
-            if sport.lower() == 'nhl':
-                period = str(game.current_period) if game.current_period is not None else '?'
-                try:
-                    period_num = int(period) if str(period).isdigit() else 0
-                    if period_num >= 4:
-                        time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F/OT"
-                    else:
-                        time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
-                except (ValueError, TypeError):
-                    time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
-            else:
-                time_status = f"({game.visitor_score_total:2d}-{game.home_score_total:2d}) F"
+        visitor_won = vs > hs
+        home_won = hs > vs
+        v_mark = '*' if visitor_won else ' '
+        h_mark = '*' if home_won else ' '
+
+        if sport.lower() == 'nhl':
+            period = str(game.current_period) if game.current_period is not None else '?'
+            try:
+                period_num = int(period) if str(period).isdigit() else 0
+                status = "F/OT" if period_num >= 4 else "F"
+            except (ValueError, TypeError):
+                status = "F"
         else:
-            time_status = "F"
-    elif game.game_status == 'in_progress' or (game.visitor_score_total and game.visitor_score_total > 0) or (game.home_score_total and game.home_score_total > 0):
+            status = "F"
+
+        return f" {v_mark}{visitor_abbrev} {away_rec} ({vs:2d}@{hs:2d}) {h_mark}{home_abbrev} {home_rec}  {status}"
+
+    elif game.game_status == 'in_progress' or (vs > 0 or hs > 0):
         period = str(game.current_period) if game.current_period is not None else '?'
         time_left = game.time_remaining or ''
 
@@ -725,29 +734,25 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
                 period_display = 'OT' if period_num >= 4 else f'P{period_num}'
             except (ValueError, TypeError):
                 period_display = f'P{period}'
-            if time_left and time_left.strip():
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display} {time_left}"
-            else:
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_display}"
+            status = f"{period_display} {time_left}".strip() if time_left and time_left.strip() else period_display
         elif period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
-            time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) F"
+            status = "F"
         elif sport.lower() == 'mlb':
             inning_state = time_left.strip().upper() if time_left else ''
             inning_abbrev = {'TOP': 'TOP', 'BOTTOM': 'BOT', 'MIDDLE': 'MID', 'END': 'END'}.get(inning_state, inning_state)
-            if inning_abbrev:
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {inning_abbrev} {period}"
-            else:
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) INN {period}"
+            status = f"{inning_abbrev} {period}" if inning_abbrev else f"INN {period}"
         else:
             period_prefix = 'Q'
-            is_halftime = (period == '2' and time_left in ('0:00', '') and
-                          game.game_status == 'in_progress')
+            is_halftime = (period == '2' and time_left in ('0:00', '') and game.game_status == 'in_progress')
             if is_halftime:
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) HT"
+                status = "HT"
             elif time_left and time_left.strip():
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period} {time_left}"
+                status = f"{period_prefix}{period} {time_left}"
             else:
-                time_status = f"({game.visitor_score_total or 0:2d}-{game.home_score_total or 0:2d}) {period_prefix}{period}"
+                status = f"{period_prefix}{period}"
+
+        return f"  {visitor_abbrev} {away_rec} ({vs:2d}@{hs:2d})  {home_abbrev} {home_rec}  {status}"
+
     else:
         if game.game_time:
             try:
@@ -763,15 +768,15 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
                 if total_seconds > 0:
                     hours, remainder = divmod(total_seconds, 3600)
                     minutes = remainder // 60
-                    time_status = f"{time_str} {tz_abbrev} - in {hours}h{minutes:02d}m"
+                    status = f"{time_str} {tz_abbrev} - in {hours}h{minutes:02d}m"
                 else:
-                    time_status = f"{time_str} {tz_abbrev}"
+                    status = f"{time_str} {tz_abbrev}"
             except Exception:
-                time_status = "TBD"
+                status = "TBD"
         else:
-            time_status = "TBD"
+            status = "TBD"
 
-    return f" {away_team} @ {home_team} {time_status}"
+        return f"  {visitor_abbrev} {away_rec}    @     {home_abbrev} {home_rec}  {status}"
 
 
 def _format_cricket_game(game, tz):
@@ -1020,15 +1025,12 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                             period = str(game.current_period) if game.current_period is not None else '?'
                             try:
                                 period_num = int(period) if str(period).isdigit() else 0
-                                if period_num >= 4:
-                                    status = "F/OT"
-                                else:
-                                    status = "F"
+                                status = "F/OT" if period_num >= 4 else "F"
                             except (ValueError, TypeError):
                                 status = "F"
                         else:
                             status = "F"
-                        output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+                        output += f" {away_abbr} {away_score:2d}-{home_score:2d} {home_abbr} {status}\n"
                     elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
                         period = str(game.current_period) if game.current_period is not None else '?'
                         time_left = game.time_remaining or ''
@@ -1039,10 +1041,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                                 period_display = 'OT' if period_num >= 4 else f'P{period_num}'
                             except (ValueError, TypeError):
                                 period_display = f'P{period}'
-                            if time_left and time_left.strip():
-                                status = f"{period_display} {time_left}"
-                            else:
-                                status = period_display
+                            status = f"{period_display} {time_left}".strip() if time_left and time_left.strip() else period_display
                         elif period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
                             status = "F"
                         elif sport == 'mlb':
@@ -1056,7 +1055,7 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                             else:
                                 status = f"{period_prefix}{period}"
 
-                        output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+                        output += f" {away_abbr} {away_score:2d}-{home_score:2d} {home_abbr} {status}\n"
         else:
             output += " No games scheduled\n"
         
