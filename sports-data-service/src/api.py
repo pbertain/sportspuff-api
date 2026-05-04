@@ -785,10 +785,10 @@ def _format_cricket_game(game, tz):
     start_time = getattr(game, 'cricket_start_time', {}) or {}
 
     if game.is_final and (home_score_str or away_score_str):
-        away_part = f"{away_abbrev} ({away_score_str})" if away_score_str else away_abbrev
-        home_part = f"{home_abbrev} ({home_score_str})" if home_score_str else home_abbrev
-        outcome = away_outcome.ljust(4) if away_outcome else '    '
-        return f" {away_part} {outcome} @ {home_part}"
+        away_part = f"{away_abbrev} ({away_score_str})" if away_score_str else str(away_abbrev)
+        home_part = f"{home_abbrev} ({home_score_str})" if home_score_str else str(home_abbrev)
+        outcome = away_outcome.rjust(4) if away_outcome else '    '
+        return f" {away_part:18s} {outcome} @ {home_part}"
     elif game.is_final:
         cricket_status = getattr(game, 'cricket_status', '') or ''
         return f" {cricket_status}" if cricket_status else f" {away_abbrev} @ {home_abbrev} F"
