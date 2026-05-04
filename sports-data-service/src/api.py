@@ -806,6 +806,16 @@ def _format_cricket_game(game, tz):
     elif game.is_final:
         cricket_status = getattr(game, 'cricket_status', '') or ''
         return f" {cricket_status}" if cricket_status else f" {away_abbrev} @ {home_abbrev} F"
+    elif getattr(game, 'game_status', '') == 'in_progress':
+        cricket_status = getattr(game, 'cricket_status', '') or ''
+        if home_score_str or away_score_str:
+            away_part = f"{away_abbrev} ({away_score_str})" if away_score_str else str(away_abbrev)
+            home_part = f"{home_abbrev} ({home_score_str})" if home_score_str else str(home_abbrev)
+            return f" {away_part} @ {home_part} LIVE"
+        elif cricket_status:
+            return f" {away_abbrev} @ {home_abbrev} {cricket_status}"
+        else:
+            return f" {away_abbrev} @ {home_abbrev} LIVE"
     else:
         pt_str = start_time.get('pt', '')
         ist_str = start_time.get('ist', '')

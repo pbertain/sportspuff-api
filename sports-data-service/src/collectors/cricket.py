@@ -91,7 +91,8 @@ class CricketCollector(BaseCollector):
         away_record = self._parse_record(away.get('record', ''))
 
         status_text = raw.get('status', 'scheduled')
-        is_final = 'won' in status_text.lower() or 'lost' in status_text.lower() or 'beat' in status_text.lower()
+        is_final = 'won' in status_text.lower() or 'lost' in status_text.lower() or 'beat' in status_text.lower() or 'tied' in status_text.lower() or 'no result' in status_text.lower()
+        is_in_progress = not is_final and bool(status_text) and status_text.lower() not in ('scheduled', '')
 
         start_time = raw.get('start_time', {})
         game_time = self._parse_pt_time(start_time.get('pt', ''), api_date)
@@ -112,7 +113,7 @@ class CricketCollector(BaseCollector):
             'visitor_wins': away_record[0],
             'visitor_losses': away_record[1],
             'visitor_score_total': 0,
-            'game_status': 'final' if is_final else 'scheduled',
+            'game_status': 'final' if is_final else ('in_progress' if is_in_progress else 'scheduled'),
             'current_period': '',
             'time_remaining': '',
             'is_final': is_final,
@@ -135,7 +136,8 @@ class CricketCollector(BaseCollector):
         home_score_str = score_data.get('home_score', '')
         away_score_str = score_data.get('away_score', '')
 
-        is_final = bool(winner) or 'won' in result.lower() or 'lost' in result.lower() or 'beat' in result.lower()
+        is_final = bool(winner) or 'won' in result.lower() or 'lost' in result.lower() or 'beat' in result.lower() or 'tied' in result.lower() or 'no result' in result.lower()
+        is_in_progress = not is_final and bool(result) and result.lower() not in ('scheduled', '')
 
         # Get records and start time from schedule data
         home_sched = sched_data.get('home', {})
@@ -177,7 +179,7 @@ class CricketCollector(BaseCollector):
             'visitor_wins': away_record[0],
             'visitor_losses': away_record[1],
             'visitor_score_total': 0,
-            'game_status': 'final' if is_final else 'scheduled',
+            'game_status': 'final' if is_final else ('in_progress' if is_in_progress else 'scheduled'),
             'current_period': '',
             'time_remaining': '',
             'is_final': is_final,
