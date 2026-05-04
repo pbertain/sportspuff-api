@@ -1015,68 +1015,60 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
         output += "-" * 39 + "\n"
 
         if scored_games:
-            for game in scored_games:
-                away_abbr = (game.visitor_team_abbrev or '???').ljust(3)
-                home_abbr = (game.home_team_abbrev or '???').ljust(3)
-                
-                away_score = game.visitor_score_total or 0
-                home_score = game.home_score_total or 0
-                
-                if game.is_final:
-                    # For NHL, show F for regulation, F/OT for overtime
-                    if sport == 'nhl':
-                        period = str(game.current_period) if game.current_period is not None else '?'
-                        try:
-                            period_num = int(period) if str(period).isdigit() else 0
-                            if period_num >= 4:
-                                status = "F/OT"
-                            else:
+            if sport in ('ipl', 'mlc'):
+                for game in scored_games:
+                    output += _format_cricket_game(game, tz)
+                    output += "\n"
+            else:
+                for game in scored_games:
+                    away_abbr = (game.visitor_team_abbrev or '???').ljust(3)
+                    home_abbr = (game.home_team_abbrev or '???').ljust(3)
+
+                    away_score = game.visitor_score_total or 0
+                    home_score = game.home_score_total or 0
+
+                    if game.is_final:
+                        if sport == 'nhl':
+                            period = str(game.current_period) if game.current_period is not None else '?'
+                            try:
+                                period_num = int(period) if str(period).isdigit() else 0
+                                if period_num >= 4:
+                                    status = "F/OT"
+                                else:
+                                    status = "F"
+                            except (ValueError, TypeError):
                                 status = "F"
-                        except (ValueError, TypeError):
-                            status = "F"
-                    else:
-                        status = "F"
-                    output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
-                elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
-                    period = str(game.current_period) if game.current_period is not None else '?'
-                    time_left = game.time_remaining or ''
-                    
-                    if sport == 'nhl':
-                        # For NHL: Period 4+ is overtime (OT), format as "P{period} MM:SS" (matching NBA format)
-                        try:
-                            period_num = int(period) if str(period).isdigit() else 0
-                            if period_num >= 4:
-                                period_display = 'OT'
-                            else:
-                                period_display = f'P{period_num}'
-                        except (ValueError, TypeError):
-                            period_display = f'P{period}'
-                        
-                        # Always show time if available, otherwise just show period
-                        if time_left and time_left.strip():
-                            status = f"{period_display} {time_left}"
                         else:
-                            # If no time available, still show period
-                            status = period_display
-                    else:
-                        # For other sports
-                        if period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
+                            status = "F"
+                        output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+                    elif game.game_status == 'in_progress' or (away_score > 0 or home_score > 0):
+                        period = str(game.current_period) if game.current_period is not None else '?'
+                        time_left = game.time_remaining or ''
+
+                        if sport == 'nhl':
+                            try:
+                                period_num = int(period) if str(period).isdigit() else 0
+                                period_display = 'OT' if period_num >= 4 else f'P{period_num}'
+                            except (ValueError, TypeError):
+                                period_display = f'P{period}'
+                            if time_left and time_left.strip():
+                                status = f"{period_display} {time_left}"
+                            else:
+                                status = period_display
+                        elif period and str(period).upper() in ('FINAL', 'F', 'END', 'FIN'):
                             status = "F"
                         elif sport == 'mlb':
                             inning_state = time_left.strip().upper() if time_left else ''
                             inning_abbrev = {'TOP': 'TOP', 'BOTTOM': 'BOT', 'MIDDLE': 'MID', 'END': 'END'}.get(inning_state, inning_state)
-                            if inning_abbrev:
-                                status = f"{inning_abbrev} {period}"
-                            else:
-                                status = f"INN {period}"
+                            status = f"{inning_abbrev} {period}" if inning_abbrev else f"INN {period}"
                         else:
                             period_prefix = 'Q'
                             if time_left and time_left.strip():
                                 status = f"{period_prefix}{period} {time_left}"
                             else:
                                 status = f"{period_prefix}{period}"
-                    
-                    output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
+
+                        output += f" {away_abbr} [{away_score:3d}-{home_score:3d}] {home_abbr} {status}\n"
         else:
             output += " No games scheduled\n"
         
@@ -1869,10 +1861,20 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                         'home_otl': int(game_dict.get('home_otl', 0) or 0),
                         'visitor_wins': int(game_dict.get('visitor_wins', 0) or 0),
                         'visitor_losses': int(game_dict.get('visitor_losses', 0) or 0),
-                        'visitor_otl': int(game_dict.get('visitor_otl', 0) or 0)
+                        'visitor_otl': int(game_dict.get('visitor_otl', 0) or 0),
+                        'cricket_status': game_dict.get('cricket_status', ''),
+                        'cricket_venue': game_dict.get('cricket_venue', ''),
+                        'cricket_start_time': game_dict.get('cricket_start_time', {}),
+                        'cricket_home_nr': int(game_dict.get('cricket_home_nr', 0) or 0),
+                        'cricket_away_nr': int(game_dict.get('cricket_away_nr', 0) or 0),
+                        'cricket_home_score': game_dict.get('cricket_home_score', ''),
+                        'cricket_away_score': game_dict.get('cricket_away_score', ''),
+                        'cricket_winner': game_dict.get('cricket_winner', ''),
+                        'cricket_result': game_dict.get('cricket_result', ''),
+                        'cricket_away_outcome': game_dict.get('cricket_away_outcome', ''),
                     }
                     games.append(GameWrapper(game_data))
-    
+
     # For any date (today or past), try get_schedule from collector if we don't have games yet
     if not games:
         collector = get_collector(league)
