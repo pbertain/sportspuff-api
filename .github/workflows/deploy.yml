@@ -52,5 +52,6 @@ jobs:
             -e "api_port=${{ steps.env.outputs.port }}" \
             -e "github_ref=${{ github.ref }}" \
             -e "github_sha=${{ github.sha }}" \
-            -e "vault_postgres_password=${{ secrets.POSTGRES_PASSWORD }}"
+            -e "vault_postgres_password=${{ secrets.POSTGRES_PASSWORD }}" \
+            -e "vault_wnba_api_key=${{ secrets.WNBA_API_KEY }}"
 
