@@ -1137,24 +1137,30 @@ class NBACollector(BaseCollector):
             return None
     
     def _detect_nba_season_type(self, game_data: Dict[str, Any]) -> str:
-        """
-        Detect NBA season type using API fields.
-        
-        Args:
-            game_data: Raw game data from NBA API
-            
-        Returns:
-            Normalized game type
-        """
         game_label = game_data.get('gameLabel', '')
         game_subtype = game_data.get('gameSubtype', '')
-        
+
         if game_label == 'Preseason':
             return 'preseason'
         elif game_label == 'Emirates NBA Cup':
             return 'nba_cup'
-        else:
-            return 'regular'
+        elif 'playoff' in game_label.lower() or 'playoff' in game_subtype.lower():
+            return 'playoffs'
+
+        # Detect from game ID: 002=regular, 003=allstar, 004=playoffs, 005=playin
+        game_id = str(game_data.get('gameId', ''))
+        if len(game_id) >= 3:
+            prefix = game_id[:3]
+            if prefix == '004':
+                return 'playoffs'
+            elif prefix == '005':
+                return 'playoffs'
+            elif prefix == '003':
+                return 'allstar'
+            elif prefix == '001':
+                return 'preseason'
+
+        return 'regular'
     
     def _parse_period_scores(self, team_data: Dict[str, Any]) -> Dict[str, int]:
         """
