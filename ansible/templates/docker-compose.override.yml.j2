@@ -7,6 +7,8 @@ services:
       - postgres_data_{{ deployment_env }}:/var/lib/postgresql/data
   sports-service:
     container_name: sports-data-{{ deployment_env }}-service
+    env_file:
+      - .env
     environment:
       API_PORT: {{ api_port }}
       DATABASE_URL: postgresql://sports_user:${POSTGRES_PASSWORD}@postgres:5432/sports_data
