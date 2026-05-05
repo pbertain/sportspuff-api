@@ -21,6 +21,24 @@ from models import Game
 from config import settings
 from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 
+import time as _time
+
+# Cache for collector responses: {cache_key: {'data': [...], 'timestamp': float}}
+_collector_cache: Dict[str, Any] = {}
+_COLLECTOR_CACHE_TTL = 300  # 5 minutes
+
+
+def _get_cached_games(league: str, target_date, fetcher):
+    """Fetch games with 5-minute caching."""
+    cache_key = f"{league}:{target_date.isoformat()}"
+    cached = _collector_cache.get(cache_key)
+    if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):
+        return cached['data']
+    result = fetcher()
+    _collector_cache[cache_key] = {'data': result, 'timestamp': _time.time()}
+    return result
+
+
 def get_collector(league: str):
     """Get collector instance for a league."""
     collectors = {
@@ -1394,27 +1412,41 @@ def get_scores_all_sports_api_v1(
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
         result = {}
-        
-        with get_db_session() as db:
-            for sport_key, league in SPORT_MAPPINGS.items():
-                games = db.query(Game).filter(
-                    Game.league == league,
-                    Game.game_date == target_date,
-                    Game.is_final == True
-                ).all()
-                
-                result[sport_key] = [
-                    {
-                        "game_id": game.game_id,
-                        "home_team": game.home_team,
-                        "home_score": game.home_score_total,
-                        "visitor_team": game.visitor_team,
-                        "visitor_score": game.visitor_score_total,
-                        "is_final": game.is_final
-                    }
-                    for game in games
-                ]
-        
+
+        for sport_key, league in SPORT_MAPPINGS.items():
+            collector = get_collector(league)
+            if not collector:
+                result[sport_key] = []
+                continue
+
+            def _fetch(c=collector, d=target_date):
+                return c.get_live_scores(d) or c.get_schedule(d) or []
+
+            raw_games = _get_cached_games(league, target_date, _fetch)
+            result[sport_key] = [
+                {
+                    "game_id": g.get('game_id', ''),
+                    "home_team": g.get('home_team', ''),
+                    "home_team_abbrev": g.get('home_team_abbrev', ''),
+                    "home_score": g.get('home_score_total', 0),
+                    "visitor_team": g.get('visitor_team', ''),
+                    "visitor_team_abbrev": g.get('visitor_team_abbrev', ''),
+                    "visitor_score": g.get('visitor_score_total', 0),
+                    "is_final": g.get('is_final', False),
+                    "game_status": g.get('game_status', 'scheduled'),
+                    "current_period": g.get('current_period', ''),
+                    "time_remaining": g.get('time_remaining', ''),
+                    "game_type": g.get('game_type', 'regular'),
+                    "home_wins": g.get('home_wins', 0),
+                    "home_losses": g.get('home_losses', 0),
+                    "home_otl": g.get('home_otl', 0) if league == 'NHL' else None,
+                    "visitor_wins": g.get('visitor_wins', 0),
+                    "visitor_losses": g.get('visitor_losses', 0),
+                    "visitor_otl": g.get('visitor_otl', 0) if league == 'NHL' else None,
+                }
+                for g in raw_games
+            ]
+
         return {
             "date": target_date.isoformat(),
             "sports": result
@@ -1806,24 +1838,25 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
 
 def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInfo) -> List[Any]:
     """Helper function to get games for curl formatting (returns GameWrapper objects)."""
-    now_tz = datetime.now(timezone)
-    today = now_tz.date()
     games = []
-    
+
     class GameWrapper:
         def __init__(self, data):
             for k, v in data.items():
                 setattr(self, k, v)
-    
-    if target_date == today:
-        # Try to get live data first for today
-        collector = get_collector(league)
-        if collector:
-            live_games = collector.get_live_scores(target_date)
-            if live_games:
-                # Use a set to track game_ids and avoid duplicates
-                seen_game_ids = set()
-                for game_dict in live_games:
+
+    collector = get_collector(league)
+    if not collector:
+        return games
+
+    def _fetch():
+        return collector.get_live_scores(target_date) or collector.get_schedule(target_date) or []
+
+    raw_games = _get_cached_games(league, target_date, _fetch)
+
+    if raw_games:
+        seen_game_ids = set()
+        for game_dict in raw_games:
                     game_id = game_dict.get('game_id', '')
                     if game_id and game_id in seen_game_ids:
                         continue  # Skip duplicates
@@ -1892,69 +1925,6 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
                     }
                     games.append(GameWrapper(game_data))
 
-    # For any date (today or past), try get_schedule from collector if we don't have games yet
-    if not games:
-        collector = get_collector(league)
-        if collector:
-            schedule_games = collector.get_schedule(target_date)
-            if schedule_games:
-                seen_game_ids = set()
-                for game_dict in schedule_games:
-                    game_id = game_dict.get('game_id', '')
-                    if game_id and game_id in seen_game_ids:
-                        continue
-                    seen_game_ids.add(game_id)
-                    
-                    # Skip games with empty team names
-                    home_team = game_dict.get('home_team', '')
-                    home_abbrev = game_dict.get('home_team_abbrev', '')
-                    visitor_team = game_dict.get('visitor_team', '')
-                    visitor_abbrev = game_dict.get('visitor_team_abbrev', '')
-                    
-                    if (not home_team or home_team.strip() == '') and (not home_abbrev or home_abbrev.strip() == ''):
-                        continue
-                    if (not visitor_team or visitor_team.strip() == '') and (not visitor_abbrev or visitor_abbrev.strip() == ''):
-                        continue
-                    
-                    game_time = game_dict.get('game_time')
-                    game_data = {
-                        'league': league,
-                        'game_id': game_id,
-                        'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
-                        'game_time': game_time,
-                        'game_type': game_dict.get('game_type', 'regular'),
-                        'home_team': home_team,
-                        'home_team_abbrev': home_abbrev,
-                        'visitor_team': visitor_team,
-                        'visitor_team_abbrev': visitor_abbrev,
-                        'home_score_total': int(game_dict.get('home_score_total', 0) or 0),
-                        'visitor_score_total': int(game_dict.get('visitor_score_total', 0) or 0),
-                        'game_status': game_dict.get('game_status', 'scheduled'),
-                        'current_period': game_dict.get('current_period', ''),
-                        'time_remaining': game_dict.get('time_remaining', ''),
-                        'is_final': game_dict.get('is_final', False),
-                        'home_wins': int(game_dict.get('home_wins', 0) or 0),
-                        'home_losses': int(game_dict.get('home_losses', 0) or 0),
-                        'home_otl': int(game_dict.get('home_otl', 0) or 0),
-                        'visitor_wins': int(game_dict.get('visitor_wins', 0) or 0),
-                        'visitor_losses': int(game_dict.get('visitor_losses', 0) or 0),
-                        'visitor_otl': int(game_dict.get('visitor_otl', 0) or 0),
-                        'cricket_status': game_dict.get('cricket_status', ''),
-                        'cricket_venue': game_dict.get('cricket_venue', ''),
-                        'cricket_start_time': game_dict.get('cricket_start_time', {}),
-                        'cricket_home_nr': int(game_dict.get('cricket_home_nr', 0) or 0),
-                        'cricket_away_nr': int(game_dict.get('cricket_away_nr', 0) or 0),
-                        'cricket_home_score': game_dict.get('cricket_home_score', ''),
-                        'cricket_away_score': game_dict.get('cricket_away_score', ''),
-                        'cricket_winner': game_dict.get('cricket_winner', ''),
-                        'cricket_result': game_dict.get('cricket_result', ''),
-                        'cricket_away_outcome': game_dict.get('cricket_away_outcome', ''),
-                        'home_draws': int(game_dict.get('home_draws', 0) or 0),
-                        'visitor_draws': int(game_dict.get('visitor_draws', 0) or 0),
-                        'mls_detail': game_dict.get('mls_detail', ''),
-                    }
-                    games.append(GameWrapper(game_data))
-    
     # Fallback to database ONLY if no collector games were found
     if not games:
         with get_db_session() as db:
