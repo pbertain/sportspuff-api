@@ -587,13 +587,13 @@ def get_greeting(tz: pytz.BaseTzInfo = None) -> str:
     hour = now.hour
     
     if 0 <= hour < 5:
-        return "Good god... it's late ⏾, from SportsPuff!"
+        return "Good god... it's late ⏾ from SportsPuff!"
     elif 5 <= hour < 12:
-        return "Good morning 🌇, from SportsPuff!"
+        return "Good morning 🌇 from SportsPuff!"
     elif 12 <= hour < 17:
-        return "Good afternoon 🌞, from SportsPuff!"
+        return "Good afternoon 🌞 from SportsPuff!"
     else:
-        return "Good evening ✨, from SportsPuff!"
+        return "Good evening ✨ from SportsPuff!"
 
 def parse_date_param(date_param: Optional[str], tz: pytz.BaseTzInfo = None) -> date:
     """
@@ -701,8 +701,10 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
     elif sport.lower() == 'mls':
         visitor_draws = getattr(game, 'visitor_draws', 0) or 0
         home_draws = getattr(game, 'home_draws', 0) or 0
-        away_rec = f"[{visitor_wins:2d}-{visitor_draws:2d}-{visitor_losses:2d}]"
-        home_rec = f"[{home_wins:2d}-{home_draws:2d}-{home_losses:2d}]"
+        v_pts = visitor_wins * 3 + visitor_draws
+        h_pts = home_wins * 3 + home_draws
+        away_rec = f"[{visitor_wins:2d}-{visitor_draws:2d}-{visitor_losses:2d} {v_pts:2d}pts]"
+        home_rec = f"[{home_wins:2d}-{home_draws:2d}-{home_losses:2d} {h_pts:2d}pts]"
     elif game_type == 'playoffs':
         away_rec = f"[{visitor_wins}-{visitor_losses}]"
         home_rec = f"[{home_wins}-{home_losses}]"

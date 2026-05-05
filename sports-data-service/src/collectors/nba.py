@@ -943,7 +943,7 @@ class NBACollector(BaseCollector):
                 'game_status': self.normalize_game_status(raw_game.get('gameStatus', 'scheduled')),
                 'current_period': raw_game.get('period', {}).get('current', ''),
                 'time_remaining': raw_game.get('clock', ''),
-                'is_final': raw_game.get('gameStatus', '') == 'Final',
+                'is_final': 'final' in str(raw_game.get('gameStatus', '')).lower() or 'final' in str(raw_game.get('gameStatusText', '')).lower(),
                 'is_overtime': raw_game.get('isOvertime', False),
                 'home_period_scores': home_period_scores,
                 'visitor_period_scores': visitor_period_scores,
