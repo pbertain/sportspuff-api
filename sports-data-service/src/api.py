@@ -776,10 +776,12 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
             is_halftime = (period == '2' and time_left in ('0:00', '') and game.game_status == 'in_progress')
             if is_halftime:
                 status = "HT"
-            elif time_left and time_left.strip():
+            elif game.game_status == 'in_progress' and time_left and time_left.strip():
                 status = f"{period_prefix}{period} {time_left}"
-            else:
+            elif game.game_status == 'in_progress' and period and period not in ('?', '', '0'):
                 status = f"{period_prefix}{period}"
+            else:
+                status = "F"
 
         return f"  {visitor_abbrev} {away_rec} ({vs:2d}@{hs:2d})  {home_abbrev} {home_rec}  {status}"
 
@@ -1093,10 +1095,12 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                             status = f"{inning_abbrev} {period}" if inning_abbrev else f"INN {period}"
                         else:
                             period_prefix = 'Q'
-                            if time_left and time_left.strip():
+                            if game.game_status == 'in_progress' and time_left and time_left.strip():
                                 status = f"{period_prefix}{period} {time_left}"
-                            else:
+                            elif game.game_status == 'in_progress' and period and period not in ('?', '', '0'):
                                 status = f"{period_prefix}{period}"
+                            else:
+                                status = "F"
 
                         output += f" {away_abbr} {away_score:2d}-{home_score:2d} {home_abbr} {status}\n"
         else:
@@ -1851,8 +1855,22 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
     if not collector:
         return games
 
+    now_tz = datetime.now(timezone)
+    today = now_tz.date()
+
     def _fetch():
-        return collector.get_live_scores(target_date) or collector.get_schedule(target_date) or []
+        raw = collector.get_live_scores(target_date) or collector.get_schedule(target_date) or []
+        # For past dates, if the API returns games with no scores/status (empty shells),
+        # discard them so the DB fallback is used instead
+        if target_date < today and raw:
+            has_real_data = any(
+                g.get('is_final') or g.get('game_status') in ('final', 'in_progress')
+                or (g.get('home_score_total') or 0) > 0 or (g.get('visitor_score_total') or 0) > 0
+                for g in raw
+            )
+            if not has_real_data:
+                return []
+        return raw
 
     raw_games = _get_cached_games(league, target_date, _fetch)
 
