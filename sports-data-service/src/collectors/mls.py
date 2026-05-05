@@ -21,6 +21,37 @@ class MLSCollector(BaseCollector):
 
     def __init__(self):
         super().__init__("MLS")
+        self._standings_cache = {}
+        self._standings_cache_time = None
+        self._standings_cache_ttl = 3600
+
+    def _fetch_standings(self):
+        if self._standings_cache_time and (datetime.now().timestamp() - self._standings_cache_time < self._standings_cache_ttl):
+            return self._standings_cache
+        try:
+            url = "https://site.api.espn.com/apis/v2/sports/soccer/usa.1/standings"
+            response = requests.get(url, timeout=self.api_timeout)
+            if response.status_code == 200:
+                data = response.json()
+                records = {}
+                for child in data.get('children', []):
+                    for entry in child.get('standings', {}).get('entries', []):
+                        team = entry.get('team', {})
+                        abbrev = team.get('abbreviation', '')
+                        stats = {s['name']: s.get('value', 0) for s in entry.get('stats', [])}
+                        if abbrev:
+                            records[abbrev] = {
+                                'wins': int(stats.get('wins', 0)),
+                                'draws': int(stats.get('ties', 0)),
+                                'losses': int(stats.get('losses', 0)),
+                            }
+                if records:
+                    self._standings_cache = records
+                    self._standings_cache_time = datetime.now().timestamp()
+                return records
+        except Exception as e:
+            logger.debug(f"Could not fetch MLS standings: {e}")
+        return self._standings_cache
 
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         self._check_rate_limit()
@@ -91,6 +122,18 @@ class MLSCollector(BaseCollector):
 
             home_rec = self._parse_record(home.get('records', [{}])[0].get('summary', '') if home.get('records') else '')
             away_rec = self._parse_record(away.get('records', [{}])[0].get('summary', '') if away.get('records') else '')
+
+            # Fall back to standings cache if records not in game data
+            if home_rec == (0, 0, 0) or away_rec == (0, 0, 0):
+                standings = self._fetch_standings()
+                home_abbr = home_team.get('abbreviation', '')
+                away_abbr = away_team.get('abbreviation', '')
+                if home_rec == (0, 0, 0) and home_abbr in standings:
+                    sr = standings[home_abbr]
+                    home_rec = (sr['wins'], sr['losses'], sr['draws'])
+                if away_rec == (0, 0, 0) and away_abbr in standings:
+                    sr = standings[away_abbr]
+                    away_rec = (sr['wins'], sr['losses'], sr['draws'])
 
             season = event.get('season', {})
             season_type = season.get('slug', 'regular-season')
