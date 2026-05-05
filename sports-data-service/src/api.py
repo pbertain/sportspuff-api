@@ -697,13 +697,14 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
 
     visitor_abbrev = game.visitor_team_abbrev
     if not visitor_abbrev or visitor_abbrev.strip() == '':
-        visitor_abbrev = (game.visitor_team or '???')[:3].upper()
-    visitor_abbrev = visitor_abbrev.ljust(3)
+        visitor_abbrev = (game.visitor_team or '???')[:4].upper()
+    abbrev_width = 4 if sport.lower() == 'mls' else 3
+    visitor_abbrev = visitor_abbrev.ljust(abbrev_width)
 
     home_abbrev = game.home_team_abbrev
     if not home_abbrev or home_abbrev.strip() == '':
-        home_abbrev = (game.home_team or '???')[:3].upper()
-    home_abbrev = home_abbrev.ljust(3)
+        home_abbrev = (game.home_team or '???')[:4].upper()
+    home_abbrev = home_abbrev.ljust(abbrev_width)
 
     game_type = getattr(game, 'game_type', 'regular')
 
@@ -1052,9 +1053,10 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                     output += _format_cricket_game(game, tz)
                     output += "\n"
             else:
+                abbr_w = 4 if sport == 'mls' else 3
                 for game in scored_games:
-                    away_abbr = (game.visitor_team_abbrev or '???').ljust(3)
-                    home_abbr = (game.home_team_abbrev or '???').ljust(3)
+                    away_abbr = (game.visitor_team_abbrev or '???').ljust(abbr_w)
+                    home_abbr = (game.home_team_abbrev or '???').ljust(abbr_w)
 
                     away_score = game.visitor_score_total or 0
                     home_score = game.home_score_total or 0
