@@ -1355,29 +1355,11 @@ def get_schedules_all_sports_api_v1(
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
         result = {}
-        
-        with get_db_session() as db:
-            for sport_key, league in SPORT_MAPPINGS.items():
-                games = db.query(Game).filter(
-                    Game.league == league,
-                    Game.game_date == target_date
-                ).order_by(Game.game_time).all()
-                
-                result[sport_key] = [
-                    {
-                        "game_id": game.game_id,
-                        "game_date": game.game_date.isoformat(),
-                        "game_time": game.game_time.isoformat() if game.game_time else None,
-                        "home_team": game.home_team,
-                        "home_team_abbrev": game.home_team_abbrev,
-                        "visitor_team": game.visitor_team,
-                        "visitor_team_abbrev": game.visitor_team_abbrev,
-                        "game_status": game.game_status,
-                        "game_type": game.game_type
-                    }
-                    for game in games
-                ]
-        
+
+        for sport_key, league in SPORT_MAPPINGS.items():
+            games = _get_games_for_curl(league, target_date, timezone)
+            result[sport_key] = [_game_wrapper_to_dict(g, league) for g in games]
+
         return {
             "date": target_date.isoformat(),
             "sports": result
@@ -1421,29 +1403,7 @@ def get_scores_all_sports_api_v1(
 
         for sport_key, league in SPORT_MAPPINGS.items():
             games = _get_games_for_curl(league, target_date, timezone)
-            result[sport_key] = [
-                {
-                    "game_id": getattr(g, 'game_id', ''),
-                    "home_team": getattr(g, 'home_team', ''),
-                    "home_team_abbrev": getattr(g, 'home_team_abbrev', ''),
-                    "home_score": getattr(g, 'home_score_total', 0),
-                    "visitor_team": getattr(g, 'visitor_team', ''),
-                    "visitor_team_abbrev": getattr(g, 'visitor_team_abbrev', ''),
-                    "visitor_score": getattr(g, 'visitor_score_total', 0),
-                    "is_final": getattr(g, 'is_final', False),
-                    "game_status": getattr(g, 'game_status', 'scheduled'),
-                    "current_period": getattr(g, 'current_period', ''),
-                    "time_remaining": getattr(g, 'time_remaining', ''),
-                    "game_type": getattr(g, 'game_type', 'regular'),
-                    "home_wins": getattr(g, 'home_wins', 0),
-                    "home_losses": getattr(g, 'home_losses', 0),
-                    "home_otl": getattr(g, 'home_otl', None) if league == 'NHL' else None,
-                    "visitor_wins": getattr(g, 'visitor_wins', 0),
-                    "visitor_losses": getattr(g, 'visitor_losses', 0),
-                    "visitor_otl": getattr(g, 'visitor_otl', None) if league == 'NHL' else None,
-                }
-                for g in games
-            ]
+            result[sport_key] = [_game_wrapper_to_dict(g, league) for g in games]
 
         return {
             "date": target_date.isoformat(),
@@ -1486,38 +1446,28 @@ def get_schedule_api_v1(
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
         sport_lower = sport.lower()
-        
-        # Handle 'all' sport - aggregate from all sports
+
         if sport_lower == 'all':
             all_games = []
             for sport_key in SPORT_MAPPINGS.keys():
                 league = SPORT_MAPPINGS[sport_key]
-                games_list = _get_schedule_for_league(league, target_date, timezone)
-                # Add sport identifier to each game
-                for game in games_list:
-                    game['sport'] = sport_key
-                all_games.extend(games_list)
-            
-            # Sort by game_time
+                games = _get_games_for_curl(league, target_date, timezone)
+                for g in games:
+                    d = _game_wrapper_to_dict(g, league)
+                    d['sport'] = sport_key
+                    all_games.append(d)
             all_games.sort(key=lambda x: x.get('game_time') or '')
-            
-            return {
-                "sport": "all",
-                "date": target_date.isoformat(),
-                "games": all_games
-            }
-        
-        # Single sport logic
+            return {"sport": "all", "date": target_date.isoformat(), "games": all_games}
+
         league = SPORT_MAPPINGS.get(sport_lower)
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
-        
-        games_list = _get_schedule_for_league(league, target_date, timezone)
-        
+
+        games = _get_games_for_curl(league, target_date, timezone)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
-            "games": games_list
+            "games": [_game_wrapper_to_dict(g, league) for g in games]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -1834,6 +1784,38 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
     
     return games_list
 
+def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
+    """Convert a GameWrapper to a JSON-serializable dict."""
+    gt = getattr(g, 'game_time', None)
+    gt_str = None
+    if gt and hasattr(gt, 'isoformat'):
+        gt_str = gt.isoformat()
+    gd = getattr(g, 'game_date', '')
+    gd_str = gd.isoformat() if hasattr(gd, 'isoformat') else str(gd)
+    return {
+        "game_id": getattr(g, 'game_id', ''),
+        "game_date": gd_str,
+        "game_time": gt_str,
+        "home_team": getattr(g, 'home_team', ''),
+        "home_team_abbrev": getattr(g, 'home_team_abbrev', ''),
+        "visitor_team": getattr(g, 'visitor_team', ''),
+        "visitor_team_abbrev": getattr(g, 'visitor_team_abbrev', ''),
+        "game_status": getattr(g, 'game_status', 'scheduled'),
+        "game_type": getattr(g, 'game_type', 'regular'),
+        "home_score": getattr(g, 'home_score_total', 0),
+        "visitor_score": getattr(g, 'visitor_score_total', 0),
+        "is_final": getattr(g, 'is_final', False),
+        "current_period": getattr(g, 'current_period', ''),
+        "time_remaining": getattr(g, 'time_remaining', ''),
+        "home_wins": getattr(g, 'home_wins', 0),
+        "home_losses": getattr(g, 'home_losses', 0),
+        "home_otl": getattr(g, 'home_otl', None) if league == 'NHL' else None,
+        "visitor_wins": getattr(g, 'visitor_wins', 0),
+        "visitor_losses": getattr(g, 'visitor_losses', 0),
+        "visitor_otl": getattr(g, 'visitor_otl', None) if league == 'NHL' else None,
+    }
+
+
 def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInfo) -> List[Any]:
     """Helper function to get games for curl formatting (returns GameWrapper objects)."""
     games = []
@@ -2047,35 +2029,27 @@ def get_scores_api_v1(
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
         sport_lower = sport.lower()
-        
-        # Handle 'all' sport - aggregate from all sports
+
         if sport_lower == 'all':
             all_scores = []
             for sport_key in SPORT_MAPPINGS.keys():
                 league = SPORT_MAPPINGS[sport_key]
-                scores_list = _get_scores_for_league(league, target_date)
-                # Add sport identifier to each score
-                for score in scores_list:
-                    score['sport'] = sport_key
-                all_scores.extend(scores_list)
-            
-            return {
-                "sport": "all",
-                "date": target_date.isoformat(),
-                "scores": all_scores
-            }
-        
-        # Single sport logic
+                games = _get_games_for_curl(league, target_date, timezone)
+                for g in games:
+                    d = _game_wrapper_to_dict(g, league)
+                    d['sport'] = sport_key
+                    all_scores.append(d)
+            return {"sport": "all", "date": target_date.isoformat(), "scores": all_scores}
+
         league = SPORT_MAPPINGS.get(sport_lower)
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
-        
-        scores_list = _get_scores_for_league(league, target_date)
-        
+
+        games = _get_games_for_curl(league, target_date, timezone)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
-            "scores": scores_list
+            "scores": [_game_wrapper_to_dict(g, league) for g in games]
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
