@@ -1792,7 +1792,7 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         gt_str = gt.isoformat()
     gd = getattr(g, 'game_date', '')
     gd_str = gd.isoformat() if hasattr(gd, 'isoformat') else str(gd)
-    return {
+    d = {
         "game_id": getattr(g, 'game_id', ''),
         "game_date": gd_str,
         "game_time": gt_str,
@@ -1814,6 +1814,21 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         "visitor_losses": getattr(g, 'visitor_losses', 0),
         "visitor_otl": getattr(g, 'visitor_otl', None) if league == 'NHL' else None,
     }
+    if league in ('IPL', 'MLC'):
+        d["home_score"] = getattr(g, 'cricket_home_score', '') or ''
+        d["visitor_score"] = getattr(g, 'cricket_away_score', '') or ''
+        d["result"] = getattr(g, 'cricket_status', '') or ''
+        d["venue"] = getattr(g, 'cricket_venue', '') or ''
+        d["winner"] = getattr(g, 'cricket_winner', '') or ''
+        d["home_no_result"] = getattr(g, 'cricket_home_nr', 0)
+        d["visitor_no_result"] = getattr(g, 'cricket_away_nr', 0)
+        start_time = getattr(g, 'cricket_start_time', {}) or {}
+        if start_time:
+            d["start_time"] = start_time
+    if league == 'MLS':
+        d["home_draws"] = getattr(g, 'home_draws', 0)
+        d["visitor_draws"] = getattr(g, 'visitor_draws', 0)
+    return d
 
 
 def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInfo) -> List[Any]:
