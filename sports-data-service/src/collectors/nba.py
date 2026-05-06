@@ -1066,7 +1066,7 @@ class NBACollector(BaseCollector):
                 'game_id': str(raw_game.get('gameId', '')),
                 'game_date': game_date.strftime('%Y-%m-%d'),
                 'game_time': game_time,
-                'game_type': 'regular',  # Could be enhanced to detect playoffs
+                'game_type': self._detect_nba_season_type(raw_game),
                 'home_team': home_team_name,
                 'home_team_abbrev': home_team_abbrev,
                 'home_team_id': home_team_id,
@@ -1144,7 +1144,7 @@ class NBACollector(BaseCollector):
                 'league': 'NBA',
                 'game_id': str(raw_game[0]) if len(raw_game) > 0 else '',
                 'game_date': datetime.now().strftime('%Y-%m-%d'),
-                'game_type': 'regular',
+                'game_type': self._detect_nba_season_type({'gameId': str(raw_game[0]) if len(raw_game) > 0 else ''}),
                 'home_team': raw_game[6] if len(raw_game) > 6 else '',
                 'home_team_abbrev': raw_game[7] if len(raw_game) > 7 else '',
                 'home_team_id': str(raw_game[5]) if len(raw_game) > 5 else '',

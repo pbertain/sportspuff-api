@@ -1420,37 +1420,29 @@ def get_scores_all_sports_api_v1(
         result = {}
 
         for sport_key, league in SPORT_MAPPINGS.items():
-            collector = get_collector(league)
-            if not collector:
-                result[sport_key] = []
-                continue
-
-            def _fetch(c=collector, d=target_date):
-                return c.get_live_scores(d) or c.get_schedule(d) or []
-
-            raw_games = _get_cached_games(league, target_date, _fetch)
+            games = _get_games_for_curl(league, target_date, timezone)
             result[sport_key] = [
                 {
-                    "game_id": g.get('game_id', ''),
-                    "home_team": g.get('home_team', ''),
-                    "home_team_abbrev": g.get('home_team_abbrev', ''),
-                    "home_score": g.get('home_score_total', 0),
-                    "visitor_team": g.get('visitor_team', ''),
-                    "visitor_team_abbrev": g.get('visitor_team_abbrev', ''),
-                    "visitor_score": g.get('visitor_score_total', 0),
-                    "is_final": g.get('is_final', False),
-                    "game_status": g.get('game_status', 'scheduled'),
-                    "current_period": g.get('current_period', ''),
-                    "time_remaining": g.get('time_remaining', ''),
-                    "game_type": g.get('game_type', 'regular'),
-                    "home_wins": g.get('home_wins', 0),
-                    "home_losses": g.get('home_losses', 0),
-                    "home_otl": g.get('home_otl', 0) if league == 'NHL' else None,
-                    "visitor_wins": g.get('visitor_wins', 0),
-                    "visitor_losses": g.get('visitor_losses', 0),
-                    "visitor_otl": g.get('visitor_otl', 0) if league == 'NHL' else None,
+                    "game_id": getattr(g, 'game_id', ''),
+                    "home_team": getattr(g, 'home_team', ''),
+                    "home_team_abbrev": getattr(g, 'home_team_abbrev', ''),
+                    "home_score": getattr(g, 'home_score_total', 0),
+                    "visitor_team": getattr(g, 'visitor_team', ''),
+                    "visitor_team_abbrev": getattr(g, 'visitor_team_abbrev', ''),
+                    "visitor_score": getattr(g, 'visitor_score_total', 0),
+                    "is_final": getattr(g, 'is_final', False),
+                    "game_status": getattr(g, 'game_status', 'scheduled'),
+                    "current_period": getattr(g, 'current_period', ''),
+                    "time_remaining": getattr(g, 'time_remaining', ''),
+                    "game_type": getattr(g, 'game_type', 'regular'),
+                    "home_wins": getattr(g, 'home_wins', 0),
+                    "home_losses": getattr(g, 'home_losses', 0),
+                    "home_otl": getattr(g, 'home_otl', None) if league == 'NHL' else None,
+                    "visitor_wins": getattr(g, 'visitor_wins', 0),
+                    "visitor_losses": getattr(g, 'visitor_losses', 0),
+                    "visitor_otl": getattr(g, 'visitor_otl', None) if league == 'NHL' else None,
                 }
-                for g in raw_games
+                for g in games
             ]
 
         return {
