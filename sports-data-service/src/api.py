@@ -2288,29 +2288,32 @@ def get_scores_curl_v1(
 
 @app.get("/api/v1/standings/{sport}")
 def get_standings_api_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, mls, all)"),
 ):
     """Get standings in JSON format."""
     sport_lower = sport.lower()
-    
-    # Handle 'all' sport
-    if sport_lower == 'all':
-        # TODO: Implement standings endpoint for all sports
-        return {
-            "sport": "all",
-            "message": "Standings endpoint - TODO",
-            "note": "When implemented, this will return standings for all sports"
-        }
-    
-    # Validate single sport
-    if sport_lower not in SPORT_MAPPINGS:
+
+    if sport_lower not in SPORT_MAPPINGS and sport_lower != 'all':
         raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
-    
-    # TODO: Implement standings endpoint
-    return {
-        "sport": sport,
-        "message": "Standings endpoint - TODO"
-    }
+
+    if sport_lower == 'mls':
+        collector = get_collector('MLS')
+        if collector:
+            standings = collector._fetch_standings()
+            teams = []
+            for abbrev, rec in sorted(standings.items(), key=lambda x: -(x[1]['wins'] * 3 + x[1]['draws'])):
+                pts = rec['wins'] * 3 + rec['draws']
+                teams.append({
+                    'abbreviation': abbrev,
+                    'wins': rec['wins'],
+                    'draws': rec['draws'],
+                    'losses': rec['losses'],
+                    'points': pts,
+                    'record': f"{rec['wins']}-{rec['draws']}-{rec['losses']}",
+                })
+            return {"sport": "mls", "teams": teams}
+
+    return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
 
 
 @app.get("/curl/v1/standings/{sport}", response_class=PlainTextResponse)
