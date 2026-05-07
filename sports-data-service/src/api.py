@@ -5,8 +5,6 @@ Provides REST API endpoints for schedules, scores, and standings
 with both JSON and cURL-style text output.
 """
 
-import sys
-import os
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, Path, Query, HTTPException
@@ -14,12 +12,10 @@ from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
 import pytz
 
-sys.path.insert(0, '/app/src')
-
-from database import get_db_session
-from models import Game
-from config import settings
-from collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
+from .database import get_db_session
+from .models import Game
+from .config import settings
+from .collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 
 import time as _time
 
