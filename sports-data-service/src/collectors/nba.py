@@ -2,8 +2,6 @@
 NBA data collector for the sports data service.
 """
 
-import sys
-import os
 import signal
 import time
 import json
@@ -12,11 +10,8 @@ from datetime import datetime, date
 from typing import Dict, List, Optional, Any
 import logging
 
-# Add NBA API to path
-sys.path.insert(0, '/app/dependencies/nba_api/src')
-
 # Setup proxy before importing nba_api
-from utils.proxy import setup_proxy, get_proxy_config
+from ..utils.proxy import setup_proxy, get_proxy_config
 setup_proxy()
 
 from nba_api.live.nba.endpoints import scoreboard
@@ -31,7 +26,7 @@ import requests
 from sqlalchemy.orm import Session
 
 from .base import BaseCollector
-from models import Game
+from ..models import Game
 
 logger = logging.getLogger(__name__)
 

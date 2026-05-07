@@ -9,7 +9,7 @@ from contextlib import contextmanager
 from typing import Generator
 from urllib.parse import urlparse, quote, urlunparse
 
-from config import settings
+from .config import settings
 
 # Fix DATABASE_URL if password contains special characters that need URL encoding
 def _fix_database_url(url: str) -> str:
