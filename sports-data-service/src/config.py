@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     schedule_update_times: str = Field(default="06:00,18:00")
     
     # Live polling hours (24-hour format, comma-separated ranges)
-    live_polling_hours: str = Field(default="12:00-02:00")
+    live_polling_hours: str = Field(default="15:00-08:00")
     
     # API Rate Limiting
     nba_max_requests_per_minute: int = Field(default=60)

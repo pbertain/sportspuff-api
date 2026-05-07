@@ -20,9 +20,48 @@ logger = logging.getLogger(__name__)
 
 class MLBCollector(BaseCollector):
     """MLB data collector using the MLB Stats API."""
-    
+
+    TEAM_ABBREV_MAP = {
+        108: 'LAA', 109: 'ARI', 110: 'BAL', 111: 'BOS',
+        112: 'CHC', 113: 'CIN', 114: 'CLE', 115: 'COL',
+        116: 'DET', 117: 'HOU', 118: 'KC',  119: 'LAD',
+        120: 'WSH', 121: 'NYM', 133: 'OAK', 134: 'PIT',
+        135: 'SD',  136: 'SEA', 137: 'SF',  138: 'STL',
+        139: 'TB',  140: 'TEX', 141: 'TOR', 142: 'MIN',
+        143: 'PHI', 144: 'ATL', 145: 'CWS', 146: 'MIA',
+        147: 'NYY', 158: 'MIL',
+    }
+
     def __init__(self):
         super().__init__("MLB")
+        self._standings_cache = {}
+        self._standings_cache_time = None
+        self._standings_cache_ttl = 300
+
+    def _fetch_standings(self):
+        if self._standings_cache_time and time.time() - self._standings_cache_time < self._standings_cache_ttl:
+            return self._standings_cache
+        try:
+            data = statsapi.standings_data()
+            records = {}
+            for div_id, div_data in data.items():
+                for team in div_data.get('teams', []):
+                    tid = team.get('team_id')
+                    if tid:
+                        records[tid] = {'wins': team.get('w', 0), 'losses': team.get('l', 0)}
+            if records:
+                self._standings_cache = records
+                self._standings_cache_time = time.time()
+            return records
+        except Exception as e:
+            logger.debug(f"Could not fetch MLB standings: {e}")
+            return self._standings_cache
+
+    def _get_team_abbrev(self, team_id, fallback=''):
+        try:
+            return self.TEAM_ABBREV_MAP.get(int(team_id), fallback)
+        except (ValueError, TypeError):
+            return fallback
     
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
@@ -50,11 +89,54 @@ class MLBCollector(BaseCollector):
                     parsed_games.append(parsed_game)
             
             return parsed_games
-            
+
         except Exception as e:
             logger.error(f"Error fetching MLB schedule: {e}")
             return []
-    
+
+    def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
+        if year is None:
+            now = datetime.now()
+            year = now.year if now.month >= 3 else now.year - 1
+        try:
+            data = statsapi.get("season", {"seasonId": str(year), "sportId": 1})
+            seasons = data.get('seasons', [])
+            if not seasons:
+                return None
+            s = seasons[0]
+            season_types = []
+            if s.get('preSeasonStartDate') and s.get('preSeasonEndDate'):
+                season_types.append({
+                    'name': 'Spring Training',
+                    'start_date': s['preSeasonStartDate'],
+                    'end_date': s['preSeasonEndDate'],
+                })
+            if s.get('regularSeasonStartDate') and s.get('regularSeasonEndDate'):
+                season_types.append({
+                    'name': 'Regular Season',
+                    'start_date': s['regularSeasonStartDate'],
+                    'end_date': s['regularSeasonEndDate'],
+                })
+            if s.get('postSeasonStartDate') and s.get('postSeasonEndDate'):
+                season_types.append({
+                    'name': 'Postseason',
+                    'start_date': s['postSeasonStartDate'],
+                    'end_date': s['postSeasonEndDate'],
+                })
+            today = datetime.now().strftime('%Y-%m-%d')
+            current_phase = 'Off Season'
+            for t in season_types:
+                if t['start_date'] <= today <= t['end_date']:
+                    current_phase = t['name']
+            return {
+                'year': year,
+                'current_phase': current_phase,
+                'season_types': season_types,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching MLB season info: {e}")
+            return None
+
     def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get full MLB season schedule.
@@ -88,45 +170,39 @@ class MLBCollector(BaseCollector):
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
         Get live MLB scores for specified date.
-        
-        Args:
-            date: Date to get scores for (optional, defaults to today)
-            
-        Returns:
-            List of game dictionaries with live score data
+        Uses schedule data for all games (already includes scores, status, innings).
+        Only fetches detailed per-game data for games currently in progress.
         """
         self._check_rate_limit()
-        
+
         try:
             if date:
                 date_str = date.strftime('%Y-%m-%d')
                 games = statsapi.schedule(date=date_str)
             else:
                 games = statsapi.schedule()
-            
+
             parsed_games = []
             for game in games:
-                # Get detailed game data for live scores
+                status = game.get('status', '')
                 game_id = game.get('game_id')
-                if game_id:
+
+                if status in ('In Progress', 'Live') and game_id:
                     try:
                         detailed_game = statsapi.get('game', {'gamePk': game_id})
                         parsed_game = self.parse_live_game_data(detailed_game)
                         if parsed_game:
                             parsed_games.append(parsed_game)
+                            continue
                     except Exception as e:
                         logger.warning(f"Could not get detailed data for game {game_id}: {e}")
-                        # Fall back to basic game data
-                        parsed_game = self.parse_game_data(game)
-                        if parsed_game:
-                            parsed_games.append(parsed_game)
-                else:
-                    parsed_game = self.parse_game_data(game)
-                    if parsed_game:
-                        parsed_games.append(parsed_game)
-            
+
+                parsed_game = self.parse_game_data(game)
+                if parsed_game:
+                    parsed_games.append(parsed_game)
+
             return parsed_games
-            
+
         except Exception as e:
             logger.error(f"Error fetching MLB live scores: {e}")
             return []
@@ -159,13 +235,13 @@ class MLBCollector(BaseCollector):
                 logger.warning(f"Invalid date format: {game_date_str}")
                 return None
             
-            # Parse game time
+            # Parse game time from game_datetime (ISO 8601 UTC)
             game_time = None
-            if raw_game.get('game_time'):
+            game_datetime_str = raw_game.get('game_datetime', '')
+            if game_datetime_str:
                 try:
-                    game_time_str = raw_game['game_time']
-                    game_time = datetime.strptime(f"{game_date} {game_time_str}", '%Y-%m-%d %H:%M:%S')
-                except:
+                    game_time = datetime.fromisoformat(game_datetime_str.replace('Z', '+00:00'))
+                except (ValueError, TypeError):
                     pass
             
             # Detect game type
@@ -175,6 +251,12 @@ class MLBCollector(BaseCollector):
             home_period_scores = self._parse_inning_scores(raw_game.get('home_inning_scores', []))
             visitor_period_scores = self._parse_inning_scores(raw_game.get('away_inning_scores', []))
             
+            home_id = raw_game.get('home_id', '')
+            away_id = raw_game.get('away_id', '')
+            standings = self._fetch_standings()
+            home_rec = standings.get(home_id, {})
+            away_rec = standings.get(away_id, {})
+
             return {
                 'league': 'MLB',
                 'game_id': str(raw_game.get('game_id', '')),
@@ -182,21 +264,21 @@ class MLBCollector(BaseCollector):
                 'game_time': game_time,
                 'game_type': game_type,
                 'home_team': home_team,
-                'home_team_abbrev': raw_game.get('home_abbrev', ''),
-                'home_team_id': str(raw_game.get('home_id', '')),
-                'home_wins': raw_game.get('home_wins', 0),
-                'home_losses': raw_game.get('home_losses', 0),
+                'home_team_abbrev': self._get_team_abbrev(home_id, home_team[:3].upper()),
+                'home_team_id': str(home_id),
+                'home_wins': home_rec.get('wins', 0),
+                'home_losses': home_rec.get('losses', 0),
                 'home_score_total': raw_game.get('home_score', 0),
                 'visitor_team': away_team,
-                'visitor_team_abbrev': raw_game.get('away_abbrev', ''),
-                'visitor_team_id': str(raw_game.get('away_id', '')),
-                'visitor_wins': raw_game.get('away_wins', 0),
-                'visitor_losses': raw_game.get('away_losses', 0),
+                'visitor_team_abbrev': self._get_team_abbrev(away_id, away_team[:3].upper()),
+                'visitor_team_id': str(away_id),
+                'visitor_wins': away_rec.get('wins', 0),
+                'visitor_losses': away_rec.get('losses', 0),
                 'visitor_score_total': raw_game.get('away_score', 0),
                 'game_status': self.normalize_game_status(raw_game.get('status', 'scheduled')),
-                'current_period': raw_game.get('inning', ''),
+                'current_period': raw_game.get('current_inning', ''),
                 'time_remaining': raw_game.get('inning_state', ''),
-                'is_final': raw_game.get('status') == 'Final',
+                'is_final': raw_game.get('status') in ('Final', 'Game Over', 'Completed Early'),
                 'is_overtime': False,  # MLB doesn't have overtime
                 'home_period_scores': home_period_scores,
                 'visitor_period_scores': visitor_period_scores,
@@ -248,6 +330,14 @@ class MLBCollector(BaseCollector):
                 home_period_scores[f'inning_{inning_num}'] = home_score
                 visitor_period_scores[f'inning_{inning_num}'] = away_score
             
+            # Get status from gameData (not root level)
+            status_obj = game_data.get('status', {})
+            detailed_state = status_obj.get('detailedState', 'scheduled')
+
+            # Get team records from gameData
+            home_record = home_team.get('record', {})
+            away_record = away_team.get('record', {})
+
             return {
                 'league': 'MLB',
                 'game_id': str(raw_game.get('gamePk', '')),
@@ -256,15 +346,19 @@ class MLBCollector(BaseCollector):
                 'home_team': home_team.get('name', ''),
                 'home_team_abbrev': home_team.get('abbreviation', ''),
                 'home_team_id': str(home_team.get('id', '')),
+                'home_wins': home_record.get('wins', 0),
+                'home_losses': home_record.get('losses', 0),
                 'home_score_total': linescore.get('teams', {}).get('home', {}).get('runs', 0),
                 'visitor_team': away_team.get('name', ''),
                 'visitor_team_abbrev': away_team.get('abbreviation', ''),
                 'visitor_team_id': str(away_team.get('id', '')),
+                'visitor_wins': away_record.get('wins', 0),
+                'visitor_losses': away_record.get('losses', 0),
                 'visitor_score_total': linescore.get('teams', {}).get('away', {}).get('runs', 0),
-                'game_status': self.normalize_game_status(raw_game.get('status', {}).get('detailedState', 'scheduled')),
+                'game_status': self.normalize_game_status(detailed_state),
                 'current_period': linescore.get('currentInning', ''),
                 'time_remaining': linescore.get('inningState', ''),
-                'is_final': raw_game.get('status', {}).get('detailedState') == 'Final',
+                'is_final': detailed_state in ('Final', 'Game Over', 'Completed Early'),
                 'is_overtime': False,
                 'home_period_scores': home_period_scores,
                 'visitor_period_scores': visitor_period_scores,

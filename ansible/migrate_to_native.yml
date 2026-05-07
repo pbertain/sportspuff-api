@@ -1,0 +1,118 @@
+---
+- name: Migrate to Native Processes
+  hosts: all
+  become: yes
+  vars:
+    app_user: ansible
+    dev_dir: /opt/sportspuff-api-dev/sports-data-service
+    prod_dir: /opt/sportspuff-api/sports-data-service
+  
+  tasks:
+    - name: Check if PostgreSQL is installed
+      command: which psql
+      register: postgres_installed
+      ignore_errors: yes
+      changed_when: false
+    
+    - name: Install PostgreSQL
+      apt:
+        name:
+          - postgresql
+          - postgresql-contrib
+          - python3-psycopg2
+        state: present
+        update_cache: yes
+      when: postgres_installed.rc != 0
+    
+    - name: Start and enable PostgreSQL
+      systemd:
+        name: postgresql
+        state: started
+        enabled: yes
+    
+    - name: Get PostgreSQL password from Docker env
+      shell: cat {{ item }}/.env | grep POSTGRES_PASSWORD | cut -d= -f2
+      register: postgres_password
+      loop:
+        - "{{ dev_dir }}"
+        - "{{ prod_dir }}"
+      when: postgres_password is not defined or postgres_password.results[0].stdout != postgres_password.results[1].stdout
+    
+    - name: Set PostgreSQL password variable
+      set_fact:
+        postgres_password: "{{ postgres_password.results[0].stdout | default(postgres_password.results[1].stdout) }}"
+    
+    - name: Create PostgreSQL databases
+      postgresql_db:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - sports_data_dev
+        - sports_data_prod
+    
+    - name: Create PostgreSQL user
+      postgresql_user:
+        name: sports_user
+        password: "{{ postgres_password }}"
+        priv: "sports_data_dev, sports_data_prod:ALL"
+        state: present
+    
+    - name: Export data from Docker PostgreSQL (dev)
+      shell: |
+        cd {{ dev_dir }}
+        export COMPOSE_PROJECT_NAME=sports-data-dev
+        docker-compose exec -T postgres pg_dump -U sports_user sports_data > /tmp/sports_data_dev_backup.sql
+      ignore_errors: yes
+    
+    - name: Export data from Docker PostgreSQL (prod)
+      shell: |
+        cd {{ prod_dir }}
+        export COMPOSE_PROJECT_NAME=sports-data-prod
+        docker-compose exec -T postgres pg_dump -U sports_user sports_data > /tmp/sports_data_prod_backup.sql
+      ignore_errors: yes
+    
+    - name: Import data to native PostgreSQL (dev)
+      shell: |
+        PGPASSWORD={{ postgres_password }} psql -U sports_user -d sports_data_dev -h localhost < /tmp/sports_data_dev_backup.sql
+      ignore_errors: yes
+    
+    - name: Import data to native PostgreSQL (prod)
+      shell: |
+        PGPASSWORD={{ postgres_password }} psql -U sports_user -d sports_data_prod -h localhost < /tmp/sports_data_prod_backup.sql
+      ignore_errors: yes
+    
+    - name: Create Python virtualenvs
+      command: python3 -m venv {{ item }}/venv
+      args:
+        creates: "{{ item }}/venv/bin/activate"
+      loop:
+        - "{{ dev_dir }}"
+        - "{{ prod_dir }}"
+    
+    - name: Install Python dependencies
+      pip:
+        requirements: "{{ item }}/requirements.txt"
+        virtualenv: "{{ item }}/venv"
+        virtualenv_python: python3
+      loop:
+        - "{{ dev_dir }}"
+        - "{{ prod_dir }}"
+    
+    - name: Create systemd service files
+      template:
+        src: "{{ item.template }}"
+        dest: "/etc/systemd/system/{{ item.service }}"
+      loop:
+        - { template: "sports-api-dev.service.j2", service: "sports-api-dev.service" }
+        - { template: "sports-api-prod.service.j2", service: "sports-api-prod.service" }
+      notify: reload systemd
+    
+    - name: Enable services (but don't start yet)
+      systemd:
+        name: "{{ item }}"
+        enabled: yes
+        state: stopped
+      loop:
+        - sports-api-dev
+        - sports-api-prod
+

@@ -118,88 +118,20 @@ class NBACollector(BaseCollector):
             else:  # July to September (off season, use previous season)
                 season = f"{year - 1}-{str(year)[-2:]}"
             
-            # Try live scoreboard endpoint first (works without proxy, more reliable)
+            # Try scoreboardv2 endpoint first (more reliable for specific dates)
             def get_schedule_data():
                 try:
-                    # Use live scoreboard endpoint (no proxy required, works reliably)
-                    logger.info("Trying live scoreboard endpoint (no proxy required)")
-                    board = scoreboard.ScoreBoard()
-                    games_data = board.games.get_dict()
-                    
-                    # Convert to our format
-                    games = []
-                    for game in games_data:
-                        # Live scoreboard format: {'gameId': '...', 'gameTimeUTC': '...', 
-                        #                          'awayTeam': {...}, 'homeTeam': {...}, ...}
-                        game_obj = {
-                            'gameId': game.get('gameId', ''),
-                            'gameDate': game.get('gameTimeUTC', ''),
-                            'gameTimeUTC': game.get('gameTimeUTC', ''),
-                            'homeTeam': game.get('homeTeam', {}),
-                            'awayTeam': game.get('awayTeam', {}),
-                            'gameStatus': game.get('gameStatusText', 'scheduled'),
-                            '_live_scoreboard': True
-                        }
-                        games.append(game_obj)
-                    
-                    # Filter games by date if specified
+                    # For specific dates, use scoreboardv2 which accepts a date parameter
+                    # This is more reliable than live scoreboard which only returns "today" in UTC
                     if date is not None:
-                        # Filter games by date (convert UTC game times to Pacific time for date comparison)
-                        # NBA games are scheduled in Eastern/Pacific time, so we need to compare dates in that timezone
-                        from dateutil import parser
-                        import pytz
-                        pacific_tz = pytz.timezone('US/Pacific')
-                        target_date_str = date.strftime('%Y-%m-%d')
-                        filtered_games = []
-                        for game in games:
-                            game_time_utc = game.get('gameTimeUTC', '')
-                            if game_time_utc:
-                                try:
-                                    game_time_obj = parser.parse(game_time_utc)
-                                    # Ensure timezone-aware (assume UTC if not specified)
-                                    if game_time_obj.tzinfo is None:
-                                        game_time_obj = pytz.UTC.localize(game_time_obj)
-                                    # Convert to Pacific time for date comparison
-                                    game_time_pacific = game_time_obj.astimezone(pacific_tz)
-                                    game_date_str = game_time_pacific.date().strftime('%Y-%m-%d')
-                                    if game_date_str == target_date_str:
-                                        filtered_games.append(game)
-                                    else:
-                                        logger.debug(f"Game {game.get('gameId')} date {game_date_str} (Pacific) doesn't match target {target_date_str}")
-                                except Exception as e:
-                                    logger.warning(f"Error parsing game time {game_time_utc}: {e}, including game")
-                                    # If parsing fails, include the game
-                                    filtered_games.append(game)
-                            else:
-                                # If no time, include the game (for today's games)
-                                filtered_games.append(game)
-                        games = filtered_games
-                        logger.info(f"Filtered to {len(games)} games for date {target_date_str} (Pacific time)")
-                    
-                    # Get date string for return format
-                    if date is None:
-                        date_str = datetime.now().strftime('%Y-%m-%d')
-                    else:
                         date_str = date.strftime('%Y-%m-%d')
-                    
-                    # Wrap in leagueSchedule format for compatibility
-                    return {'leagueSchedule': {'gameDates': [{'gameDate': date_str, 'games': games}]}}
-                    
-                except Exception as e:
-                    logger.warning(f"Live scoreboard failed: {e}, trying scoreboardv2")
-                    # Fallback to scoreboardv2
-                    try:
-                        if date is None:
-                            date_str = datetime.now().strftime('%Y-%m-%d')
-                        else:
-                            date_str = date.strftime('%Y-%m-%d')
-                        
-                        logger.info(f"Fetching NBA schedule for {date_str} using scoreboard endpoint")
-                        # Use custom headers and longer timeout
+                        logger.info(f"Fetching NBA schedule for {date_str} using scoreboardv2 endpoint")
+                        # Use custom headers with shorter timeout to fail faster
                         # NBA.com may block requests without proper User-Agent headers
+                        # Reduced timeout to 30s to fail faster and use fallback
                         scoreboard_data = scoreboardv2.ScoreboardV2(
                             game_date=date_str, 
-                            timeout=60,
+                            timeout=30,
                             headers=self.nba_headers
                         )
                         scoreboard_dict = scoreboard_data.get_dict()
@@ -212,108 +144,392 @@ class NBACollector(BaseCollector):
                             # Get game header data
                             game_header = scoreboard_dict['resultSets'][0]
                             line_score = scoreboard_dict['resultSets'][1] if len(scoreboard_dict['resultSets']) > 1 else None
-                            
+
+                            game_headers = game_header.get('headers', [])
                             game_rows = game_header.get('rowSet', [])
+                            line_headers = line_score.get('headers', []) if line_score else []
                             line_rows = line_score.get('rowSet', []) if line_score else []
-                            
-                            # Create a mapping of game_id to line score data
+
+                            # Build column index maps
+                            gh = {name: idx for idx, name in enumerate(game_headers)}
+                            lh = {name: idx for idx, name in enumerate(line_headers)}
+
+                            # Create a mapping of game_id to line score rows (multiple per game)
                             line_score_map = {}
+                            game_id_col = lh.get('GAME_ID', 0)
                             for line_row in line_rows:
-                                if len(line_row) > 0:
-                                    game_id = line_row[0]
-                                    line_score_map[game_id] = line_row
-                            
-                            # Parse each game
+                                if len(line_row) > game_id_col:
+                                    gid = line_row[game_id_col]
+                                    if gid not in line_score_map:
+                                        line_score_map[gid] = []
+                                    line_score_map[gid].append(line_row)
+
+                            # Parse each game (scoreboardv2 already filtered by requested date)
                             for game_row in game_rows:
                                 if len(game_row) >= 8:
-                                    # GameHeader format: [GAME_ID, GAME_DATE_EST, GAME_SEQUENCE, GAME_STATUS_ID, 
-                                    #                     GAME_STATUS_TEXT, GAME_STATUS, HOME_TEAM_ID, VISITOR_TEAM_ID, ...]
-                                    game_id = game_row[0]
-                                    game_date_est = game_row[1]
-                                    home_team_id = game_row[6]
-                                    visitor_team_id = game_row[7]
-                                    
-                                    # Get line score data for this game
-                                    line_data = line_score_map.get(game_id, [])
-                                    
+                                    game_id = game_row[gh.get('GAME_ID', 2)]
+                                    game_date_est = game_row[gh.get('GAME_DATE_EST', 0)]
+                                    home_team_id = game_row[gh.get('HOME_TEAM_ID', 6)]
+                                    visitor_team_id = game_row[gh.get('VISITOR_TEAM_ID', 7)]
+                                    game_status_text = game_row[gh.get('GAME_STATUS_TEXT', 4)] if gh.get('GAME_STATUS_TEXT', 4) < len(game_row) else ''
+
+                                    # Get line score rows for this game
+                                    game_line_rows = line_score_map.get(game_id, [])
+
                                     # Build game object compatible with parse_game_data
                                     game_obj = {
                                         'gameId': str(game_id) if game_id else '',
                                         'gameDate': game_date_est,
+                                        'gameTimeUTC': game_date_est,
                                         'homeTeam': {
                                             'teamId': home_team_id,
                                         },
                                         'awayTeam': {
                                             'teamId': visitor_team_id,
                                         },
-                                        'gameStatus': game_row[5] if len(game_row) > 5 else 'scheduled',
-                                        '_lineScore': line_data,  # Store for parsing
+                                        'gameStatusText': game_status_text,
+                                        'gameStatus': game_status_text,
+                                        '_lineScore': game_line_rows[0] if game_line_rows else [],
                                     }
-                                    
-                                    # Add team info from line score if available
-                                    if len(line_data) >= 20:
-                                        # LineScore format: [GAME_ID, TEAM_ID, TEAM_ABBREVIATION, TEAM_CITY_NAME, 
-                                        #                     TEAM_NAME, MIN, FGM, FGA, FG_PCT, FG3M, FG3A, FG3_PCT, 
-                                        #                     FTM, FTA, FT_PCT, OREB, DREB, REB, AST, STL, ...]
-                                        # We need to find home and visitor team data
-                                        for line_row in line_rows:
-                                            if len(line_row) >= 5 and line_row[0] == game_id:
-                                                team_id = line_row[1]
-                                                if team_id == home_team_id:
-                                                    game_obj['homeTeam'].update({
-                                                        'teamCity': line_row[3] if len(line_row) > 3 else '',
-                                                        'teamName': line_row[4] if len(line_row) > 4 else '',
-                                                        'teamTricode': line_row[2] if len(line_row) > 2 else '',
-                                                        'score': line_row[21] if len(line_row) > 21 else 0,
-                                                    })
-                                                elif team_id == visitor_team_id:
-                                                    game_obj['awayTeam'].update({
-                                                        'teamCity': line_row[3] if len(line_row) > 3 else '',
-                                                        'teamName': line_row[4] if len(line_row) > 4 else '',
-                                                        'teamTricode': line_row[2] if len(line_row) > 2 else '',
-                                                        'score': line_row[21] if len(line_row) > 21 else 0,
-                                                    })
-                                    
+
+                                    # Add team info from line score rows
+                                    team_id_col = lh.get('TEAM_ID', 1)
+                                    abbrev_col = lh.get('TEAM_ABBREVIATION', 2)
+                                    city_col = lh.get('TEAM_CITY_NAME', 3)
+                                    name_col = lh.get('TEAM_NAME', 4)
+                                    pts_col = lh.get('PTS', 21)
+
+                                    for lr in game_line_rows:
+                                        if len(lr) > max(team_id_col, abbrev_col, name_col):
+                                            tid = lr[team_id_col]
+                                            if tid == home_team_id:
+                                                game_obj['homeTeam'].update({
+                                                    'teamCity': lr[city_col] if len(lr) > city_col else '',
+                                                    'teamName': lr[name_col] if len(lr) > name_col else '',
+                                                    'teamTricode': lr[abbrev_col] if len(lr) > abbrev_col else '',
+                                                    'score': lr[pts_col] if len(lr) > pts_col else 0,
+                                                })
+                                            elif tid == visitor_team_id:
+                                                game_obj['awayTeam'].update({
+                                                    'teamCity': lr[city_col] if len(lr) > city_col else '',
+                                                    'teamName': lr[name_col] if len(lr) > name_col else '',
+                                                    'teamTricode': lr[abbrev_col] if len(lr) > abbrev_col else '',
+                                                    'score': lr[pts_col] if len(lr) > pts_col else 0,
+                                                })
+
                                     games.append(game_obj)
                         
                         # Wrap in leagueSchedule format for compatibility with existing parser
                         return {'leagueSchedule': {'gameDates': [{'gameDate': date_str, 'games': games}]}}
+                    else:
+                        # For "today" (no date specified), try live scoreboard endpoint (no proxy required, works reliably)
+                        logger.info("Trying live scoreboard endpoint (no proxy required)")
+                        board = scoreboard.ScoreBoard()
+                        games_data = board.games.get_dict()
+                        
+                        # Convert to our format
+                        games = []
+                        for game in games_data:
+                            # Live scoreboard format: {'gameId': '...', 'gameTimeUTC': '...', 
+                            #                          'awayTeam': {...}, 'homeTeam': {...}, ...}
+                            game_obj = {
+                                'gameId': game.get('gameId', ''),
+                                'gameDate': game.get('gameTimeUTC', ''),
+                                'gameTimeUTC': game.get('gameTimeUTC', ''),
+                                'homeTeam': game.get('homeTeam', {}),
+                                'awayTeam': game.get('awayTeam', {}),
+                                'gameStatus': game.get('gameStatusText', 'scheduled'),
+                                '_live_scoreboard': True
+                            }
+                            games.append(game_obj)
+                        
+                        # Get date string for return format
+                        date_str = datetime.now().strftime('%Y-%m-%d')
+                        
+                        # Parse all games before returning
+                        parsed_games_list = []
+                        for game in games:
+                            parsed_game = self._parse_live_scoreboard_game(game)
+                            if parsed_game:
+                                parsed_games_list.append(parsed_game)
+                        
+                        # Wrap in leagueSchedule format for compatibility
+                        return {'leagueSchedule': {'gameDates': [{'gameDate': date_str, 'games': parsed_games_list}]}}
+                    
+                except Exception as e:
+                    logger.warning(f"Scoreboardv2 failed: {e}, trying live scoreboard fallback")
+                    # Fallback to live scoreboard if scoreboardv2 fails
+                    # Note: Live scoreboard only returns "today" in UTC, so we'll be lenient with date filtering
+                    try:
+                        logger.info("Trying live scoreboard endpoint as fallback")
+                        board = scoreboard.ScoreBoard()
+                        games_data = board.games.get_dict()
+                        
+                        # Convert to our format
+                        games = []
+                        for game in games_data:
+                            game_obj = {
+                                'gameId': game.get('gameId', ''),
+                                'gameDate': game.get('gameTimeUTC', ''),
+                                'gameTimeUTC': game.get('gameTimeUTC', ''),
+                                'homeTeam': game.get('homeTeam', {}),
+                                'awayTeam': game.get('awayTeam', {}),
+                                'gameStatus': game.get('gameStatusText', 'scheduled'),
+                                '_live_scoreboard': True
+                            }
+                            games.append(game_obj)
+                        
+                        # Get date string for return format
+                        if date is None:
+                            date_str = datetime.now().strftime('%Y-%m-%d')
+                        else:
+                            date_str = date.strftime('%Y-%m-%d')
+                        
+                        # Parse all games before returning
+                        # Since scoreboardv2 failed and live scoreboard only returns "today" games,
+                        # we'll include all games but try to match the target date if possible
+                        parsed_games_list = []
+                        import pytz
+                        pacific_tz = pytz.timezone('US/Pacific')
+                        
+                        for game in games:
+                            parsed_game = self._parse_live_scoreboard_game(game)
+                            if parsed_game:
+                                # If date is specified, try to match it, but be lenient
+                                if date is not None:
+                                    parsed_date = parsed_game.get('game_date', '')
+                                    game_time = parsed_game.get('game_time')
+                                    
+                                    # Check if game_date matches
+                                    if parsed_date == date_str:
+                                        parsed_games_list.append(parsed_game)
+                                    elif game_time:
+                                        # Check if game_time falls on the target date in Pacific time
+                                        try:
+                                            if isinstance(game_time, str):
+                                                from dateutil import parser
+                                                game_time_obj = parser.parse(game_time)
+                                            else:
+                                                game_time_obj = game_time
+
+                                            if game_time_obj.tzinfo is None:
+                                                game_time_obj = pytz.UTC.localize(game_time_obj)
+
+                                            game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                                            game_date_pacific = game_time_pacific.date()
+
+                                            if game_date_pacific == date:
+                                                parsed_games_list.append(parsed_game)
+                                        except Exception:
+                                            pass
+                                else:
+                                    # No date specified - include all games
+                                    parsed_games_list.append(parsed_game)
+                        
+                        logger.info(f"Live scoreboard returned {len(parsed_games_list)} games (lenient filtering for {date_str})")
+                        
+                        # Wrap in leagueSchedule format for compatibility
+                        return {'leagueSchedule': {'gameDates': [{'gameDate': date_str, 'games': parsed_games_list}]}}
                     except Exception as e2:
-                        logger.error(f"Error getting schedule via scoreboardv2: {e2}")
+                        logger.error(f"Error getting schedule via live scoreboard: {e2}")
                         return {}
-                    # Fallback to season schedule if scoreboard fails (but this is slower)
-                    if scheduleleaguev2 is not None:
-                        try:
-                            logger.info(f"Falling back to season schedule for {season}")
-                            schedule_data = scheduleleaguev2.ScheduleLeagueV2(season=season)
-                            return schedule_data.get_dict()
-                        except Exception as e2:
-                            logger.error(f"Error getting season schedule: {e2}")
+                    # Fallback to LeagueGameFinder if scoreboard fails
+                    # This is more reliable for specific dates
+                    try:
+                        logger.info(f"Falling back to LeagueGameFinder for date {date_str if date else 'today'}")
+                        from nba_api.stats.endpoints import leaguegamefinder
+                        
+                        # LeagueGameFinder requires date range, so use the target date as both start and end
+                        if date:
+                            date_from = date.strftime('%m/%d/%Y')
+                            date_to = date.strftime('%m/%d/%Y')
+                        else:
+                            today = datetime.now().date()
+                            date_from = today.strftime('%m/%d/%Y')
+                            date_to = today.strftime('%m/%d/%Y')
+                        
+                        finder = leaguegamefinder.LeagueGameFinder(
+                            date_from_nullable=date_from,
+                            date_to_nullable=date_to,
+                            timeout=60,
+                            headers=self.nba_headers
+                        )
+                        finder_dict = finder.get_dict()
+                        
+                        # LeagueGameFinder returns games in resultSets[0]
+                        if 'resultSets' in finder_dict and len(finder_dict['resultSets']) > 0:
+                            game_results = finder_dict['resultSets'][0]
+                            game_rows = game_results.get('rowSet', [])
+                            
+                            logger.info(f"LeagueGameFinder returned {len(game_rows)} rows (will deduplicate by game)")
+                            
+                            # Group rows by game_id (each game has 2 rows - one per team)
+                            games_by_id = {}
+                            
+                            for row in game_rows:
+                                if len(row) >= 7:
+                                    game_id = str(row[4]) if len(row) > 4 else ''
+                                    game_date_str = row[5] if len(row) > 5 else ''
+                                    matchup = row[6] if len(row) > 6 else ''
+                                    
+                                    if not game_id or game_id in games_by_id:
+                                        continue  # Skip if no game_id or already processed
+                                    
+                                    # Parse matchup (e.g., "BOS @ TOR" or "BOS vs. TOR")
+                                    matchup_parts = matchup.split()
+                                    if len(matchup_parts) < 3:
+                                        continue
+                                    
+                                    visitor_abbrev = matchup_parts[0]
+                                    home_abbrev = matchup_parts[2]
+                                    
+                                    # Find team data for this game (we have 2 rows, find both teams)
+                                    home_team_row = None
+                                    away_team_row = None
+                                    
+                                    for check_row in game_rows:
+                                        if len(check_row) >= 7 and str(check_row[4]) == game_id:
+                                            team_abbrev = check_row[2] if len(check_row) > 2 else ''
+                                            if team_abbrev == home_abbrev:
+                                                home_team_row = check_row
+                                            elif team_abbrev == visitor_abbrev:
+                                                away_team_row = check_row
+                                    
+                                    if not home_team_row or not away_team_row:
+                                        continue  # Skip if we can't find both teams
+                                    
+                                    # Extract team info from rows
+                                    # Format: [SEASON_ID, TEAM_ID, TEAM_ABBREVIATION, TEAM_NAME, GAME_ID, GAME_DATE, MATCHUP, ...]
+                                    home_team_id = str(home_team_row[1]) if len(home_team_row) > 1 else ''
+                                    home_team_name = home_team_row[3] if len(home_team_row) > 3 else ''
+                                    away_team_id = str(away_team_row[1]) if len(away_team_row) > 1 else ''
+                                    away_team_name = away_team_row[3] if len(away_team_row) > 3 else ''
+                                    
+                                    # Parse team name: TEAM_NAME is usually "City Name" (e.g., "Boston Celtics")
+                                    home_parts = home_team_name.split() if home_team_name else []
+                                    home_city = ' '.join(home_parts[:-1]) if len(home_parts) > 1 else (home_parts[0] if home_parts else '')
+                                    home_name = home_parts[-1] if home_parts else ''
+                                    
+                                    away_parts = away_team_name.split() if away_team_name else []
+                                    away_city = ' '.join(away_parts[:-1]) if len(away_parts) > 1 else (away_parts[0] if away_parts else '')
+                                    away_name = away_parts[-1] if away_parts else ''
+                                    
+                                    # Parse date - LeagueGameFinder returns YYYY-MM-DD format
+                                    try:
+                                        game_date_obj = datetime.strptime(game_date_str, '%Y-%m-%d')
+                                        game_date_formatted = game_date_obj.strftime('%m/%d/%Y')  # parse_game_data expects MM/DD/YYYY
+                                    except:
+                                        continue
+                                    
+                                    # Build game object compatible with parse_game_data
+                                    game_obj = {
+                                        'gameId': game_id,
+                                        'gameDate': game_date_formatted,
+                                        'homeTeam': {
+                                            'teamId': home_team_id,
+                                            'teamTricode': home_abbrev,
+                                            'teamCity': home_city,
+                                            'teamName': home_name
+                                        },
+                                        'awayTeam': {
+                                            'teamId': away_team_id,
+                                            'teamTricode': visitor_abbrev,
+                                            'teamCity': away_city,
+                                            'teamName': away_name
+                                        },
+                                        'gameStatus': 'scheduled',
+                                        '_leagueGameFinder': True
+                                    }
+                                    
+                                    parsed_game = self.parse_game_data(game_obj, game_date_formatted)
+                                    if parsed_game:
+                                        games_by_id[game_id] = parsed_game
+                            
+                            all_games = list(games_by_id.values())
+                            logger.info(f"LeagueGameFinder returned {len(all_games)} unique games")
+                            
+                            # Wrap in leagueSchedule format for compatibility
+                            date_str = date.strftime('%Y-%m-%d') if date else datetime.now().strftime('%Y-%m-%d')
+                            return {'leagueSchedule': {'gameDates': [{'gameDate': date_str, 'games': all_games}]}}
+                        else:
+                            logger.warning("LeagueGameFinder returned no games")
                             return {}
-                    return {}
+                    except Exception as e3:
+                        logger.error(f"Error getting schedule via LeagueGameFinder: {e3}")
+                        # Final fallback to season schedule if available
+                        if scheduleleaguev2 is not None:
+                            try:
+                                logger.info(f"Falling back to season schedule for {season}")
+                                schedule_data = scheduleleaguev2.ScheduleLeagueV2(season=season)
+                                return schedule_data.get_dict()
+                            except Exception as e4:
+                                logger.error(f"Error getting season schedule: {e4}")
+                                return {}
+                        return {}
             
             start_time = time.time()
-            data = self._call_with_timeout(get_schedule_data, timeout_seconds=15)
+            # Increase timeout to allow for scoreboardv2 (60s) + fallbacks
+            data = self._call_with_timeout(get_schedule_data, timeout_seconds=90)
             response_time = int((time.time() - start_time) * 1000)
             
             if 'leagueSchedule' in data and 'gameDates' in data['leagueSchedule']:
                 game_dates = data['leagueSchedule']['gameDates']
                 
                 # Find games for the specified date
-                # For live scoreboard, games are already filtered, just parse them
+                # Games from live scoreboard fallback are already parsed and filtered
                 target_games = []
                 for game_date in game_dates:
                     game_date_str = game_date.get('gameDate', '')
                     games_for_date = game_date.get('games', [])
                     
-                    # Parse all games - they're already filtered by date
-                    for game in games_for_date:
-                        parsed_game = self.parse_game_data(game, game_date_str)
-                        if parsed_game:
-                            # Additional date check if needed
-                            parsed_date = parsed_game.get('game_date', '')
-                            if date is None or parsed_date == date.strftime('%Y-%m-%d'):
+                    # Check if games are already parsed (from live scoreboard fallback)
+                    if games_for_date and isinstance(games_for_date[0], dict) and 'game_id' in games_for_date[0]:
+                        # Games are already parsed - use them directly
+                        for parsed_game in games_for_date:
+                            # Additional date check - be lenient for live scoreboard games
+                            if date is not None:
+                                parsed_date = parsed_game.get('game_date', '')
+                                game_time = parsed_game.get('game_time')
+                                
+                                # Check if date matches
+                                if parsed_date == date.strftime('%Y-%m-%d'):
+                                    target_games.append(parsed_game)
+                                elif game_time:
+                                    # Check Pacific timezone date
+                                    import pytz
+                                    try:
+                                        if isinstance(game_time, str):
+                                            from dateutil import parser
+                                            game_time_obj = parser.parse(game_time)
+                                        else:
+                                            game_time_obj = game_time
+                                        
+                                        if game_time_obj.tzinfo is None:
+                                            game_time_obj = pytz.UTC.localize(game_time_obj)
+                                        
+                                        pacific_tz = pytz.timezone('US/Pacific')
+                                        game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                                        game_date_pacific = game_time_pacific.date()
+                                        
+                                        if game_date_pacific == date or abs((game_date_pacific - date).days) <= 1:
+                                            target_games.append(parsed_game)
+                                    except Exception:
+                                        # If parsing fails, include it (be lenient)
+                                        target_games.append(parsed_game)
+                                else:
+                                    # No game_time - include it (be lenient for live scoreboard)
+                                    target_games.append(parsed_game)
+                            else:
                                 target_games.append(parsed_game)
+                    else:
+                        # Games need to be parsed
+                        for game in games_for_date:
+                            parsed_game = self.parse_game_data(game, game_date_str)
+                            if parsed_game:
+                                # Additional date check if needed
+                                parsed_date = parsed_game.get('game_date', '')
+                                if date is None or parsed_date == date.strftime('%Y-%m-%d'):
+                                    target_games.append(parsed_game)
                 
                 return target_games
             else:
@@ -645,17 +861,27 @@ class NBACollector(BaseCollector):
             # Handle date parsing
             if not game_date_str:
                 game_date_str = raw_game.get('gameDate', '')
-            
+
             if ' ' in game_date_str:
-                # Format: "10/02/2025 00:00:00"
                 game_date_str = game_date_str.split(' ')[0]
-            
-            try:
-                game_date_obj = datetime.strptime(game_date_str, '%m/%d/%Y')
-                game_date = game_date_obj.strftime('%Y-%m-%d')
-            except ValueError:
-                logger.warning(f"Invalid date format: {game_date_str}")
-                return None
+            if 'T' in game_date_str:
+                game_date_str = game_date_str.split('T')[0]
+
+            game_date = None
+            for fmt in ('%m/%d/%Y', '%Y-%m-%d', '%Y%m%d'):
+                try:
+                    game_date_obj = datetime.strptime(game_date_str, fmt)
+                    game_date = game_date_obj.strftime('%Y-%m-%d')
+                    break
+                except ValueError:
+                    continue
+            if not game_date:
+                try:
+                    from dateutil import parser as dateutil_parser
+                    game_date = dateutil_parser.parse(game_date_str).strftime('%Y-%m-%d')
+                except Exception:
+                    logger.warning(f"Invalid date format: {game_date_str}")
+                    return None
             
             # Detect season type using NBA API fields
             game_type = self._detect_nba_season_type(raw_game)
@@ -666,14 +892,35 @@ class NBACollector(BaseCollector):
             
             # Extract game time
             game_time = None
-            if raw_game.get('gameTimeEst'):
+            game_time_utc = raw_game.get('gameTimeUTC') or raw_game.get('gameDateTimeUTC') or ''
+            game_status_str = raw_game.get('gameStatusText', '') or raw_game.get('gameStatus', '') or ''
+
+            if game_time_utc and 'T' in game_time_utc and game_time_utc.split('T')[1] != '00:00:00':
                 try:
-                    # Parse EST time and convert to UTC
-                    game_time_str = raw_game['gameTimeEst']
-                    # This is a simplified parsing - you might need more robust timezone handling
-                    game_time = datetime.strptime(f"{game_date} {game_time_str}", '%Y-%m-%d %H:%M:%S')
+                    from dateutil import parser as dtparser
+                    game_time_obj = dtparser.parse(game_time_utc)
+                    if game_time_obj.tzinfo is None:
+                        import pytz
+                        game_time_obj = pytz.UTC.localize(game_time_obj)
+                    game_time = game_time_obj
                 except:
                     pass
+
+            if not game_time and game_status_str:
+                import re
+                time_match = re.match(r'(\d{1,2}:\d{2}\s*(?:PM|AM)\s*(?:ET|EST|EDT))', game_status_str, re.IGNORECASE)
+                if time_match:
+                    try:
+                        from dateutil import parser as dtparser
+                        import pytz
+                        time_part = time_match.group(1).strip()
+                        time_part = re.sub(r'\s*(ET|EST|EDT)$', '', time_part, flags=re.IGNORECASE).strip()
+                        date_part = game_date if game_date else datetime.now().strftime('%Y-%m-%d')
+                        dt = dtparser.parse(f"{date_part} {time_part}")
+                        eastern = pytz.timezone('US/Eastern')
+                        game_time = eastern.localize(dt)
+                    except:
+                        pass
             
             return {
                 'league': 'NBA',
@@ -696,7 +943,7 @@ class NBACollector(BaseCollector):
                 'game_status': self.normalize_game_status(raw_game.get('gameStatus', 'scheduled')),
                 'current_period': raw_game.get('period', {}).get('current', ''),
                 'time_remaining': raw_game.get('clock', ''),
-                'is_final': raw_game.get('gameStatus', '') == 'Final',
+                'is_final': 'final' in str(raw_game.get('gameStatus', '')).lower() or 'final' in str(raw_game.get('gameStatusText', '')).lower(),
                 'is_overtime': raw_game.get('isOvertime', False),
                 'home_period_scores': home_period_scores,
                 'visitor_period_scores': visitor_period_scores,
@@ -723,8 +970,18 @@ class NBACollector(BaseCollector):
             home_team = raw_game.get('homeTeam', {})
             away_team = raw_game.get('awayTeam', {})
             
-            if not home_team or not away_team:
-                return None
+            # Check if teams are empty dicts or None
+            if not home_team or not away_team or (isinstance(home_team, dict) and not home_team) or (isinstance(away_team, dict) and not away_team):
+                # Try to get team data from other fields
+                home_team_id = raw_game.get('homeTeamId', '')
+                away_team_id = raw_game.get('awayTeamId', '')
+                if not home_team_id and not away_team_id:
+                    return None
+                # Create minimal team objects if we have IDs
+                if not home_team:
+                    home_team = {'teamId': home_team_id}
+                if not away_team:
+                    away_team = {'teamId': away_team_id}
             
             # Parse game time from UTC
             game_time_utc = raw_game.get('gameTimeUTC', '')
@@ -734,9 +991,16 @@ class NBACollector(BaseCollector):
             if game_time_utc:
                 try:
                     # Parse UTC time (format: '2025-11-05T03:00:00Z')
+                    import pytz
                     game_time_obj = parser.parse(game_time_utc)
-                    game_date = game_time_obj.date()
-                    game_time = game_time_obj
+                    # Ensure timezone-aware (assume UTC if not specified)
+                    if game_time_obj.tzinfo is None:
+                        game_time_obj = pytz.UTC.localize(game_time_obj)
+                    # Convert to Pacific time for date (NBA games are scheduled in Pacific/Eastern time)
+                    pacific_tz = pytz.timezone('US/Pacific')
+                    game_time_pacific = game_time_obj.astimezone(pacific_tz)
+                    game_date = game_time_pacific.date()  # Use Pacific date, not UTC date
+                    game_time = game_time_obj  # Keep original UTC time for storage
                 except:
                     pass
             
@@ -795,14 +1059,14 @@ class NBACollector(BaseCollector):
             
             # Determine if game is final
             game_status_text = raw_game.get('gameStatusText', '').strip().lower()
-            is_final = 'final' in game_status_text or game_status_text == ''
+            is_final = 'final' in game_status_text
             
             return {
                 'league': 'NBA',
                 'game_id': str(raw_game.get('gameId', '')),
                 'game_date': game_date.strftime('%Y-%m-%d'),
                 'game_time': game_time,
-                'game_type': 'regular',  # Could be enhanced to detect playoffs
+                'game_type': self._detect_nba_season_type(raw_game),
                 'home_team': home_team_name,
                 'home_team_abbrev': home_team_abbrev,
                 'home_team_id': home_team_id,
@@ -880,7 +1144,7 @@ class NBACollector(BaseCollector):
                 'league': 'NBA',
                 'game_id': str(raw_game[0]) if len(raw_game) > 0 else '',
                 'game_date': datetime.now().strftime('%Y-%m-%d'),
-                'game_type': 'regular',
+                'game_type': self._detect_nba_season_type({'gameId': str(raw_game[0]) if len(raw_game) > 0 else ''}),
                 'home_team': raw_game[6] if len(raw_game) > 6 else '',
                 'home_team_abbrev': raw_game[7] if len(raw_game) > 7 else '',
                 'home_team_id': str(raw_game[5]) if len(raw_game) > 5 else '',
@@ -901,24 +1165,30 @@ class NBACollector(BaseCollector):
             return None
     
     def _detect_nba_season_type(self, game_data: Dict[str, Any]) -> str:
-        """
-        Detect NBA season type using API fields.
-        
-        Args:
-            game_data: Raw game data from NBA API
-            
-        Returns:
-            Normalized game type
-        """
         game_label = game_data.get('gameLabel', '')
         game_subtype = game_data.get('gameSubtype', '')
-        
+
         if game_label == 'Preseason':
             return 'preseason'
         elif game_label == 'Emirates NBA Cup':
             return 'nba_cup'
-        else:
-            return 'regular'
+        elif 'playoff' in game_label.lower() or 'playoff' in game_subtype.lower():
+            return 'playoffs'
+
+        # Detect from game ID: 002=regular, 003=allstar, 004=playoffs, 005=playin
+        game_id = str(game_data.get('gameId', ''))
+        if len(game_id) >= 3:
+            prefix = game_id[:3]
+            if prefix == '004':
+                return 'playoffs'
+            elif prefix == '005':
+                return 'playoffs'
+            elif prefix == '003':
+                return 'allstar'
+            elif prefix == '001':
+                return 'preseason'
+
+        return 'regular'
     
     def _parse_period_scores(self, team_data: Dict[str, Any]) -> Dict[str, int]:
         """

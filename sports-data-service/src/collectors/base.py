@@ -80,6 +80,19 @@ class BaseCollector(ABC):
         """
         pass
     
+    def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
+        """
+        Get season phase dates (preseason, regular season, playoffs, etc.).
+
+        Args:
+            year: Season year. If None, uses current year.
+
+        Returns:
+            Dict with 'year', 'current_phase', and 'season_types' list,
+            or None if not supported by this collector.
+        """
+        return None
+
     def get_season_schedule(self, season: Optional[str] = None) -> List[Dict[str, Any]]:
         """
         Get full season schedule for the league.
@@ -159,8 +172,8 @@ class BaseCollector(ABC):
             Normalized game status
         """
         status_lower = status.lower().strip()
-        
-        if status_lower in ['final', 'completed', 'finished', 'off']:
+
+        if any(w in status_lower for w in ('final', 'completed', 'finished')):
             return 'final'
         elif status_lower in ['live', 'in progress', 'in_progress', 'active', 'halftime']:
             return 'in_progress'
