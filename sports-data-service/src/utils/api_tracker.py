@@ -40,7 +40,55 @@ class APITracker:
         max_requests = settings.get_max_requests_per_minute(league)
         current_requests = len(self.request_history[league])
         
-        return current_requests < max_requests
+        if current_requests >= max_requests:
+            return False
+
+        if league.upper() == 'WNBA':
+            now = time.time()
+            requests_last_second = sum(1 for t in self.request_history[league] if now - t < 1)
+            if requests_last_second >= settings.wnba_max_requests_per_second:
+                return False
+
+        return True
+
+    def can_make_budgeted_request(self, league: str, db: Optional[Session] = None) -> bool:
+        """
+        Check in-process rate limits plus configured paid API budgets.
+
+        Database-backed checks use ApiUsage so deployments and process restarts do
+        not reset paid API counters.
+        """
+        league = league.upper()
+        if not self.can_make_request(league):
+            return False
+
+        if db is None:
+            return self._can_make_in_memory_budgeted_request(league)
+
+        now = datetime.utcnow()
+        if league == 'NFL':
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            requests_today = self._count_requests_since(db, league, today_start)
+            if requests_today >= settings.nfl_max_requests_per_day:
+                logger.warning(
+                    "NFL daily API budget reached: %s/%s",
+                    requests_today,
+                    settings.nfl_max_requests_per_day,
+                )
+                return False
+
+        if league == 'WNBA':
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            requests_this_month = self._count_requests_since(db, league, month_start)
+            if requests_this_month >= settings.wnba_max_requests_per_month:
+                logger.warning(
+                    "WNBA monthly API budget reached: %s/%s",
+                    requests_this_month,
+                    settings.wnba_max_requests_per_month,
+                )
+                return False
+
+        return True
     
     def record_request(self, league: str, endpoint: str, success: bool = True, 
                       response_time_ms: Optional[int] = None, error_message: Optional[str] = None):
@@ -138,16 +186,19 @@ class APITracker:
         self._reset_monthly_usage_if_needed()
         
         stats = {}
-        for league in ['NBA', 'MLB', 'NHL', 'NFL', 'WNBA']:
+        for league in ['NBA', 'MLB', 'NHL', 'NFL', 'WNBA', 'MLS', 'IPL', 'MLC']:
             stats[league] = {
                 'requests_last_minute': len(self.request_history[league]),
                 'requests_today': self.daily_usage[league],
                 'requests_this_month': self.monthly_usage[league],
                 'max_per_minute': settings.get_max_requests_per_minute(league)
             }
-            # Add monthly limit if configured
             if league == 'NFL':
+                stats[league]['max_per_day'] = settings.nfl_max_requests_per_day
                 stats[league]['max_per_month'] = settings.nfl_max_requests_per_month
+            if league == 'WNBA':
+                stats[league]['max_per_month'] = settings.wnba_max_requests_per_month
+                stats[league]['max_per_second'] = settings.wnba_max_requests_per_second
         
         return stats
     
@@ -176,13 +227,32 @@ class APITracker:
         """
         self._reset_monthly_usage_if_needed()
         
-        # Only NFL has monthly limit configured
         if league == 'NFL':
             monthly_limit = settings.nfl_max_requests_per_month
             current_monthly = self.monthly_usage[league]
             return current_monthly < monthly_limit
+        if league == 'WNBA':
+            monthly_limit = settings.wnba_max_requests_per_month
+            current_monthly = self.monthly_usage[league]
+            return current_monthly < monthly_limit
         
         return True  # No monthly limit for other leagues
+
+    def _can_make_in_memory_budgeted_request(self, league: str) -> bool:
+        self._reset_daily_usage_if_needed()
+        self._reset_monthly_usage_if_needed()
+
+        if league == 'NFL':
+            return self.daily_usage[league] < settings.nfl_max_requests_per_day
+        if league == 'WNBA':
+            return self.monthly_usage[league] < settings.wnba_max_requests_per_month
+        return True
+
+    def _count_requests_since(self, db: Session, league: str, since: datetime) -> int:
+        return db.query(ApiUsage).filter(
+            ApiUsage.league == league,
+            ApiUsage.timestamp >= since,
+        ).count()
     
     def _cleanup_old_requests(self):
         """Remove requests older than 1 minute."""

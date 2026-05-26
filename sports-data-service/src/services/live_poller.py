@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db_session
 from ..models import Game
-from ..collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector
+from ..collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 from ..utils import AdaptivePollingManager, api_tracker
 
 logger = logging.getLogger(__name__)
@@ -27,6 +27,9 @@ class LivePoller:
             'NHL': NHLCollector(),
             'NFL': NFLCollector(),
             'WNBA': WNBACollector(),
+            'MLS': MLSCollector(),
+            'IPL': CricketCollector('IPL'),
+            'MLC': CricketCollector('MLC'),
         }
         self.polling_manager = AdaptivePollingManager()
         self.is_running = False
@@ -143,10 +146,11 @@ class LivePoller:
                         return 0
         
         # Check rate limits
-        if not api_tracker.can_make_request(league):
-            wait_time = api_tracker.get_wait_time(league)
-            logger.warning(f"Rate limit reached for {league}, waiting {wait_time:.1f}s")
-            return 0
+        with get_db_session() as db:
+            if not api_tracker.can_make_budgeted_request(league, db):
+                wait_time = api_tracker.get_wait_time(league)
+                logger.warning(f"Rate/budget limit reached for {league}, waiting {wait_time:.1f}s")
+                return 0
         
         # Check if we're in polling hours (unless forcing)
         if not force:
@@ -162,6 +166,8 @@ class LivePoller:
             
             # Record API usage
             api_tracker.record_request(league, 'live_scores', success=True)
+            with get_db_session() as db:
+                api_tracker.log_to_database(db, league, 'live_scores', success=True)
             
             # Update games in database
             updated_count = self._update_live_games(live_games, league)
@@ -172,6 +178,8 @@ class LivePoller:
         except Exception as e:
             logger.error(f"Error polling live scores for {league}: {e}")
             api_tracker.record_request(league, 'live_scores', success=False, error_message=str(e))
+            with get_db_session() as db:
+                api_tracker.log_to_database(db, league, 'live_scores', success=False, error_message=str(e))
             return 0
     
     def _update_live_games(self, live_games: List[Dict[str, Any]], league: str) -> int:

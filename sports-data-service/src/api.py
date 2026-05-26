@@ -11,13 +11,17 @@ from fastapi import FastAPI, Path, Query, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
 import pytz
+import logging
 
 from .database import get_db_session
 from .models import Game
 from .config import settings
 from .collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
+from .utils import api_tracker
 
 import time as _time
+
+logger = logging.getLogger(__name__)
 
 # Cache for collector responses: {cache_key: {'data': [...], 'timestamp': float}}
 _collector_cache: Dict[str, Any] = {}
@@ -30,7 +34,41 @@ def _get_cached_games(league: str, target_date, fetcher):
     cached = _collector_cache.get(cache_key)
     if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):
         return cached['data']
-    result = fetcher()
+    try:
+        with get_db_session() as db:
+            can_fetch = api_tracker.can_make_budgeted_request(league, db)
+    except Exception as exc:
+        logger.warning("Could not check persistent API budget for %s: %s", league, exc)
+        can_fetch = api_tracker.can_make_budgeted_request(league)
+
+    if not can_fetch:
+        logger.warning("Skipping %s collector fetch due to API budget/rate limit", league)
+        return []
+
+    started_at = _time.time()
+    success = True
+    error_message = None
+    try:
+        result = fetcher()
+    except Exception as exc:
+        success = False
+        error_message = str(exc)
+        raise
+    finally:
+        response_time_ms = int((_time.time() - started_at) * 1000)
+        api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
+        try:
+            with get_db_session() as db:
+                api_tracker.log_to_database(
+                    db,
+                    league,
+                    'api_collector',
+                    success=success,
+                    response_time_ms=response_time_ms,
+                    error_message=error_message,
+                )
+        except Exception as exc:
+            logger.warning("Could not persist API usage for %s: %s", league, exc)
     _collector_cache[cache_key] = {'data': result, 'timestamp': _time.time()}
     return result
 
@@ -83,7 +121,7 @@ def get_help_json() -> Dict[str, Any]:
                     "/curl/v1/schedules/{date} - All sports schedules",
                     "/curl/v1/schedule/{sport}/{date} - Single sport schedule"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
+                "sports": ["nba", "mlb", "mls", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
                 "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
                 "note": "Use 'all' as sport to get schedules for all sports"
             },
@@ -97,7 +135,7 @@ def get_help_json() -> Dict[str, Any]:
                     "/curl/v1/scores/{date} - All sports scores",
                     "/curl/v1/scores/{sport}/{date} - Single sport scores"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
+                "sports": ["nba", "mlb", "mls", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
                 "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
                 "note": "Use 'all' as sport to get scores for all sports"
             },
@@ -109,7 +147,7 @@ def get_help_json() -> Dict[str, Any]:
                 "curl": [
                     "/curl/v1/standings/{sport} - Single sport standings"
                 ],
-                "sports": ["nba", "mlb", "nfl", "nhl", "wnba"],
+                "sports": ["nba", "mlb", "mls", "nfl", "nhl", "wnba"],
                 "note": "Standings endpoint is currently under development"
             },
             "season_info": {
@@ -191,7 +229,7 @@ Season Info:
   Cached for 24 hours.
 
 SPORTS:
-  nba, mlb, nfl, nhl, wnba, ipl, mlc, all
+  nba, mlb, mls, nfl, nhl, wnba, ipl, mlc, all
 
   Use 'all' to get data for all sports combined
 
@@ -382,12 +420,13 @@ def get_help_html() -> str:
         </div>
         <div class="note">
             Returns year, current_phase, and season_types with start/end dates. Cached for 24 hours.<br>
-            <strong>Leagues:</strong> mlb, nba, nfl, nhl, wnba, ipl, mlc
+            <strong>Leagues:</strong> mlb, mls, nba, nfl, nhl, wnba, ipl, mlc
         </div>
 
         <h2>Sports</h2>
         <p>
             <span class="sport-list">mlb</span>
+            <span class="sport-list">mls</span>
             <span class="sport-list">nba</span>
             <span class="sport-list">nfl</span>
             <span class="sport-list">nhl</span>
@@ -2215,68 +2254,19 @@ def get_scores_curl_v1(
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
         
-        # Always try to get live scores first (for today's games, always use live data)
-        collector = get_collector(league)
-        game_objects = []
-        
-        if collector:
-            live_games = collector.get_live_scores(target_date)
-            if live_games:
-                # Convert dicts to Game-like objects for formatting
-                class GameWrapper:
-                    def __init__(self, data):
-                        for k, v in data.items():
-                            setattr(self, k, v)
-                
-                # Use a set to track game_ids and avoid duplicates
-                seen_game_ids = set()
-                for game_dict in live_games:
-                    game_id = game_dict.get('game_id', '')
-                    if game_id and game_id in seen_game_ids:
-                        continue  # Skip duplicates
-                    seen_game_ids.add(game_id)
-                    
-                    game_data = {
-                        'league': league,
-                        'game_id': game_id,
-                        'game_date': datetime.strptime(game_dict.get('game_date', ''), '%Y-%m-%d').date() if game_dict.get('game_date') else target_date,
-                        'home_team': game_dict.get('home_team', ''),
-                        'home_team_abbrev': game_dict.get('home_team_abbrev', ''),
-                        'visitor_team': game_dict.get('visitor_team', ''),
-                        'visitor_team_abbrev': game_dict.get('visitor_team_abbrev', ''),
-                        'home_score_total': int(game_dict.get('home_score_total', 0) or 0),
-                        'visitor_score_total': int(game_dict.get('visitor_score_total', 0) or 0),
-                        'game_status': game_dict.get('game_status', 'scheduled'),
-                        'current_period': game_dict.get('current_period', ''),
-                        'time_remaining': game_dict.get('time_remaining', ''),
-                        'is_final': game_dict.get('is_final', False),
-                        'game_type': game_dict.get('game_type', 'regular')
-                    }
-                    game_objects.append(GameWrapper(game_data))
-        
-        # If we have live games, use them (they're always more up-to-date)
-        if game_objects:
-            return format_scores_curl(game_objects, target_date, timezone)
+        games = _get_games_for_curl(league, target_date, timezone)
 
-        
-        # Fallback to database only if no live games
-        with get_db_session() as db:
-            games = db.query(Game).filter(
-                Game.league == league,
-                Game.game_date == target_date
-            ).all()
-            
-            # Deduplicate database games
-            seen_game_ids = set()
-            unique_games = []
-            for game in games:
-                if game.game_id and game.game_id not in seen_game_ids:
-                    seen_game_ids.add(game.game_id)
-                    unique_games.append(game)
-                elif not game.game_id:
-                    unique_games.append(game)
-            
-            return format_scores_curl(unique_games, target_date, timezone)
+        seen_game_ids = set()
+        unique_games = []
+        for game in games:
+            game_id = getattr(game, 'game_id', None) or getattr(game, 'gameId', None)
+            if game_id:
+                if game_id in seen_game_ids:
+                    continue
+                seen_game_ids.add(game_id)
+            unique_games.append(game)
+
+        return format_scores_curl(unique_games, target_date, timezone)
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

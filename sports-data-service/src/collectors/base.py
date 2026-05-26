@@ -232,6 +232,9 @@ class BaseCollector(ABC):
         Returns:
             Game model instance
         """
+        model_columns = set(Game.__table__.columns.keys())
+        game_data = {key: value for key, value in game_data.items() if key in model_columns}
+
         # Try to find existing game
         existing_game = db.query(Game).filter(
             Game.league == self.league,

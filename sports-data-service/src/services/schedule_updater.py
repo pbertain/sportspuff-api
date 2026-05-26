@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..config import settings
 from ..database import get_db_session
 from ..models import Game
-from ..collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector
+from ..collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 from ..utils import api_tracker
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,9 @@ class ScheduleUpdater:
             'NHL': NHLCollector(),
             'NFL': NFLCollector(),
             'WNBA': WNBACollector(),
+            'MLS': MLSCollector(),
+            'IPL': CricketCollector('IPL'),
+            'MLC': CricketCollector('MLC'),
         }
     
     def update_all_leagues(self, target_date: date = None) -> Dict[str, int]:
@@ -48,16 +51,19 @@ class ScheduleUpdater:
                 logger.info(f"Updating {league} schedule for {target_date}")
                 
                 # Check if we can make API requests
-                if not api_tracker.can_make_request(league):
-                    wait_time = api_tracker.get_wait_time(league)
-                    logger.warning(f"Rate limit reached for {league}, waiting {wait_time:.1f}s")
-                    continue
+                with get_db_session() as db:
+                    if not api_tracker.can_make_budgeted_request(league, db):
+                        wait_time = api_tracker.get_wait_time(league)
+                        logger.warning(f"Rate/budget limit reached for {league}, waiting {wait_time:.1f}s")
+                        continue
                 
                 # Fetch schedule
                 games = collector.get_schedule(target_date)
                 
                 # Record API usage
                 api_tracker.record_request(league, 'schedule', success=True)
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league, 'schedule', success=True)
                 
                 # Store games in database
                 stored_count = self._store_games(games, league)
@@ -68,6 +74,8 @@ class ScheduleUpdater:
             except Exception as e:
                 logger.error(f"Error updating {league} schedule: {e}")
                 api_tracker.record_request(league, 'schedule', success=False, error_message=str(e))
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league, 'schedule', success=False, error_message=str(e))
                 results[league] = 0
         
         return results
@@ -102,16 +110,19 @@ class ScheduleUpdater:
                 logger.info(f"Updating {league} schedule for {current_date}")
                 
                 # Check rate limits
-                if not api_tracker.can_make_request(league):
-                    wait_time = api_tracker.get_wait_time(league)
-                    logger.warning(f"Rate limit reached for {league}, waiting {wait_time:.1f}s")
-                    continue
+                with get_db_session() as db:
+                    if not api_tracker.can_make_budgeted_request(league, db):
+                        wait_time = api_tracker.get_wait_time(league)
+                        logger.warning(f"Rate/budget limit reached for {league}, waiting {wait_time:.1f}s")
+                        continue
                 
                 # Fetch schedule
                 games = collector.get_schedule(current_date)
                 
                 # Record API usage
                 api_tracker.record_request(league, 'schedule', success=True)
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league, 'schedule', success=True)
                 
                 # Store games in database
                 stored_count = self._store_games(games, league)
@@ -122,6 +133,8 @@ class ScheduleUpdater:
             except Exception as e:
                 logger.error(f"Error updating {league} schedule for {current_date}: {e}")
                 api_tracker.record_request(league, 'schedule', success=False, error_message=str(e))
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league, 'schedule', success=False, error_message=str(e))
                 continue
         
         logger.info(f"Updated {league}: {total_stored} total games stored")
@@ -229,17 +242,20 @@ class ScheduleUpdater:
                 logger.info(f"Fetching full season schedule for {league_name}")
                 
                 # Check rate limits
-                if not api_tracker.can_make_request(league_name):
-                    wait_time = api_tracker.get_wait_time(league_name)
-                    logger.warning(f"Rate limit reached for {league_name}, waiting {wait_time:.1f}s")
-                    results[league_name] = 0
-                    continue
+                with get_db_session() as db:
+                    if not api_tracker.can_make_budgeted_request(league_name, db):
+                        wait_time = api_tracker.get_wait_time(league_name)
+                        logger.warning(f"Rate/budget limit reached for {league_name}, waiting {wait_time:.1f}s")
+                        results[league_name] = 0
+                        continue
                 
                 # Fetch full season schedule
                 games = collector.get_season_schedule(season=season)
                 
                 # Record API usage
                 api_tracker.record_request(league_name, 'season_schedule', success=True)
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league_name, 'season_schedule', success=True)
                 
                 # Store games in database
                 stored_count = self._store_games(games, league_name)
@@ -250,6 +266,8 @@ class ScheduleUpdater:
             except Exception as e:
                 logger.error(f"Error updating {league_name} season schedule: {e}")
                 api_tracker.record_request(league_name, 'season_schedule', success=False, error_message=str(e))
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league_name, 'season_schedule', success=False, error_message=str(e))
                 results[league_name] = 0
         
         return results

@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     nhl_api_timeout: int = Field(default=10)
     nfl_api_timeout: int = Field(default=10)
     wnba_api_timeout: int = Field(default=10)
+    mls_api_timeout: int = Field(default=10)
+    ipl_api_timeout: int = Field(default=10)
+    mlc_api_timeout: int = Field(default=10)
     
     # Polling Configuration
     default_poll_interval: int = Field(default=120)  # 2 minutes
@@ -36,6 +39,9 @@ class Settings(BaseSettings):
     nhl_close_game_threshold: int = Field(default=2)
     mlb_close_game_threshold: int = Field(default=3)
     wnba_close_game_threshold: int = Field(default=10)
+    mls_close_game_threshold: int = Field(default=2)
+    ipl_close_game_threshold: int = Field(default=20)
+    mlc_close_game_threshold: int = Field(default=20)
     
     # Data retention
     max_season_size_mb: int = Field(default=10)
@@ -53,9 +59,15 @@ class Settings(BaseSettings):
     nhl_max_requests_per_minute: int = Field(default=60)
     nfl_max_requests_per_minute: int = Field(default=30)
     wnba_max_requests_per_minute: int = Field(default=60)
+    mls_max_requests_per_minute: int = Field(default=60)
+    ipl_max_requests_per_minute: int = Field(default=60)
+    mlc_max_requests_per_minute: int = Field(default=60)
     
-    # Monthly API Limits (for Tank01/RapidAPI)
+    # Paid API limits (for Tank01/RapidAPI)
+    nfl_max_requests_per_day: int = Field(default=1000, description="Daily included request limit for NFL API (Tank01/RapidAPI)")
     nfl_max_requests_per_month: int = Field(default=10000, description="Monthly limit for NFL API (Tank01/RapidAPI)")
+    wnba_max_requests_per_month: int = Field(default=14000, description="Monthly included request limit for WNBA API (RapidAPI)")
+    wnba_max_requests_per_second: int = Field(default=10, description="Per-second rate limit for WNBA API (RapidAPI)")
     
     # API Server
     api_host: str = Field(default="127.0.0.1")
@@ -103,6 +115,9 @@ class Settings(BaseSettings):
             "NHL": self.nhl_close_game_threshold,
             "MLB": self.mlb_close_game_threshold,
             "WNBA": self.wnba_close_game_threshold,
+            "MLS": self.mls_close_game_threshold,
+            "IPL": self.ipl_close_game_threshold,
+            "MLC": self.mlc_close_game_threshold,
         }
         return thresholds.get(league.upper(), self.nba_close_game_threshold)
     
@@ -114,6 +129,9 @@ class Settings(BaseSettings):
             "NHL": self.nhl_api_timeout,
             "NFL": self.nfl_api_timeout,
             "WNBA": self.wnba_api_timeout,
+            "MLS": self.mls_api_timeout,
+            "IPL": self.ipl_api_timeout,
+            "MLC": self.mlc_api_timeout,
         }
         return timeouts.get(league.upper(), 10)
     
@@ -125,6 +143,9 @@ class Settings(BaseSettings):
             "NHL": self.nhl_max_requests_per_minute,
             "NFL": self.nfl_max_requests_per_minute,
             "WNBA": self.wnba_max_requests_per_minute,
+            "MLS": self.mls_max_requests_per_minute,
+            "IPL": self.ipl_max_requests_per_minute,
+            "MLC": self.mlc_max_requests_per_minute,
         }
         return limits.get(league.upper(), 60)
 
