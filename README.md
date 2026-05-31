@@ -43,6 +43,7 @@ Before the first deployment, configure these secrets in your GitHub repository:
    - **SSH_PRIVATE_KEY**: Content of your SSH private key file (`~/.ssh/keys/nirdclub__id_ed25519`)
    - **HOST_IP**: Your server IP address
    - **POSTGRES_PASSWORD**: Your PostgreSQL password (generate with `openssl rand -base64 32`)
+   - **CRICAPI_KEY**: CricAPI key for IPL/MLC cricket data
 
 ### Manual Deployment
 
@@ -57,6 +58,7 @@ ansible-playbook \
   -e "deployment_env=prod" \
   -e "api_port=34180" \
   -e "vault_postgres_password=your-password" \
+  -e "vault_cricapi_key=your-cricapi-key" \
   ansible/deploy.yml
 
 # Development
@@ -67,6 +69,7 @@ ansible-playbook \
   -e "deployment_env=dev" \
   -e "api_port=34181" \
   -e "vault_postgres_password=your-password" \
+  -e "vault_cricapi_key=your-cricapi-key" \
   ansible/deploy.yml
 ```
 
@@ -103,6 +106,5 @@ See [sports-data-service/README.md](sports-data-service/README.md) for detailed 
 ## License
 
 MIT License - see [LICENSE](sports-data-service/LICENSE) file for details.
-
 
 
