@@ -71,17 +71,6 @@ kill_port_listeners() {
   return 1
 }
 
-# Stop all Docker containers first
-echo "=== Stopping Docker containers ==="
-# Stop all sports-data containers from any deployment
-sudo docker ps -aq --filter "name=sports-data" | while read container_id; do
-  if [ -n "$container_id" ]; then
-    echo "Stopping and removing container $container_id"
-    sudo docker stop "$container_id" 2>/dev/null || true
-    sudo docker rm -f "$container_id" 2>/dev/null || true
-  fi
-done || true
-
 # Try to stop containers from this specific deployment
 if [ -n "${DEPLOYMENT_DIR}" ] && [ -d "${DEPLOYMENT_DIR}/sports-data-service" ]; then
   echo "=== Stopping containers in ${DEPLOYMENT_DIR}/sports-data-service ==="
@@ -157,4 +146,3 @@ if command -v ss >/dev/null 2>&1; then
 fi
 
 echo "=== Cleanup complete ==="
-
