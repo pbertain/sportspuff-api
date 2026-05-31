@@ -3,7 +3,7 @@
 # Encrypt with: ansible-vault encrypt vault.yml
 
 vault_postgres_password: your-secure-password-here
+vault_cricapi_key: your-cricapi-key-here
 
 # Generate a secure password:
 # python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-

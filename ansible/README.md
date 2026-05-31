@@ -51,6 +51,10 @@ Go to your repository Settings → Secrets and variables → Actions, and add:
    - Name: `POSTGRES_PASSWORD`
    - Value: Your PostgreSQL password (e.g., generate with `openssl rand -base64 32`)
 
+3. **CRICAPI_KEY**
+   - Name: `CRICAPI_KEY`
+   - Value: Your CricAPI key for IPL/MLC cricket data
+
 ### 3. Server Preparation
 
 Ensure the following are installed on your server:
@@ -89,6 +93,7 @@ ansible-playbook \
   -e "deployment_env=prod" \
   -e "api_port=34180" \
   -e "vault_postgres_password=your-password" \
+  -e "vault_cricapi_key=your-cricapi-key" \
   deploy.yml
 
 # Development
@@ -97,6 +102,7 @@ ansible-playbook \
   -e "deployment_env=dev" \
   -e "api_port=34181" \
   -e "vault_postgres_password=your-password" \
+  -e "vault_cricapi_key=your-cricapi-key" \
   deploy.yml
 ```
 
