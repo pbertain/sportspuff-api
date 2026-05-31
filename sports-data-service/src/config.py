@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     
     # API Configuration
+    cricapi_key: str = Field(default="", description="CricAPI key for IPL/MLC cricket data")
     nba_api_timeout: int = Field(default=10)
     mlb_api_timeout: int = Field(default=10)
     nhl_api_timeout: int = Field(default=10)

@@ -436,7 +436,7 @@ def get_help_html() -> str:
             <span class="sport-list">all</span>
         </p>
         <p><strong>Note:</strong> Use <code>all</code> as the sport parameter to get data for all sports combined.
-           IPL and MLC data is provided by <a href="https://ipl.cloud-puff.net">CricketPuff</a>.</p>
+           IPL and MLC data is collected from CricAPI, with CricketPuff fallback support.</p>
         
         <h2>Date Formats</h2>
         <p>The <code>{date}</code> parameter accepts:</p>
@@ -2274,7 +2274,7 @@ def get_scores_curl_v1(
 
 @app.get("/api/v1/standings/{sport}")
 def get_standings_api_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, mls, all)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, mls, ipl, mlc, all)"),
 ):
     """Get standings in JSON format."""
     sport_lower = sport.lower()
@@ -2299,27 +2299,84 @@ def get_standings_api_v1(
                 })
             return {"sport": "mls", "teams": teams}
 
+    if sport_lower in ('ipl', 'mlc'):
+        collector = get_collector(SPORT_MAPPINGS[sport_lower])
+        if collector and hasattr(collector, 'get_standings'):
+            standings = collector.get_standings()
+            teams = []
+            for rec in standings:
+                teams.append({
+                    'rank': rec['rank'],
+                    'team_name': rec['team_name'],
+                    'abbreviation': rec['abbreviation'],
+                    'matches': rec['matches'],
+                    'wins': rec['wins'],
+                    'losses': rec['losses'],
+                    'no_result': rec['no_result'],
+                    'points': rec['points'],
+                    'nrr': rec['nrr'],
+                    'record': rec['record'],
+                })
+            return {"sport": sport_lower, "teams": teams}
+
     return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
 
 
 @app.get("/curl/v1/standings/{sport}", response_class=PlainTextResponse)
 def get_standings_curl_v1(
-    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, mls, ipl, mlc, all)"),
 ):
     """Get standings in curl-style text format."""
     sport_lower = sport.lower()
     
-    # Handle 'all' sport
     if sport_lower == 'all':
-        # TODO: Implement standings endpoint for all sports
-        return "Standings endpoint - TODO\nWhen implemented, this will return standings for all sports\n"
+        sports = ['ipl', 'mlc', 'mls']
+    else:
+        sports = [sport_lower]
     
-    # Validate single sport
-    if sport_lower not in SPORT_MAPPINGS:
+    if sport_lower not in SPORT_MAPPINGS and sport_lower != 'all':
         raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
-    
-    # TODO: Implement standings endpoint
-    return f"Standings endpoint - TODO\nSport: {sport}\n"
+
+    output = _format_curl_header(pytz.timezone('US/Pacific'), datetime.now().date(), "Here are the standings:")
+
+    for sport_name in sports:
+        if sport_name in ('ipl', 'mlc'):
+            collector = get_collector(SPORT_MAPPINGS[sport_name])
+            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+            output += f"{SPORT_MAPPINGS[sport_name]} [Standings]\n"
+            output += "-" * 45 + "\n"
+            if standings:
+                output += f"  {'#':>2} {'Team':<5} {'M':>2} {'W':>2} {'L':>2} {'NR':>2} {'Pts':>3} {'NRR':>7}\n"
+                output += f"  {'-' * 35}\n"
+                for rec in standings:
+                    output += (
+                        f"  {rec['rank']:>2} {rec['abbreviation']:<5} {rec['matches']:>2} "
+                        f"{rec['wins']:>2} {rec['losses']:>2} {rec['no_result']:>2} "
+                        f"{rec['points']:>3} {rec['nrr']:>7}\n"
+                    )
+            else:
+                output += "  No standings data available\n"
+            output += "\n"
+        elif sport_name == 'mls':
+            collector = get_collector('MLS')
+            standings = collector._fetch_standings() if collector else {}
+            output += "MLS [Standings]\n"
+            output += "-" * 45 + "\n"
+            if standings:
+                output += f"  {'Team':<5} {'W':>2} {'D':>2} {'L':>2} {'Pts':>3}\n"
+                output += f"  {'-' * 20}\n"
+                ordered = sorted(standings.items(), key=lambda x: -(x[1]['wins'] * 3 + x[1]['draws']))
+                for abbrev, rec in ordered:
+                    pts = rec['wins'] * 3 + rec['draws']
+                    output += f"  {abbrev:<5} {rec['wins']:>2} {rec['draws']:>2} {rec['losses']:>2} {pts:>3}\n"
+            else:
+                output += "  No standings data available\n"
+            output += "\n"
+        else:
+            output += f"{sport_name.upper()} standings endpoint - TODO\n\n"
+
+    output += _format_curl_footer(pytz.timezone('US/Pacific'))
+    return output
 
 
 # Season info cache: {league: {'data': ..., 'timestamp': float}}
