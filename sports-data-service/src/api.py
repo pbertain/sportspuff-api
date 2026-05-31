@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
 import pytz
 import logging
+import concurrent.futures
 
 from .database import get_db_session
 from .models import Game
@@ -1389,11 +1390,11 @@ def get_schedules_all_sports_api_v1(
     try:
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
-        result = {}
-
-        for sport_key, league in SPORT_MAPPINGS.items():
-            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
-            result[sport_key] = [_game_wrapper_to_dict(g, league) for g in games]
+        sport_games = _get_all_sport_games(target_date, timezone)
+        result = {
+            sport_key: [_game_wrapper_to_dict(g, SPORT_MAPPINGS[sport_key]) for g in games]
+            for sport_key, games in sport_games.items()
+        }
 
         return {
             "date": target_date.isoformat(),
@@ -1413,10 +1414,9 @@ def get_schedules_all_sports_curl_v1(
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
 
+        sport_games = _get_all_sport_games(target_date, timezone)
         all_games = []
-        for sport_key in SPORT_MAPPINGS.keys():
-            league = SPORT_MAPPINGS[sport_key]
-            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
+        for games in sport_games.values():
             all_games.extend(games)
 
         return format_schedule_curl(all_games, target_date, timezone)
@@ -1434,11 +1434,11 @@ def get_scores_all_sports_api_v1(
     try:
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
-        result = {}
-
-        for sport_key, league in SPORT_MAPPINGS.items():
-            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
-            result[sport_key] = [_game_wrapper_to_dict(g, league) for g in games]
+        sport_games = _get_all_sport_games(target_date, timezone)
+        result = {
+            sport_key: [_game_wrapper_to_dict(g, SPORT_MAPPINGS[sport_key]) for g in games]
+            for sport_key, games in sport_games.items()
+        }
 
         return {
             "date": target_date.isoformat(),
@@ -1458,10 +1458,9 @@ def get_scores_all_sports_curl_v1(
         timezone = get_timezone(tz)
         target_date = parse_date_param(date, timezone)
 
+        sport_games = _get_all_sport_games(target_date, timezone)
         all_games = []
-        for sport_key in SPORT_MAPPINGS.keys():
-            league = SPORT_MAPPINGS[sport_key]
-            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
+        for games in sport_games.values():
             all_games.extend(games)
 
         return format_scores_curl(all_games, target_date, timezone)
@@ -1483,12 +1482,11 @@ def get_schedule_api_v1(
         sport_lower = sport.lower()
 
         if sport_lower == 'all':
+            sport_games = _get_all_sport_games(target_date, timezone)
             all_games = []
-            for sport_key in SPORT_MAPPINGS.keys():
-                league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
+            for sport_key, games in sport_games.items():
                 for g in games:
-                    d = _game_wrapper_to_dict(g, league)
+                    d = _game_wrapper_to_dict(g, SPORT_MAPPINGS[sport_key])
                     d['sport'] = sport_key
                     all_games.append(d)
             all_games.sort(key=lambda x: x.get('game_time') or '')
@@ -2025,6 +2023,32 @@ def _get_games_for_curl(
     return games
 
 
+def _get_all_sport_games(target_date: date, timezone: pytz.BaseTzInfo) -> Dict[str, List[Any]]:
+    """Get all sports with DB-first reads and bounded parallel collector fallback."""
+    results: Dict[str, List[Any]] = {sport_key: [] for sport_key in SPORT_MAPPINGS}
+    max_workers = max(1, len(SPORT_MAPPINGS))
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
+    futures = {
+        executor.submit(_get_games_for_curl, league, target_date, timezone, True, True): sport_key
+        for sport_key, league in SPORT_MAPPINGS.items()
+    }
+
+    try:
+        for future in concurrent.futures.as_completed(futures, timeout=25):
+            sport_key = futures[future]
+            try:
+                results[sport_key] = future.result()
+            except Exception as exc:
+                logger.warning("Failed to fetch %s games for all-sports response: %s", sport_key, exc)
+    except concurrent.futures.TimeoutError:
+        pending = [sport for future, sport in futures.items() if not future.done()]
+        logger.warning("Timed out fetching all-sports data for: %s", ", ".join(pending))
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+    return results
+
+
 @app.get("/curl/v1/schedule/{sport}/{date}", response_class=PlainTextResponse)
 def get_schedule_curl_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
@@ -2040,10 +2064,9 @@ def get_schedule_curl_v1(
         
         # Handle 'all' sport - aggregate from all sports
         if sport_lower == 'all':
+            sport_games = _get_all_sport_games(target_date, timezone)
             all_games = []
-            for sport_key in SPORT_MAPPINGS.keys():
-                league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
+            for games in sport_games.values():
                 all_games.extend(games)
             
             return format_schedule_curl(all_games, target_date, timezone, show_all_sports=True)
@@ -2089,12 +2112,11 @@ def get_scores_api_v1(
         sport_lower = sport.lower()
 
         if sport_lower == 'all':
+            sport_games = _get_all_sport_games(target_date, timezone)
             all_scores = []
-            for sport_key in SPORT_MAPPINGS.keys():
-                league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
+            for sport_key, games in sport_games.items():
                 for g in games:
-                    d = _game_wrapper_to_dict(g, league)
+                    d = _game_wrapper_to_dict(g, SPORT_MAPPINGS[sport_key])
                     d['sport'] = sport_key
                     all_scores.append(d)
             return {"sport": "all", "date": target_date.isoformat(), "scores": all_scores}
@@ -2248,10 +2270,9 @@ def get_scores_curl_v1(
         
         # Handle 'all' sport - aggregate from all sports
         if sport_lower == 'all':
+            sport_games = _get_all_sport_games(target_date, timezone)
             all_games = []
-            for sport_key in SPORT_MAPPINGS.keys():
-                league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
+            for games in sport_games.values():
                 all_games.extend(games)
             
             return format_scores_curl(all_games, target_date, timezone, show_all_sports=True)
