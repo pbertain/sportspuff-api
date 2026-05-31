@@ -1392,7 +1392,7 @@ def get_schedules_all_sports_api_v1(
         result = {}
 
         for sport_key, league in SPORT_MAPPINGS.items():
-            games = _get_games_for_curl(league, target_date, timezone)
+            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
             result[sport_key] = [_game_wrapper_to_dict(g, league) for g in games]
 
         return {
@@ -1416,7 +1416,7 @@ def get_schedules_all_sports_curl_v1(
         all_games = []
         for sport_key in SPORT_MAPPINGS.keys():
             league = SPORT_MAPPINGS[sport_key]
-            games = _get_games_for_curl(league, target_date, timezone)
+            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
             all_games.extend(games)
 
         return format_schedule_curl(all_games, target_date, timezone)
@@ -1437,7 +1437,7 @@ def get_scores_all_sports_api_v1(
         result = {}
 
         for sport_key, league in SPORT_MAPPINGS.items():
-            games = _get_games_for_curl(league, target_date, timezone)
+            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
             result[sport_key] = [_game_wrapper_to_dict(g, league) for g in games]
 
         return {
@@ -1461,7 +1461,7 @@ def get_scores_all_sports_curl_v1(
         all_games = []
         for sport_key in SPORT_MAPPINGS.keys():
             league = SPORT_MAPPINGS[sport_key]
-            games = _get_games_for_curl(league, target_date, timezone)
+            games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
             all_games.extend(games)
 
         return format_scores_curl(all_games, target_date, timezone)
@@ -1486,7 +1486,7 @@ def get_schedule_api_v1(
             all_games = []
             for sport_key in SPORT_MAPPINGS.keys():
                 league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone)
+                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
                 for g in games:
                     d = _game_wrapper_to_dict(g, league)
                     d['sport'] = sport_key
@@ -1866,7 +1866,13 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
     return d
 
 
-def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInfo) -> List[Any]:
+def _get_games_for_curl(
+    league: str,
+    target_date: date,
+    timezone: pytz.BaseTzInfo,
+    prefer_db: bool = False,
+    allow_collector_fallback: bool = True,
+) -> List[Any]:
     """Helper function to get games for curl formatting (returns GameWrapper objects)."""
     games = []
 
@@ -1874,6 +1880,49 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
         def __init__(self, data):
             for k, v in data.items():
                 setattr(self, k, v)
+
+    def _append_db_games() -> None:
+        with get_db_session() as db:
+            db_games = db.query(Game).filter(
+                Game.league == league,
+                Game.game_date == target_date
+            ).order_by(Game.game_time).all()
+
+            for game in db_games:
+                if (not game.home_team or game.home_team.strip() == '') and (not game.home_team_abbrev or game.home_team_abbrev.strip() == ''):
+                    continue
+                if (not game.visitor_team or game.visitor_team.strip() == '') and (not game.visitor_team_abbrev or game.visitor_team_abbrev.strip() == ''):
+                    continue
+
+                game_data = {
+                    'league': game.league,
+                    'game_id': game.game_id,
+                    'game_date': game.game_date,
+                    'game_time': game.game_time,
+                    'game_type': game.game_type,
+                    'home_team': game.home_team,
+                    'home_team_abbrev': game.home_team_abbrev,
+                    'visitor_team': game.visitor_team,
+                    'visitor_team_abbrev': game.visitor_team_abbrev,
+                    'home_score_total': game.home_score_total or 0,
+                    'visitor_score_total': game.visitor_score_total or 0,
+                    'game_status': game.game_status,
+                    'current_period': game.current_period or '',
+                    'time_remaining': game.time_remaining or '',
+                    'is_final': game.is_final or False,
+                    'home_wins': game.home_wins or 0,
+                    'home_losses': game.home_losses or 0,
+                    'home_otl': getattr(game, 'home_otl', 0) or 0,
+                    'visitor_wins': game.visitor_wins or 0,
+                    'visitor_losses': game.visitor_losses or 0,
+                    'visitor_otl': getattr(game, 'visitor_otl', 0) or 0,
+                }
+                games.append(GameWrapper(game_data))
+
+    if prefer_db:
+        _append_db_games()
+        if games or not allow_collector_fallback:
+            return games
 
     collector = get_collector(league)
     if not collector:
@@ -1971,48 +2020,7 @@ def _get_games_for_curl(league: str, target_date: date, timezone: pytz.BaseTzInf
 
     # Fallback to database ONLY if no collector games were found
     if not games:
-        with get_db_session() as db:
-            db_games = db.query(Game).filter(
-                Game.league == league,
-                Game.game_date == target_date
-            ).order_by(Game.game_time).all()
-            
-            # Convert while session is still open
-            for game in db_games:
-                # Skip games with empty team names (both abbreviation and full name)
-                if (not game.home_team or game.home_team.strip() == '') and (not game.home_team_abbrev or game.home_team_abbrev.strip() == ''):
-                    continue
-                if (not game.visitor_team or game.visitor_team.strip() == '') and (not game.visitor_team_abbrev or game.visitor_team_abbrev.strip() == ''):
-                    continue
-                
-                # Ensure time_remaining is properly extracted
-                time_remaining = game.time_remaining or ''
-                current_period = game.current_period or ''
-                
-                game_data = {
-                    'league': game.league,
-                    'game_id': game.game_id,
-                    'game_date': game.game_date,
-                    'game_time': game.game_time,
-                    'game_type': game.game_type,
-                    'home_team': game.home_team,
-                    'home_team_abbrev': game.home_team_abbrev,
-                    'visitor_team': game.visitor_team,
-                    'visitor_team_abbrev': game.visitor_team_abbrev,
-                    'home_score_total': game.home_score_total or 0,
-                    'visitor_score_total': game.visitor_score_total or 0,
-                    'game_status': game.game_status,
-                    'current_period': current_period,
-                    'time_remaining': time_remaining,
-                    'is_final': game.is_final or False,
-                    'home_wins': game.home_wins or 0,
-                    'home_losses': game.home_losses or 0,
-                    'home_otl': getattr(game, 'home_otl', 0) or 0,
-                    'visitor_wins': game.visitor_wins or 0,
-                    'visitor_losses': game.visitor_losses or 0,
-                    'visitor_otl': getattr(game, 'visitor_otl', 0) or 0,
-                }
-                games.append(GameWrapper(game_data))
+        _append_db_games()
     
     return games
 
@@ -2035,7 +2043,7 @@ def get_schedule_curl_v1(
             all_games = []
             for sport_key in SPORT_MAPPINGS.keys():
                 league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone)
+                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
                 all_games.extend(games)
             
             return format_schedule_curl(all_games, target_date, timezone, show_all_sports=True)
@@ -2084,7 +2092,7 @@ def get_scores_api_v1(
             all_scores = []
             for sport_key in SPORT_MAPPINGS.keys():
                 league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone)
+                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
                 for g in games:
                     d = _game_wrapper_to_dict(g, league)
                     d['sport'] = sport_key
@@ -2243,7 +2251,7 @@ def get_scores_curl_v1(
             all_games = []
             for sport_key in SPORT_MAPPINGS.keys():
                 league = SPORT_MAPPINGS[sport_key]
-                games = _get_games_for_curl(league, target_date, timezone)
+                games = _get_games_for_curl(league, target_date, timezone, prefer_db=True, allow_collector_fallback=False)
                 all_games.extend(games)
             
             return format_scores_curl(all_games, target_date, timezone, show_all_sports=True)
