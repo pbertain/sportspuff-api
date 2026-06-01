@@ -211,11 +211,21 @@ class CricketCollector(BaseCollector):
 
     def _find_series(self, target_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
         def fetch():
-            data = self._cricapi_get("series", {"offset": 0, "search": self.config["search"]})
-            candidates = [
-                series for series in data.get("data", [])
-                if self.config["name_match"] in series.get("name", "").lower()
-            ]
+            candidates = []
+            seen_ids = set()
+            for offset in range(0, 100, 25):
+                data = self._cricapi_get("series", {"offset": offset, "search": self.config["search"]})
+                page = data.get("data", []) or []
+                for series in page:
+                    series_id = series.get("id")
+                    if series_id in seen_ids:
+                        continue
+                    if self.config["name_match"] in series.get("name", "").lower():
+                        candidates.append(series)
+                        seen_ids.add(series_id)
+                if len(page) < 25:
+                    break
+
             if not candidates:
                 return None
 
