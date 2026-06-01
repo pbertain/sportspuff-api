@@ -20,6 +20,9 @@ class Settings(BaseSettings):
     
     # API Configuration
     cricapi_key: str = Field(default="", description="CricAPI key for IPL/MLC cricket data")
+    cricapi_max_requests_per_day: int = Field(default=2000, description="Daily request limit for the shared CricAPI key (IPL/MLC)")
+    cricapi_usage_reserve: int = Field(default=200, description="Headroom left below the CricAPI daily limit for other consumers of the shared key")
+    cricapi_cache_dir: str = Field(default="", description="Directory for persisted CricAPI responses; defaults to <service>/cache/cricket")
     nba_api_timeout: int = Field(default=10)
     mlb_api_timeout: int = Field(default=10)
     nhl_api_timeout: int = Field(default=10)
