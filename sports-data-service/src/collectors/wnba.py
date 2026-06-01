@@ -23,6 +23,10 @@ class WNBACollector(BaseCollector):
         super().__init__("WNBA")
         self.api_key = os.environ.get('WNBA_API_KEY', '')
         self.base_url = "https://wnba-api.p.rapidapi.com"
+        self.standings_url = "https://site.api.espn.com/apis/v2/sports/basketball/wnba/standings"
+        self._standings_cache = []
+        self._standings_cache_time = None
+        self._standings_cache_ttl = 300
         self.headers = {
             "x-rapidapi-key": self.api_key,
             "x-rapidapi-host": "wnba-api.p.rapidapi.com",
@@ -65,6 +69,37 @@ class WNBACollector(BaseCollector):
 
     def get_live_scores(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         return self.get_schedule(date)
+
+    def get_standings(self) -> List[Dict[str, Any]]:
+        """Return WNBA standings from ESPN's public standings feed."""
+        if self._standings_cache_time and time.time() - self._standings_cache_time < self._standings_cache_ttl:
+            return self._standings_cache
+
+        try:
+            response = requests.get(self.standings_url, timeout=self.api_timeout)
+            if response.status_code != 200:
+                logger.warning(f"WNBA standings API returned status {response.status_code}")
+                return self._standings_cache
+
+            data = response.json()
+            records = []
+            for child in data.get('children', []):
+                conference = child.get('name', '')
+                entries = child.get('standings', {}).get('entries', [])
+                for entry in entries:
+                    record = self._parse_standings_entry(entry, conference)
+                    if record:
+                        records.append(record)
+
+            if records:
+                records.sort(key=lambda rec: (rec['rank'], -rec['wins'], rec['losses'], rec['team_name']))
+                self._standings_cache = records
+                self._standings_cache_time = time.time()
+
+            return self._standings_cache
+        except Exception as e:
+            logger.debug(f"Could not fetch WNBA standings: {e}")
+            return self._standings_cache
 
     def parse_game_data(self, raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
@@ -164,6 +199,43 @@ class WNBACollector(BaseCollector):
         except Exception as e:
             logger.error(f"Error parsing WNBA game data: {e}")
             return None
+
+    def _parse_standings_entry(self, entry: Dict[str, Any], conference: str) -> Optional[Dict[str, Any]]:
+        team = entry.get('team', {})
+        abbreviation = team.get('abbreviation', '')
+        if not abbreviation:
+            return None
+
+        stats = {}
+        records = {}
+        for stat in entry.get('stats', []):
+            name = stat.get('name') or stat.get('type')
+            if name:
+                stats[name] = stat
+            stat_type = stat.get('type')
+            if stat_type:
+                records[stat_type] = stat.get('summary') or stat.get('displayValue', '')
+
+        wins = int(stats.get('wins', {}).get('value', 0) or 0)
+        losses = int(stats.get('losses', {}).get('value', 0) or 0)
+        rank = int(stats.get('playoffSeed', {}).get('value', len(stats) + 1) or 0)
+        pct = stats.get('winPercent', {}).get('displayValue', '')
+        games_back = stats.get('gamesBehind', {}).get('displayValue', '')
+        streak = stats.get('streak', {}).get('displayValue', '')
+        record = records.get('total') or f"{wins}-{losses}"
+
+        return {
+            'rank': rank,
+            'team_name': team.get('displayName', ''),
+            'abbreviation': abbreviation,
+            'conference': conference,
+            'wins': wins,
+            'losses': losses,
+            'win_pct': pct,
+            'games_back': games_back,
+            'streak': streak,
+            'record': record,
+        }
 
     def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
         if year is None:

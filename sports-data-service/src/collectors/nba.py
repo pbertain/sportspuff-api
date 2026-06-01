@@ -36,6 +36,10 @@ class NBACollector(BaseCollector):
     
     def __init__(self):
         super().__init__("NBA")
+        self.standings_url = "https://site.api.espn.com/apis/v2/sports/basketball/nba/standings"
+        self._standings_cache = []
+        self._standings_cache_time = None
+        self._standings_cache_ttl = 300
         self.timeout_handler = None
         # Custom headers for NBA API - NBA.com may block requests without proper headers
         self.nba_headers = {
@@ -49,6 +53,69 @@ class NBACollector(BaseCollector):
         self.proxy_config = get_proxy_config()
         if self.proxy_config:
             logger.info("Using proxy for NBA API requests")
+
+    def get_standings(self) -> List[Dict[str, Any]]:
+        """Return NBA standings from ESPN's public standings feed."""
+        if self._standings_cache_time and time.time() - self._standings_cache_time < self._standings_cache_ttl:
+            return self._standings_cache
+
+        try:
+            response = requests.get(self.standings_url, timeout=self.api_timeout)
+            if response.status_code != 200:
+                logger.warning(f"NBA standings API returned status {response.status_code}")
+                return self._standings_cache
+
+            records = []
+            data = response.json()
+            for child in data.get('children', []):
+                conference = child.get('name', '')
+                for entry in child.get('standings', {}).get('entries', []):
+                    record = self._parse_standings_entry(entry, conference)
+                    if record:
+                        records.append(record)
+
+            if records:
+                records.sort(key=lambda rec: (rec['rank'], -rec['wins'], rec['losses'], rec['team_name']))
+                self._standings_cache = records
+                self._standings_cache_time = time.time()
+
+            return self._standings_cache
+        except Exception as e:
+            logger.debug(f"Could not fetch NBA standings: {e}")
+            return self._standings_cache
+
+    def _parse_standings_entry(self, entry: Dict[str, Any], conference: str) -> Optional[Dict[str, Any]]:
+        team = entry.get('team', {})
+        abbreviation = team.get('abbreviation', '')
+        if not abbreviation:
+            return None
+
+        stats = {}
+        records = {}
+        for stat in entry.get('stats', []):
+            name = stat.get('name') or stat.get('type')
+            if name:
+                stats[name] = stat
+            stat_type = stat.get('type')
+            if stat_type:
+                records[stat_type] = stat.get('summary') or stat.get('displayValue', '')
+
+        wins = int(stats.get('wins', {}).get('value', 0) or 0)
+        losses = int(stats.get('losses', {}).get('value', 0) or 0)
+        rank = int(stats.get('playoffSeed', {}).get('value', len(stats) + 1) or 0)
+
+        return {
+            'rank': rank,
+            'team_name': team.get('displayName', ''),
+            'abbreviation': abbreviation,
+            'conference': conference,
+            'wins': wins,
+            'losses': losses,
+            'win_pct': stats.get('winPercent', {}).get('displayValue', ''),
+            'games_back': stats.get('gamesBehind', {}).get('displayValue', ''),
+            'streak': stats.get('streak', {}).get('displayValue', ''),
+            'record': records.get('total') or f"{wins}-{losses}",
+        }
     
     def _timeout_handler(self, signum, frame):
         """Handle timeout for NBA API calls."""

@@ -22,12 +22,79 @@ class NHLCollector(BaseCollector):
         # Stats API endpoint - using main API instead of deprecated statsapi.web.nhl.com
         # Team records are optional - if this fails, we'll just use 0-0-0 records
         self.stats_api_url = "https://api-web.nhle.com/v1/standings/now"
+        self._standings_cache = []
+        self._standings_list_cache_time = None
         self._team_records_cache = {}  # Cache team records: {team_id: {'wins': int, 'losses': int, 'ot': int}}
         self._standings_cache_time = None
         self._standings_cache_ttl = 3600  # Cache standings for 1 hour
         self._playoff_series_cache = {}  # {(home_id, away_id): {'home_wins': int, 'away_wins': int}}
         self._playoff_series_cache_time = None
         self._playoff_series_cache_ttl = 300
+
+    def get_standings(self) -> List[Dict[str, Any]]:
+        """Return NHL standings from the NHL Web API."""
+        if self._standings_list_cache_time and time.time() - self._standings_list_cache_time < self._standings_cache_ttl:
+            return self._standings_cache
+
+        try:
+            response = requests.get(self.stats_api_url, timeout=self.api_timeout)
+            if response.status_code != 200:
+                logger.warning(f"NHL standings API returned status {response.status_code}")
+                return self._standings_cache
+
+            data = response.json()
+            records = []
+            for team_standing in data.get('standings', []):
+                record = self._parse_standings_entry(team_standing)
+                if record:
+                    records.append(record)
+
+            if records:
+                records.sort(key=lambda rec: (rec['rank'], -rec['points'], -rec['wins'], rec['losses'], rec['team_name']))
+                self._standings_cache = records
+                self._standings_list_cache_time = time.time()
+
+            return self._standings_cache
+        except Exception as e:
+            logger.debug(f"Could not fetch NHL standings: {e}")
+            return self._standings_cache
+
+    def _parse_standings_entry(self, team_standing: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        team_abbrev = team_standing.get('teamAbbrev', {})
+        if isinstance(team_abbrev, dict):
+            abbreviation = team_abbrev.get('default', '')
+        else:
+            abbreviation = str(team_abbrev or '')
+
+        if not abbreviation:
+            return None
+
+        team_name = team_standing.get('teamName', {})
+        if isinstance(team_name, dict):
+            team_name = team_name.get('default', abbreviation)
+        else:
+            team_name = str(team_name or abbreviation)
+
+        wins = int(team_standing.get('wins', 0) or 0)
+        losses = int(team_standing.get('losses', 0) or 0)
+        ot = int(team_standing.get('otLosses', 0) or 0)
+        points = int(team_standing.get('points', 0) or 0)
+
+        return {
+            'rank': int(team_standing.get('leagueSequence', 0) or 0),
+            'team_name': team_name,
+            'abbreviation': abbreviation,
+            'conference': team_standing.get('conferenceName', ''),
+            'division': team_standing.get('divisionName', ''),
+            'wins': wins,
+            'losses': losses,
+            'ot': ot,
+            'points': points,
+            'win_pct': str(team_standing.get('pointPctg', '')),
+            'games_back': str(team_standing.get('leagueHomeSequence', '')),
+            'streak': team_standing.get('streakCode', ''),
+            'record': f"{wins}-{losses}-{ot}",
+        }
     
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
