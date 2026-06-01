@@ -2360,23 +2360,22 @@ def get_standings_api_v1(
 
     if sport_lower in ('ipl', 'mlc'):
         collector = get_collector(SPORT_MAPPINGS[sport_lower])
-        if collector and hasattr(collector, 'get_standings'):
-            standings = collector.get_standings()
-            teams = []
-            for rec in standings:
-                teams.append({
-                    'rank': rec['rank'],
-                    'team_name': rec['team_name'],
-                    'abbreviation': rec['abbreviation'],
-                    'matches': rec['matches'],
-                    'wins': rec['wins'],
-                    'losses': rec['losses'],
-                    'no_result': rec['no_result'],
-                    'points': rec['points'],
-                    'nrr': rec['nrr'],
-                    'record': rec['record'],
-                })
-            return {"sport": sport_lower, "teams": teams}
+        standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+        teams = []
+        for rec in standings:
+            teams.append({
+                'rank': rec['rank'],
+                'team_name': rec['team_name'],
+                'abbreviation': rec['abbreviation'],
+                'matches': rec['matches'],
+                'wins': rec['wins'],
+                'losses': rec['losses'],
+                'no_result': rec['no_result'],
+                'points': rec['points'],
+                'nrr': rec['nrr'],
+                'record': rec['record'],
+            })
+        return {"sport": sport_lower, "teams": teams, "available": bool(teams)}
 
     if sport_lower in ('nba', 'mlb', 'nfl', 'nhl', 'wnba'):
         collector = get_collector(SPORT_MAPPINGS[sport_lower])
