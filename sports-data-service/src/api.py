@@ -2348,6 +2348,28 @@ def get_standings_api_v1(
                 })
             return {"sport": sport_lower, "teams": teams}
 
+    if sport_lower in ('nba', 'mlb', 'nfl', 'nhl', 'wnba'):
+        collector = get_collector(SPORT_MAPPINGS[sport_lower])
+        standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+        teams = []
+        for rec in standings:
+            team = {
+                'rank': rec['rank'],
+                'team_name': rec['team_name'],
+                'abbreviation': rec['abbreviation'],
+                'wins': rec['wins'],
+                'losses': rec['losses'],
+                'win_pct': rec['win_pct'],
+                'games_back': rec['games_back'],
+                'streak': rec['streak'],
+                'record': rec['record'],
+            }
+            for optional_key in ('conference', 'division', 'ties', 'ot', 'points'):
+                if optional_key in rec:
+                    team[optional_key] = rec[optional_key]
+            teams.append(team)
+        return {"sport": sport_lower, "teams": teams}
+
     return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
 
 
@@ -2359,7 +2381,7 @@ def get_standings_curl_v1(
     sport_lower = sport.lower()
     
     if sport_lower == 'all':
-        sports = ['ipl', 'mlc', 'mls']
+        sports = ['ipl', 'mlb', 'mlc', 'mls', 'nba', 'nfl', 'nhl', 'wnba']
     else:
         sports = [sport_lower]
     
@@ -2398,6 +2420,44 @@ def get_standings_curl_v1(
                 for abbrev, rec in ordered:
                     pts = rec['wins'] * 3 + rec['draws']
                     output += f"  {abbrev:<5} {rec['wins']:>2} {rec['draws']:>2} {rec['losses']:>2} {pts:>3}\n"
+            else:
+                output += "  No standings data available\n"
+            output += "\n"
+        elif sport_name in ('nba', 'mlb', 'nfl', 'nhl', 'wnba'):
+            league = SPORT_MAPPINGS[sport_name]
+            collector = get_collector(league)
+            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+            output += f"{league} [Standings]\n"
+            output += "-" * 45 + "\n"
+            if standings:
+                if sport_name == 'nhl':
+                    output += f"  {'#':>2} {'Team':<5} {'W':>2} {'L':>2} {'OT':>2} {'Pts':>3} {'STRK':>4}\n"
+                    output += f"  {'-' * 34}\n"
+                elif sport_name == 'nfl':
+                    output += f"  {'#':>2} {'Team':<5} {'W':>2} {'L':>2} {'T':>2} {'PCT':>5} {'STRK':>4}\n"
+                    output += f"  {'-' * 35}\n"
+                else:
+                    output += f"  {'#':>2} {'Team':<5} {'W':>2} {'L':>2} {'PCT':>5} {'GB':>4} {'STRK':>4}\n"
+                    output += f"  {'-' * 34}\n"
+                for rec in standings:
+                    if sport_name == 'nhl':
+                        output += (
+                            f"  {rec['rank']:>2} {rec['abbreviation']:<5} {rec['wins']:>2} "
+                            f"{rec['losses']:>2} {rec.get('ot', 0):>2} {rec.get('points', 0):>3} "
+                            f"{rec['streak']:>4}\n"
+                        )
+                    elif sport_name == 'nfl':
+                        output += (
+                            f"  {rec['rank']:>2} {rec['abbreviation']:<5} {rec['wins']:>2} "
+                            f"{rec['losses']:>2} {rec.get('ties', 0):>2} {rec['win_pct']:>5} "
+                            f"{rec['streak']:>4}\n"
+                        )
+                    else:
+                        output += (
+                            f"  {rec['rank']:>2} {rec['abbreviation']:<5} {rec['wins']:>2} "
+                            f"{rec['losses']:>2} {rec['win_pct']:>5} {rec['games_back']:>4} "
+                            f"{rec['streak']:>4}\n"
+                        )
             else:
                 output += "  No standings data available\n"
             output += "\n"
