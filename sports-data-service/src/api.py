@@ -29,9 +29,9 @@ _collector_cache: Dict[str, Any] = {}
 _COLLECTOR_CACHE_TTL = 300  # 5 minutes
 
 
-def _get_cached_games(league: str, target_date, fetcher):
+def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""):
     """Fetch games with 5-minute caching."""
-    cache_key = f"{league}:{target_date.isoformat()}"
+    cache_key = f"{league}:{target_date.isoformat()}:{cache_context}"
     cached = _collector_cache.get(cache_key)
     if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):
         return cached['data']
@@ -87,6 +87,10 @@ def get_collector(league: str):
         'MLS': MLSCollector(),
     }
     return collectors.get(league)
+
+def set_collector_timezone(collector, timezone: pytz.BaseTzInfo) -> None:
+    if collector and hasattr(collector, 'set_timezone'):
+        collector.set_timezone(timezone)
 
 app = FastAPI(
     title="Sports Data Service API",
@@ -876,9 +880,14 @@ def _format_cricket_game(game, tz):
         else:
             return f" {away_abbrev} @ {home_abbrev} LIVE"
     else:
+        local_str = start_time.get('local', '')
         pt_str = start_time.get('pt', '')
         ist_str = start_time.get('ist', '')
-        if pt_str and ist_str:
+        if local_str and ist_str and local_str != ist_str:
+            time_str = f"{local_str}/{ist_str}"
+        elif local_str:
+            time_str = local_str
+        elif pt_str and ist_str:
             time_str = f"{pt_str}/{ist_str}"
         elif pt_str:
             time_str = pt_str
@@ -1512,6 +1521,7 @@ def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.Base
     games_list = []
     
     collector = get_collector(league)
+    set_collector_timezone(collector, timezone)
     
     # For today's games, try to get live data first
     # But only use live_scores if we actually have games for today
@@ -1923,8 +1933,10 @@ def _get_games_for_curl(
             return games
 
     collector = get_collector(league)
+    set_collector_timezone(collector, pytz.timezone('US/Pacific'))
     if not collector:
         return games
+    set_collector_timezone(collector, timezone)
 
     now_tz = datetime.now(timezone)
     today = now_tz.date()
@@ -1943,7 +1955,7 @@ def _get_games_for_curl(
                 return []
         return raw
 
-    raw_games = _get_cached_games(league, target_date, _fetch)
+    raw_games = _get_cached_games(league, target_date, _fetch, getattr(timezone, 'zone', str(timezone)))
 
     if raw_games:
         seen_game_ids = set()
@@ -2594,6 +2606,7 @@ def debug_schedule_data(
         collector_data = []
         raw_api_team_data = []  # For NHL, show raw team structure
         if collector:
+            set_collector_timezone(collector, timezone)
             collector_data = collector.get_schedule(target_date)
             # For NHL, also get raw API response to inspect team structure
             if sport_lower == 'nhl' and collector_data:
