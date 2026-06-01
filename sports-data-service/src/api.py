@@ -2595,6 +2595,23 @@ def get_season_info(
     return result
 
 
+@app.get("/api/v1/cricket/{league}/season")
+def get_cricket_season(
+    league: str = Path(..., description="Cricket league (ipl, mlc)"),
+):
+    """Full enriched season feed (every match with raw per-inning scores,
+    standings, and CricAPI usage). Lets CricketPuff source its schedule cache
+    from here instead of calling CricAPI directly."""
+    league_lower = league.lower()
+    if league_lower not in ('ipl', 'mlc'):
+        raise HTTPException(status_code=400, detail=f"Invalid cricket league: {league}")
+
+    collector = get_collector(SPORT_MAPPINGS[league_lower])
+    if not collector:
+        raise HTTPException(status_code=503, detail="Cricket collector unavailable")
+    return collector.get_season()
+
+
 @app.get("/health")
 def health_check():
     """Health check endpoint."""

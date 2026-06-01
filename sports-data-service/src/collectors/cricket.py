@@ -229,6 +229,37 @@ class CricketCollector(BaseCollector):
             rec["rank"] = rank
         return ordered
 
+    def get_season(self) -> Dict[str, Any]:
+        """Return the full enriched season: every match with raw per-inning
+        scores, plus derived standings and current CricAPI usage. This is the
+        single-source feed CricketPuff consumes so it no longer hits CricAPI."""
+        series = self._find_series()
+        matches = self._get_cricapi_matches() if self.cricapi_key else []
+
+        standings = self._calculate_standings(matches) if matches else {}
+        ordered = sorted(
+            standings.values(),
+            key=lambda rec: (rec["points"], rec["nrr_value"]),
+            reverse=True,
+        )
+        for rank, rec in enumerate(ordered, 1):
+            rec["rank"] = rank
+
+        hits_today = _cricapi_usage["hits_today"]
+        return {
+            "league": self.league,
+            "series_id": series.get("id", "") if series else "",
+            "series_name": series.get("name", "") if series else "",
+            "matches": matches,
+            "standings": ordered,
+            "api_stats": {
+                "hits_today": hits_today,
+                "hits_used": hits_today,
+                "hits_limit": _cricapi_usage["hits_limit"] or self._usage_limit(),
+                "date": _cricapi_usage["date"],
+            },
+        }
+
     def _cricapi_get(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
         self._enforce_usage_budget()
         params = dict(params)
