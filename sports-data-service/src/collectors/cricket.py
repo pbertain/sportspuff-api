@@ -104,11 +104,19 @@ class CricketCollector(BaseCollector):
                 target_date = date or datetime.now(self.timezone).date()
                 matches = self._get_cricapi_matches(target_date)
                 standings = self._calculate_standings(matches)
-                return [
+                cricapi_games = [
                     self._parse_cricapi_match(m, standings)
                     for m in matches
                     if self._match_date(m) == target_date
                 ]
+                if not cricapi_games:
+                    current_matches = self._get_current_cricapi_matches(target_date)
+                    if current_matches:
+                        standings = self._calculate_standings(matches + current_matches)
+                        cricapi_games = [self._parse_cricapi_match(m, standings) for m in current_matches]
+                if cricapi_games:
+                    return cricapi_games
+                logger.info("No %s matches found from CricAPI for %s; trying CricketPuff fallback", self.league, target_date)
             except Exception as e:
                 logger.error(f"Error fetching {self.league} schedule from CricAPI: {e}")
 
@@ -132,11 +140,19 @@ class CricketCollector(BaseCollector):
                 target_date = date or datetime.now(self.timezone).date()
                 matches = self._get_cricapi_matches(target_date)
                 standings = self._calculate_standings(matches)
-                return [
+                cricapi_games = [
                     self._parse_cricapi_match(m, standings)
                     for m in matches
                     if self._match_date(m) == target_date
                 ]
+                if not cricapi_games:
+                    current_matches = self._get_current_cricapi_matches(target_date)
+                    if current_matches:
+                        standings = self._calculate_standings(matches + current_matches)
+                        cricapi_games = [self._parse_cricapi_match(m, standings) for m in current_matches]
+                if cricapi_games:
+                    return cricapi_games
+                logger.info("No %s scores found from CricAPI for %s; trying CricketPuff fallback", self.league, target_date)
             except Exception as e:
                 logger.error(f"Error fetching {self.league} scores from CricAPI: {e}")
 
@@ -290,6 +306,26 @@ class CricketCollector(BaseCollector):
             else:
                 current_no += 1
         return enriched
+
+    def _get_current_cricapi_matches(self, target_date: date) -> List[Dict[str, Any]]:
+        try:
+            series = self._find_series(target_date)
+            series_id = series.get("id") if series else ""
+            data = self._cricapi_get("currentMatches", {"offset": 0})
+            matches = []
+            known_teams = set(self.config["teams"].keys()) | set(self.config.get("aliases", {}).keys())
+            for raw in data.get("data", []) or []:
+                match = dict(raw)
+                teams = [self._canonical(team) for team in match.get("teams", [])]
+                same_series = bool(series_id and match.get("series_id") == series_id)
+                has_known_team = any(team in known_teams for team in teams)
+                if (same_series or has_known_team) and self._match_date(match) == target_date:
+                    self._assign_home_away(match)
+                    matches.append(match)
+            return matches
+        except Exception as e:
+            logger.debug("Could not fetch current %s matches from CricAPI: %s", self.league, e)
+            return []
 
     def _series_date(self, value: Any) -> Optional[date]:
         if not value:
