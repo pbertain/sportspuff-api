@@ -5,7 +5,7 @@ Uses the ESPN undocumented API.
 
 import requests
 import pytz
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Dict, List, Optional, Any
 import logging
 
@@ -187,25 +187,45 @@ class MLSCollector(BaseCollector):
             if response.status_code == 200:
                 data = response.json()
                 calendar = data.get('leagues', [{}])[0].get('calendar', [])
-                if calendar:
-                    start_date = min(calendar)[:10] if calendar else None
-                    end_date = max(calendar)[:10] if calendar else None
-                    if start_date and end_date:
-                        today = datetime.now().strftime('%Y-%m-%d')
-                        current_phase = 'Off Season'
-                        if start_date <= today <= end_date:
-                            current_phase = 'Regular Season'
-                        return {
-                            'year': year,
-                            'current_phase': current_phase,
-                            'season_types': [
-                                {'name': 'Regular Season', 'start_date': start_date, 'end_date': end_date},
-                            ],
-                        }
+                match_days = sorted({c[:10] for c in calendar if c})
+                if match_days:
+                    today = datetime.now().strftime('%Y-%m-%d')
+                    season_types = self._build_season_segments(match_days)
+                    current_phase = 'Off Season'
+                    for t in season_types:
+                        if t['start_date'] <= today <= t['end_date']:
+                            current_phase = t['name']
+                    return {
+                        'year': year,
+                        'current_phase': current_phase,
+                        'season_types': season_types,
+                    }
             return None
         except Exception as e:
             logger.error(f"Error fetching MLS season info: {e}")
             return None
+
+    def _build_season_segments(self, match_days):
+        """Split the season around its longest mid-season gap (the FIFA World Cup break)."""
+        days = [datetime.strptime(d, '%Y-%m-%d').date() for d in match_days]
+        gap_idx = None
+        gap_len = timedelta(0)
+        for i in range(1, len(days)):
+            delta = days[i] - days[i - 1]
+            if delta > gap_len:
+                gap_len = delta
+                gap_idx = i
+        if gap_idx is not None and gap_len >= timedelta(days=21):
+            return [
+                {'name': 'Regular Season', 'start_date': match_days[0], 'end_date': match_days[gap_idx - 1]},
+                {
+                    'name': 'FIFA World Cup Break',
+                    'start_date': (days[gap_idx - 1] + timedelta(days=1)).isoformat(),
+                    'end_date': (days[gap_idx] - timedelta(days=1)).isoformat(),
+                },
+                {'name': 'Regular Season', 'start_date': match_days[gap_idx], 'end_date': match_days[-1]},
+            ]
+        return [{'name': 'Regular Season', 'start_date': match_days[0], 'end_date': match_days[-1]}]
 
     def _parse_record(self, record_str: str):
         """Parse W-D-L or W-L-D record string. Returns (wins, losses, draws)."""

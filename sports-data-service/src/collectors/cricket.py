@@ -7,6 +7,8 @@ fallback so older deployments keep working while credentials are rolled out.
 
 import requests
 import re
+import os
+import json
 import time
 from datetime import datetime, date, timedelta, timezone
 from typing import Dict, List, Optional, Any
@@ -82,6 +84,19 @@ LEAGUE_CONFIGS = {
 
 _cricapi_cache: Dict[str, Dict[str, Any]] = {}
 _CRICAPI_CACHE_TTL = 900
+_MATCH_INFO_TTL = 86400  # ended-match details don't change; keep for a day
+_DEFAULT_CACHE_DIR = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "cache", "cricket"
+)
+
+# Latest CricAPI account usage, read from each response's "info" block. CricAPI
+# reports account-wide hits, so this reflects the quota shared with other apps.
+_cricapi_usage: Dict[str, Any] = {"hits_today": 0, "hits_limit": None, "date": None}
+_usage_loaded = False
+
+
+class CricAPIBudgetExceeded(Exception):
+    """Raised when the shared CricAPI daily quota is (near) exhausted."""
 
 
 class CricketCollector(BaseCollector):
@@ -199,7 +214,11 @@ class CricketCollector(BaseCollector):
         if not self.cricapi_key:
             return []
 
-        matches = self._get_cricapi_matches()
+        try:
+            matches = self._get_cricapi_matches()
+        except Exception as e:
+            logger.error(f"Error fetching {self.league} standings from CricAPI: {e}")
+            return []
         standings = self._calculate_standings(matches)
         ordered = sorted(
             standings.values(),
@@ -211,24 +230,126 @@ class CricketCollector(BaseCollector):
         return ordered
 
     def _cricapi_get(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
+        self._enforce_usage_budget()
         params = dict(params)
         params["apikey"] = self.cricapi_key
         response = requests.get(f"{CRICAPI_BASE}/{endpoint}", params=params, timeout=self.api_timeout)
         response.raise_for_status()
-        return response.json()
+        data = response.json()
+        self._track_usage(data)
+        return data
 
-    def _cached(self, key: str, fetcher):
-        cached = _cricapi_cache.get(key)
-        if cached and time.time() - cached["timestamp"] < _CRICAPI_CACHE_TTL:
-            return cached["data"]
+    def _track_usage(self, data: Dict[str, Any]) -> None:
+        info = data.get("info") or {}
+        if "hitsToday" in info:
+            _cricapi_usage["hits_today"] = info.get("hitsToday", _cricapi_usage["hits_today"])
+            _cricapi_usage["date"] = datetime.now(timezone.utc).date().isoformat()
+        if info.get("hitsLimit"):
+            _cricapi_usage["hits_limit"] = info["hitsLimit"]
+        if "hitsToday" in info:
+            self._persist_usage()
+
+    def _usage_file(self) -> str:
+        base = settings.cricapi_cache_dir or _DEFAULT_CACHE_DIR
+        return os.path.join(base, "usage.json")
+
+    def _persist_usage(self) -> None:
+        try:
+            os.makedirs(os.path.dirname(self._usage_file()), exist_ok=True)
+            with open(self._usage_file(), "w") as f:
+                json.dump({
+                    "date": _cricapi_usage["date"],
+                    "hits_today": _cricapi_usage["hits_today"],
+                    "hits_limit": _cricapi_usage["hits_limit"],
+                }, f)
+        except Exception as e:
+            logger.debug("Could not persist CricAPI usage: %s", e)
+
+    def _load_usage(self) -> None:
+        # Timer-driven processes (poller/updater) are short-lived, so seed the
+        # shared usage counter from disk to honour the daily cap across restarts.
+        global _usage_loaded
+        if _usage_loaded:
+            return
+        _usage_loaded = True
+        try:
+            with open(self._usage_file()) as f:
+                saved = json.load(f)
+            if saved.get("date") == datetime.now(timezone.utc).date().isoformat():
+                _cricapi_usage["hits_today"] = saved.get("hits_today", 0)
+                _cricapi_usage["hits_limit"] = saved.get("hits_limit")
+                _cricapi_usage["date"] = saved.get("date")
+        except Exception:
+            pass
+
+    def _usage_limit(self) -> int:
+        return _cricapi_usage["hits_limit"] or settings.cricapi_max_requests_per_day
+
+    def _cricapi_can_fetch(self) -> bool:
+        self._load_usage()
+        # Reset the counter when CricAPI's daily quota rolls over at UTC midnight,
+        # otherwise a blocked process would never probe again to learn it's clear.
+        today = datetime.now(timezone.utc).date().isoformat()
+        if _cricapi_usage["date"] != today:
+            _cricapi_usage["hits_today"] = 0
+            _cricapi_usage["date"] = today
+        hits = _cricapi_usage["hits_today"]
+        if not hits:
+            return True
+        return hits < max(0, self._usage_limit() - settings.cricapi_usage_reserve)
+
+    def _enforce_usage_budget(self) -> None:
+        if not self._cricapi_can_fetch():
+            raise CricAPIBudgetExceeded(
+                f"CricAPI daily usage {_cricapi_usage['hits_today']}/{self._usage_limit()} "
+                f"(reserve {settings.cricapi_usage_reserve}) reached"
+            )
+
+    def _disk_cache_path(self, key: str) -> str:
+        base = settings.cricapi_cache_dir or _DEFAULT_CACHE_DIR
+        safe = re.sub(r'[^A-Za-z0-9._-]', '_', key)
+        return os.path.join(base, f"{safe}.json")
+
+    def _read_disk_cache(self, key: str, ttl: int):
+        path = self._disk_cache_path(key)
+        try:
+            if os.path.exists(path) and time.time() - os.path.getmtime(path) < ttl:
+                with open(path) as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.debug("Could not read cricket disk cache %s: %s", key, e)
+        return None
+
+    def _write_disk_cache(self, key: str, data: Any) -> None:
+        path = self._disk_cache_path(key)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            logger.debug("Could not write cricket disk cache %s: %s", key, e)
+
+    def _cached(self, key: str, fetcher, ttl: int = _CRICAPI_CACHE_TTL):
+        now = time.time()
+        mem = _cricapi_cache.get(key)
+        if mem and now - mem["timestamp"] < ttl:
+            return mem["data"]
+        disk = self._read_disk_cache(key, ttl)
+        if disk is not None:
+            _cricapi_cache[key] = {"data": disk, "timestamp": now}
+            return disk
         data = fetcher()
-        _cricapi_cache[key] = {"data": data, "timestamp": time.time()}
+        _cricapi_cache[key] = {"data": data, "timestamp": now}
+        self._write_disk_cache(key, data)
         return data
 
     def _find_series(self, target_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
+        target = target_date or datetime.now(self.timezone).date()
+
         def fetch():
             candidates = []
             seen_ids = set()
+            best_in_window = None
             for offset in range(0, 100, 25):
                 data = self._cricapi_get("series", {"offset": offset, "search": self.config["search"]})
                 page = data.get("data", []) or []
@@ -239,18 +360,18 @@ class CricketCollector(BaseCollector):
                     if self.config["name_match"] in series.get("name", "").lower():
                         candidates.append(series)
                         seen_ids.add(series_id)
-                if len(page) < 25:
+                        start = self._series_date(series.get("startDate"))
+                        end = self._series_date(series.get("endDate"))
+                        if start and end and start <= target <= end:
+                            best_in_window = series
+                # Stop paging as soon as we have the series covering the target date.
+                if best_in_window or len(page) < 25:
                     break
 
             if not candidates:
                 return None
-
-            target = target_date or datetime.now(self.timezone).date()
-            for series in candidates:
-                start = self._series_date(series.get("startDate"))
-                end = self._series_date(series.get("endDate"))
-                if start and end and start <= target <= end:
-                    return series
+            if best_in_window:
+                return best_in_window
 
             target_year = str(target.year)
             for series in candidates:
@@ -277,17 +398,21 @@ class CricketCollector(BaseCollector):
 
         matches = self._cached(f"{self.league}:matches:{series['id']}", fetch_series_info)
         enriched = []
-        now_local = datetime.now(self.timezone).date()
+        focus = target_date or datetime.now(self.timezone).date()
         for raw in matches:
             match = dict(raw)
-            match_date = self._match_date(match)
-            should_fetch_info = (
-                match.get("matchStarted")
-                or match.get("matchEnded")
-                or (match_date and now_local - match_date <= timedelta(days=2))
-            )
-            if should_fetch_info and match.get("id"):
-                info = self._get_match_info(match["id"], force_refresh=bool(match.get("matchStarted") and not match.get("matchEnded")))
+            if match.get("id"):
+                is_live = bool(match.get("matchStarted")) and not match.get("matchEnded")
+                match_date = self._match_date(match)
+                # Force a fresh fetch only for live games and matches that ended in
+                # the last couple of days (to capture final scores). Everything else
+                # is served from the persistent cache, so historical enrichment is a
+                # one-time cost rather than a per-refresh fan-out.
+                recently_ended = bool(match.get("matchEnded")) and match_date and (focus - match_date) <= timedelta(days=2)
+                try:
+                    info = self._get_match_info(match["id"], force_refresh=is_live or bool(recently_ended))
+                except CricAPIBudgetExceeded:
+                    info = None
                 if info:
                     match.update({k: v for k, v in info.items() if v not in (None, "", [])})
 
@@ -341,8 +466,16 @@ class CricketCollector(BaseCollector):
     def _get_match_info(self, match_id: str, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         key = f"{self.league}:match:{match_id}"
         if force_refresh:
-            return self._cricapi_get("match_info", {"id": match_id}).get("data")
-        return self._cached(key, lambda: self._cricapi_get("match_info", {"id": match_id}).get("data"))
+            data = self._cricapi_get("match_info", {"id": match_id}).get("data")
+            if data:
+                _cricapi_cache[key] = {"data": data, "timestamp": time.time()}
+                self._write_disk_cache(key, data)
+            return data
+        return self._cached(
+            key,
+            lambda: self._cricapi_get("match_info", {"id": match_id}).get("data"),
+            ttl=_MATCH_INFO_TTL,
+        )
 
     def _assign_home_away(self, match: Dict[str, Any]) -> None:
         teams = match.get("teams", [])
