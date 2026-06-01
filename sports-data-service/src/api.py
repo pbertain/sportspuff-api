@@ -1933,7 +1933,6 @@ def _get_games_for_curl(
             return games
 
     collector = get_collector(league)
-    set_collector_timezone(collector, pytz.timezone('US/Pacific'))
     if not collector:
         return games
     set_collector_timezone(collector, timezone)
