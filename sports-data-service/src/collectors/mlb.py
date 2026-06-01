@@ -5,6 +5,7 @@ MLB data collector for the sports data service.
 import sys
 import os
 import time
+import requests
 from datetime import datetime, date
 from typing import Dict, List, Optional, Any
 import logging
@@ -34,9 +35,12 @@ class MLBCollector(BaseCollector):
 
     def __init__(self):
         super().__init__("MLB")
+        self.standings_url = "https://site.api.espn.com/apis/v2/sports/baseball/mlb/standings"
         self._standings_cache = {}
         self._standings_cache_time = None
         self._standings_cache_ttl = 300
+        self._standings_list_cache = []
+        self._standings_list_cache_time = None
 
     def _fetch_standings(self):
         if self._standings_cache_time and time.time() - self._standings_cache_time < self._standings_cache_ttl:
@@ -56,6 +60,69 @@ class MLBCollector(BaseCollector):
         except Exception as e:
             logger.debug(f"Could not fetch MLB standings: {e}")
             return self._standings_cache
+
+    def get_standings(self) -> List[Dict[str, Any]]:
+        """Return MLB standings from ESPN's public standings feed."""
+        if self._standings_list_cache_time and time.time() - self._standings_list_cache_time < self._standings_cache_ttl:
+            return self._standings_list_cache
+
+        try:
+            response = requests.get(self.standings_url, timeout=self.api_timeout)
+            if response.status_code != 200:
+                logger.warning(f"MLB standings API returned status {response.status_code}")
+                return self._standings_list_cache
+
+            records = []
+            data = response.json()
+            for child in data.get('children', []):
+                group = child.get('name', '')
+                for entry in child.get('standings', {}).get('entries', []):
+                    record = self._parse_standings_entry(entry, group)
+                    if record:
+                        records.append(record)
+
+            if records:
+                records.sort(key=lambda rec: (rec['rank'], -rec['wins'], rec['losses'], rec['team_name']))
+                self._standings_list_cache = records
+                self._standings_list_cache_time = time.time()
+
+            return self._standings_list_cache
+        except Exception as e:
+            logger.debug(f"Could not fetch MLB standings: {e}")
+            return self._standings_list_cache
+
+    def _parse_standings_entry(self, entry: Dict[str, Any], group: str) -> Optional[Dict[str, Any]]:
+        team = entry.get('team', {})
+        abbreviation = team.get('abbreviation', '')
+        if not abbreviation:
+            return None
+
+        stats = {}
+        records = {}
+        for stat in entry.get('stats', []):
+            name = stat.get('name') or stat.get('type')
+            if name:
+                stats[name] = stat
+            stat_type = stat.get('type')
+            if stat_type:
+                records[stat_type] = stat.get('summary') or stat.get('displayValue', '')
+
+        wins = int(stats.get('wins', {}).get('value', 0) or 0)
+        losses = int(stats.get('losses', {}).get('value', 0) or 0)
+        rank = int(stats.get('playoffSeed', {}).get('value', len(stats) + 1) or 0)
+
+        return {
+            'rank': rank,
+            'team_name': team.get('displayName', ''),
+            'abbreviation': abbreviation,
+            'division': group,
+            'wins': wins,
+            'losses': losses,
+            'win_pct': stats.get('winPercent', {}).get('displayValue', ''),
+            'games_back': stats.get('gamesBehind', {}).get('displayValue', ''),
+            'streak': stats.get('streak', {}).get('displayValue', ''),
+            'record': records.get('total') or f"{wins}-{losses}",
+        }
 
     def _get_team_abbrev(self, team_id, fallback=''):
         try:

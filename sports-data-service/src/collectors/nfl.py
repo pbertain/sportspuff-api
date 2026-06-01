@@ -45,9 +45,100 @@ class NFLCollector(BaseCollector):
         super().__init__("NFL")
         self.api_key = api_key or "913a411db3msh6a5a6bcd37bb86dp1cb551jsnd7718d4e5a0e"
         self.base_url = "https://tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com"
+        self._standings_cache = []
+        self._standings_list_cache_time = None
+        self._standings_cache_time = None
+        self._standings_cache_ttl = 300
+        self._team_records_cache = {}
         self.headers = {
             "x-rapidapi-key": self.api_key,
             "x-rapidapi-host": "tank01-nfl-live-in-game-real-time-statistics-nfl.p.rapidapi.com"
+        }
+
+    def get_standings(self) -> List[Dict[str, Any]]:
+        """Return NFL standings from Tank01's teams endpoint."""
+        if self._standings_list_cache_time and time.time() - self._standings_list_cache_time < self._standings_cache_ttl:
+            return self._standings_cache
+
+        try:
+            current_year = datetime.now().year
+            current_month = datetime.now().month
+            season_year = current_year if current_month >= 9 else current_year - 1
+            endpoint = f"{self.base_url}/getNFLTeams"
+            params = {
+                "sortBy": "standings",
+                "rosters": "false",
+                "schedules": "false",
+                "topPerformers": "false",
+                "teamStats": "true",
+                "teamStatsSeason": str(season_year),
+            }
+            response = requests.get(endpoint, headers=self.headers, params=params, timeout=self.api_timeout)
+            if response.status_code != 200:
+                logger.warning(f"NFL standings API returned status {response.status_code}")
+                return self._standings_cache
+
+            records = []
+            data = response.json()
+            teams_data = []
+            if isinstance(data, list):
+                teams_data = data
+            elif isinstance(data, dict):
+                body = data.get('body', data)
+                if isinstance(body, list):
+                    teams_data = body
+                elif isinstance(body, dict):
+                    teams_data = body.get('teams', [])
+
+            for team in teams_data:
+                record = self._parse_standings_entry(team)
+                if record:
+                    records.append(record)
+
+            if records:
+                records.sort(key=lambda rec: (-rec['wins'], rec['losses'], rec['ties'], rec['team_name']))
+                for rank, record in enumerate(records, 1):
+                    record['rank'] = rank
+                self._standings_cache = records
+                self._standings_list_cache_time = time.time()
+
+            return self._standings_cache
+        except Exception as e:
+            logger.debug(f"Could not fetch NFL standings: {e}")
+            return self._standings_cache
+
+    def _parse_standings_entry(self, team: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        abbreviation = self._normalize_abbrev(team.get('teamAbv', team.get('teamAbbr', team.get('teamAbbrev', ''))))
+        if not abbreviation:
+            return None
+
+        team_name = team.get('teamName', '')
+        team_city = team.get('teamCity', '')
+        if team_city and team_name and team_city not in team_name:
+            full_name = f"{team_city} {team_name}"
+        else:
+            full_name = team_name or abbreviation
+
+        wins = int(team.get('wins', 0) or 0)
+        losses = int(team.get('loss', team.get('losses', 0)) or 0)
+        ties = int(team.get('tie', team.get('ties', 0)) or 0)
+        games = wins + losses + ties
+        pct = (wins + 0.5 * ties) / games if games else 0
+        record = f"{wins}-{losses}-{ties}" if ties else f"{wins}-{losses}"
+
+        return {
+            'rank': 0,
+            'team_name': full_name,
+            'abbreviation': abbreviation,
+            'conference': team.get('conference', ''),
+            'division': team.get('division', ''),
+            'wins': wins,
+            'losses': losses,
+            'ties': ties,
+            'win_pct': f"{pct:.3f}".lstrip('0'),
+            'games_back': team.get('gamesBack', team.get('gb', '')),
+            'streak': team.get('streak', ''),
+            'record': record,
         }
     
     def _normalize_abbrev(self, abbrev: str) -> str:
