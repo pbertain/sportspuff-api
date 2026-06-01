@@ -91,7 +91,7 @@ _DEFAULT_CACHE_DIR = os.path.join(
 
 # Latest CricAPI account usage, read from each response's "info" block. CricAPI
 # reports account-wide hits, so this reflects the quota shared with other apps.
-_cricapi_usage: Dict[str, Any] = {"hits_today": 0, "hits_limit": None}
+_cricapi_usage: Dict[str, Any] = {"hits_today": 0, "hits_limit": None, "date": None}
 _usage_loaded = False
 
 
@@ -243,6 +243,7 @@ class CricketCollector(BaseCollector):
         info = data.get("info") or {}
         if "hitsToday" in info:
             _cricapi_usage["hits_today"] = info.get("hitsToday", _cricapi_usage["hits_today"])
+            _cricapi_usage["date"] = datetime.now(timezone.utc).date().isoformat()
         if info.get("hitsLimit"):
             _cricapi_usage["hits_limit"] = info["hitsLimit"]
         if "hitsToday" in info:
@@ -257,7 +258,7 @@ class CricketCollector(BaseCollector):
             os.makedirs(os.path.dirname(self._usage_file()), exist_ok=True)
             with open(self._usage_file(), "w") as f:
                 json.dump({
-                    "date": datetime.now(timezone.utc).date().isoformat(),
+                    "date": _cricapi_usage["date"],
                     "hits_today": _cricapi_usage["hits_today"],
                     "hits_limit": _cricapi_usage["hits_limit"],
                 }, f)
@@ -277,6 +278,7 @@ class CricketCollector(BaseCollector):
             if saved.get("date") == datetime.now(timezone.utc).date().isoformat():
                 _cricapi_usage["hits_today"] = saved.get("hits_today", 0)
                 _cricapi_usage["hits_limit"] = saved.get("hits_limit")
+                _cricapi_usage["date"] = saved.get("date")
         except Exception:
             pass
 
@@ -285,6 +287,12 @@ class CricketCollector(BaseCollector):
 
     def _cricapi_can_fetch(self) -> bool:
         self._load_usage()
+        # Reset the counter when CricAPI's daily quota rolls over at UTC midnight,
+        # otherwise a blocked process would never probe again to learn it's clear.
+        today = datetime.now(timezone.utc).date().isoformat()
+        if _cricapi_usage["date"] != today:
+            _cricapi_usage["hits_today"] = 0
+            _cricapi_usage["date"] = today
         hits = _cricapi_usage["hits_today"]
         if not hits:
             return True
