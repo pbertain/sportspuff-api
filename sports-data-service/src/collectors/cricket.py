@@ -92,13 +92,17 @@ class CricketCollector(BaseCollector):
         self.league_slug = league.lower()
         self.cricapi_key = settings.cricapi_key
         self.config = LEAGUE_CONFIGS.get(self.league, LEAGUE_CONFIGS["IPL"])
+        self.timezone = pytz.timezone('US/Pacific')
+
+    def set_timezone(self, timezone: pytz.BaseTzInfo) -> None:
+        self.timezone = timezone or pytz.timezone('US/Pacific')
 
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         self._check_rate_limit()
         if self.cricapi_key:
             try:
-                matches = self._get_cricapi_matches()
-                target_date = date or datetime.now(pytz.timezone('US/Pacific')).date()
+                target_date = date or datetime.now(self.timezone).date()
+                matches = self._get_cricapi_matches(target_date)
                 standings = self._calculate_standings(matches)
                 return [
                     self._parse_cricapi_match(m, standings)
@@ -125,8 +129,8 @@ class CricketCollector(BaseCollector):
         self._check_rate_limit()
         if self.cricapi_key:
             try:
-                matches = self._get_cricapi_matches()
-                target_date = date or datetime.now(pytz.timezone('US/Pacific')).date()
+                target_date = date or datetime.now(self.timezone).date()
+                matches = self._get_cricapi_matches(target_date)
                 standings = self._calculate_standings(matches)
                 return [
                     self._parse_cricapi_match(m, standings)
@@ -205,17 +209,39 @@ class CricketCollector(BaseCollector):
         _cricapi_cache[key] = {"data": data, "timestamp": time.time()}
         return data
 
-    def _find_series(self) -> Optional[Dict[str, Any]]:
+    def _find_series(self, target_date: Optional[date] = None) -> Optional[Dict[str, Any]]:
         def fetch():
             data = self._cricapi_get("series", {"offset": 0, "search": self.config["search"]})
-            for series in data.get("data", []):
-                if self.config["name_match"] in series.get("name", "").lower():
-                    return series
-            return None
-        return self._cached(f"{self.league}:series", fetch)
+            candidates = [
+                series for series in data.get("data", [])
+                if self.config["name_match"] in series.get("name", "").lower()
+            ]
+            if not candidates:
+                return None
 
-    def _get_cricapi_matches(self) -> List[Dict[str, Any]]:
-        series = self._find_series()
+            target = target_date or datetime.now(self.timezone).date()
+            for series in candidates:
+                start = self._series_date(series.get("startDate"))
+                end = self._series_date(series.get("endDate"))
+                if start and end and start <= target <= end:
+                    return series
+
+            target_year = str(target.year)
+            for series in candidates:
+                if target_year in series.get("name", ""):
+                    return series
+
+            def sort_key(series):
+                end = self._series_date(series.get("endDate")) or date.min
+                start = self._series_date(series.get("startDate")) or date.min
+                return (end, start)
+
+            return sorted(candidates, key=sort_key, reverse=True)[0]
+        cache_date = target_date.isoformat() if target_date else "current"
+        return self._cached(f"{self.league}:series:{cache_date}", fetch)
+
+    def _get_cricapi_matches(self, target_date: Optional[date] = None) -> List[Dict[str, Any]]:
+        series = self._find_series(target_date)
         if not series:
             return []
 
@@ -225,14 +251,14 @@ class CricketCollector(BaseCollector):
 
         matches = self._cached(f"{self.league}:matches:{series['id']}", fetch_series_info)
         enriched = []
-        now_pt = datetime.now(pytz.timezone('US/Pacific')).date()
+        now_local = datetime.now(self.timezone).date()
         for raw in matches:
             match = dict(raw)
             match_date = self._match_date(match)
             should_fetch_info = (
                 match.get("matchStarted")
                 or match.get("matchEnded")
-                or (match_date and now_pt - match_date <= timedelta(days=2))
+                or (match_date and now_local - match_date <= timedelta(days=2))
             )
             if should_fetch_info and match.get("id"):
                 info = self._get_match_info(match["id"], force_refresh=bool(match.get("matchStarted") and not match.get("matchEnded")))
@@ -254,6 +280,17 @@ class CricketCollector(BaseCollector):
             else:
                 current_no += 1
         return enriched
+
+    def _series_date(self, value: Any) -> Optional[date]:
+        if not value:
+            return None
+        try:
+            return datetime.fromisoformat(str(value).replace("Z", "+00:00")).date()
+        except Exception:
+            try:
+                return datetime.strptime(str(value), "%Y-%m-%d").date()
+            except Exception:
+                return None
 
     def _get_match_info(self, match_id: str, force_refresh: bool = False) -> Optional[Dict[str, Any]]:
         key = f"{self.league}:match:{match_id}"
@@ -282,7 +319,7 @@ class CricketCollector(BaseCollector):
             dt = datetime.fromisoformat(match.get("dateTimeGMT", "").replace("Z", "+00:00"))
             if dt.tzinfo is None:
                 dt = dt.replace(tzinfo=timezone.utc)
-            return dt.astimezone(pytz.timezone('US/Pacific')).date()
+            return dt.astimezone(self.timezone).date()
         except Exception:
             return None
 
@@ -300,9 +337,11 @@ class CricketCollector(BaseCollector):
         if not dt:
             return {"pt": "TBD", "utc": "TBD", "ist": "TBD"}
         pt = dt.astimezone(pytz.timezone("US/Pacific"))
+        local = dt.astimezone(self.timezone)
         utc = dt.astimezone(pytz.utc)
         ist = dt.astimezone(pytz.timezone("Asia/Kolkata"))
         return {
+            "local": local.strftime("%-I:%M%p %Z"),
             "pt": pt.strftime("%-I:%M%p %Z"),
             "utc": utc.strftime("%H:%M UTC"),
             "ist": ist.strftime("%H:%M IST"),
