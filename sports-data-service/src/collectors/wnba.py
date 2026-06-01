@@ -19,6 +19,10 @@ logger = logging.getLogger(__name__)
 class WNBACollector(BaseCollector):
     """WNBA data collector using the wnba-api RapidAPI."""
 
+    TEAM_ABBREV_ALIASES = {
+        'GSV': 'GS',
+    }
+
     def __init__(self):
         super().__init__("WNBA")
         self.api_key = os.environ.get('WNBA_API_KEY', '')
@@ -101,6 +105,17 @@ class WNBACollector(BaseCollector):
             logger.debug(f"Could not fetch WNBA standings: {e}")
             return self._standings_cache
 
+    def get_team_records(self) -> Dict[str, Dict[str, int]]:
+        records = {}
+        for rec in self.get_standings():
+            abbreviation = self._normalize_abbrev(rec.get('abbreviation', ''))
+            if abbreviation:
+                records[abbreviation] = {
+                    'wins': rec.get('wins', 0),
+                    'losses': rec.get('losses', 0),
+                }
+        return records
+
     def parse_game_data(self, raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             competitors = raw.get('competitors', [])
@@ -171,6 +186,13 @@ class WNBACollector(BaseCollector):
 
             home_rec = self._parse_record(home.get('recordSummary', ''))
             away_rec = self._parse_record(away.get('recordSummary', ''))
+            standings_records = self.get_team_records()
+            home_standings = standings_records.get(self._normalize_abbrev(home.get('abbrev', '')))
+            away_standings = standings_records.get(self._normalize_abbrev(away.get('abbrev', '')))
+            if home_standings:
+                home_rec = (home_standings['wins'], home_standings['losses'])
+            if away_standings:
+                away_rec = (away_standings['wins'], away_standings['losses'])
 
             return {
                 'league': 'WNBA',
@@ -236,6 +258,10 @@ class WNBACollector(BaseCollector):
             'streak': streak,
             'record': record,
         }
+
+    def _normalize_abbrev(self, abbreviation: str) -> str:
+        abbreviation = (abbreviation or '').upper().strip()
+        return self.TEAM_ABBREV_ALIASES.get(abbreviation, abbreviation)
 
     def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
         if year is None:

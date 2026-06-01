@@ -1890,6 +1890,16 @@ def _get_games_for_curl(
                 setattr(self, k, v)
 
     def _append_db_games() -> None:
+        standings_records = {}
+        wnba_collector = None
+        if league == 'WNBA':
+            try:
+                wnba_collector = get_collector('WNBA')
+                if wnba_collector and hasattr(wnba_collector, 'get_team_records'):
+                    standings_records = wnba_collector.get_team_records()
+            except Exception as exc:
+                logger.debug("Could not fetch WNBA standings records for DB rows: %s", exc)
+
         with get_db_session() as db:
             db_games = db.query(Game).filter(
                 Game.league == league,
@@ -1925,6 +1935,15 @@ def _get_games_for_curl(
                     'visitor_losses': game.visitor_losses or 0,
                     'visitor_otl': getattr(game, 'visitor_otl', 0) or 0,
                 }
+                if league == 'WNBA' and standings_records and wnba_collector:
+                    home_record = standings_records.get(wnba_collector._normalize_abbrev(game.home_team_abbrev))
+                    visitor_record = standings_records.get(wnba_collector._normalize_abbrev(game.visitor_team_abbrev))
+                    if home_record:
+                        game_data['home_wins'] = home_record['wins']
+                        game_data['home_losses'] = home_record['losses']
+                    if visitor_record:
+                        game_data['visitor_wins'] = visitor_record['wins']
+                        game_data['visitor_losses'] = visitor_record['losses']
                 games.append(GameWrapper(game_data))
 
     if prefer_db:
