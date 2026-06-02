@@ -19,6 +19,7 @@ from .models import Game
 from .config import settings
 from .collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 from .utils import api_tracker
+from .services import upstream_health
 
 import time as _time
 
@@ -58,6 +59,12 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
     finally:
         response_time_ms = int((_time.time() - started_at) * 1000)
         api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
+        upstream = upstream_health.upstream_for(league, cache_context or "scores")
+        if upstream:
+            if success:
+                upstream_health.record_success(upstream)
+            else:
+                upstream_health.record_failure(upstream, error_message or "fetch failed")
         try:
             with get_db_session() as db:
                 api_tracker.log_to_database(
@@ -2344,7 +2351,12 @@ def get_standings_api_v1(
     if sport_lower == 'mls':
         collector = get_collector('MLS')
         if collector:
-            standings = collector._fetch_standings()
+            try:
+                standings = collector._fetch_standings()
+                upstream_health.record_success(upstream_health.upstream_for('mls', 'standings'))
+            except Exception as e:
+                upstream_health.record_failure(upstream_health.upstream_for('mls', 'standings'), f"{type(e).__name__}: {e}")
+                raise
             teams = []
             for abbrev, rec in sorted(standings.items(), key=lambda x: -(x[1]['wins'] * 3 + x[1]['draws'])):
                 pts = rec['wins'] * 3 + rec['draws']
@@ -2360,7 +2372,12 @@ def get_standings_api_v1(
 
     if sport_lower in ('ipl', 'mlc'):
         collector = get_collector(SPORT_MAPPINGS[sport_lower])
-        standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+        try:
+            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+            upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
+        except Exception as e:
+            upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
+            raise
         teams = []
         for rec in standings:
             teams.append({
@@ -2379,7 +2396,12 @@ def get_standings_api_v1(
 
     if sport_lower in ('nba', 'mlb', 'nfl', 'nhl', 'wnba'):
         collector = get_collector(SPORT_MAPPINGS[sport_lower])
-        standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+        try:
+            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+            upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
+        except Exception as e:
+            upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
+            raise
         teams = []
         for rec in standings:
             team = {
@@ -2583,7 +2605,15 @@ def get_season_info(
     result = None
 
     if collector:
-        result = collector.get_season_info()
+        try:
+            result = collector.get_season_info()
+            upstream_health.record_success(upstream_health.upstream_for(league_upper.lower(), 'season-info'))
+        except Exception as e:
+            upstream_health.record_failure(
+                upstream_health.upstream_for(league_upper.lower(), 'season-info'),
+                f"{type(e).__name__}: {e}",
+            )
+            result = None
 
     if not result:
         result = _get_season_info_from_db(league_upper)
@@ -2646,81 +2676,129 @@ def api_status_curl(
         (only or "").lower(), {"ok", "warning", "error"}
     )
 
-    def fmt_section(title, rows, summary):
-        lines = [
-            f"== {title} ==  ok={summary.get('ok',0)}  warn={summary.get('warning',0)}  err={summary.get('error',0)}",
-            f"{'CAT':<5} {'HTTP':>4} {'LAT':>6}  {'NAME':<28} DETAIL",
-        ]
-        shown = [r for r in rows if r.get("category") in keep]
-        if not shown:
-            lines.append("(none)")
-        for r in shown:
-            sc = r.get("status_code")
-            lat = r.get("latency_ms")
-            lines.append(
-                f"{r.get('category','')[:5]:<5} "
-                f"{(str(sc) if sc is not None else '-'):>4} "
-                f"{(str(lat)+'ms' if lat is not None else '-'):>6}  "
-                f"{r.get('name',''):<28} "
-                f"{r.get('detail','')}"
-            )
-        return "\n".join(lines)
+    summary = snap["summary"]
+    sum_line = f"summary: ok={summary.get('ok',0)}  warn={summary.get('warning',0)}  err={summary.get('error',0)}"
 
-    out = [
+    up_lines = ["== UPSTREAMS =="]
+    up_lines.append(f"{'CAT':<5} {'AGE':>7}  {'NAME':<16} DETAIL")
+    shown_up = [u for u in snap["upstreams"] if u.get("category") in keep]
+    if not shown_up:
+        up_lines.append("(none)")
+    for u in shown_up:
+        age = u.get("age_seconds")
+        age_s = f"{age}s" if age is not None else "-"
+        up_lines.append(
+            f"{u.get('category','')[:5]:<5} {age_s:>7}  {u.get('name',''):<16} {u.get('detail','')}"
+        )
+
+    res_lines = ["== RESULTS =="]
+    res_lines.append(f"{'CAT':<5} {'HTTP':>4} {'CNT':>4}  {'NAME':<28} {'UPSTREAM':<14} DETAIL")
+    shown_res = [r for r in snap["results"] if r.get("category") in keep]
+    if not shown_res:
+        res_lines.append("(none)")
+    for r in shown_res:
+        sc = r.get("status_code")
+        cnt = r.get("count")
+        res_lines.append(
+            f"{r.get('category','')[:5]:<5} "
+            f"{(str(sc) if sc is not None else '-'):>4} "
+            f"{(str(cnt) if cnt is not None else '-'):>4}  "
+            f"{r.get('name',''):<28} "
+            f"{(r.get('upstream') or '-'):<14} "
+            f"{r.get('detail','')}"
+        )
+
+    return "\n".join([
         f"sportspuff-api status  ({snap['checked_at']})",
-        f"base: {snap['api_base']}",
+        f"base: {snap['api_base_url']}",
+        sum_line,
         "",
-        fmt_section("UPSTREAMS", snap["upstreams"], snap["summary"]["upstreams"]),
+        *up_lines,
         "",
-        fmt_section("OWN ENDPOINTS", snap["endpoints"], snap["summary"]["endpoints"]),
+        *res_lines,
         "",
-    ]
-    return "\n".join(out)
+    ])
 
 
 @app.get("/status", response_class=HTMLResponse)
 def api_status_page(request: Request):
-    """HTML status page (upstream + own-endpoint health)."""
+    """HTML status page (upstreams + per-endpoint health)."""
     from .services.status import get_status
     snap = get_status(_status_api_base(str(request.url)))
 
-    def row(r):
-        cat = r.get("category", "error")
-        chip = {"ok": "chip-ok", "warning": "chip-warn", "error": "chip-err"}.get(cat, "chip-err")
-        latency = r.get("latency_ms")
-        latency_s = f"{latency} ms" if latency is not None else ""
-        sc = r.get("status_code")
-        sc_s = str(sc) if sc is not None else ""
+    def chip(cat):
+        cls = {"ok": "chip-ok", "warning": "chip-warn", "error": "chip-err"}.get(cat, "chip-err")
+        return f"<span class='chip {cls}'>{cat}</span>"
+
+    def upstream_row(u):
+        age = u.get("age_seconds")
+        age_s = f"{age}s" if age is not None else ""
+        last_ok = u.get("last_success_at") or ""
+        last_err = u.get("last_error_at") or ""
+        stale = "yes" if u.get("stale") else "no"
         return (
             f"<tr>"
-            f"<td><span class='chip {chip}'>{cat}</span></td>"
+            f"<td>{chip(u.get('category','error'))}</td>"
+            f"<td>{u.get('name','')}</td>"
+            f"<td class='mono'>{u.get('detail','')}</td>"
+            f"<td class='mono num'>{age_s}</td>"
+            f"<td class='mono num'>{stale}</td>"
+            f"<td class='mono'>{last_ok}</td>"
+            f"<td class='mono'>{last_err}</td>"
+            f"</tr>"
+        )
+
+    def result_row(r):
+        sc = r.get("status_code")
+        sc_s = str(sc) if sc is not None else ""
+        cnt = r.get("count")
+        cnt_s = str(cnt) if cnt is not None else ""
+        meta = r.get("meta") or {}
+        meta_s = ""
+        if meta:
+            ms = "stale" if meta.get("stale") else "fresh"
+            age = meta.get("age_seconds")
+            ttl = meta.get("ttl_seconds")
+            src = meta.get("source") or "?"
+            meta_s = f"{ms} · src={src}"
+            if age is not None and ttl is not None:
+                meta_s += f" · {age}s/{ttl}s"
+        return (
+            f"<tr>"
+            f"<td>{chip(r.get('category','error'))}</td>"
             f"<td>{r.get('name','')}</td>"
             f"<td class='mono'>{r.get('detail','')}</td>"
             f"<td class='mono num'>{sc_s}</td>"
-            f"<td class='mono num'>{latency_s}</td>"
+            f"<td class='mono num'>{cnt_s}</td>"
+            f"<td>{r.get('upstream') or ''}</td>"
+            f"<td class='mono'>{meta_s}</td>"
             f"<td class='mono url'>{r.get('url','')}</td>"
             f"</tr>"
         )
 
-    def table(rows):
-        head = (
-            "<thead><tr>"
-            "<th>Status</th><th>Name</th><th>Detail</th>"
-            "<th>HTTP</th><th>Latency</th><th>URL</th>"
-            "</tr></thead>"
-        )
-        body = "<tbody>" + "".join(row(r) for r in rows) + "</tbody>"
-        return f"<table>{head}{body}</table>"
+    s = snap["summary"]
+    summary_html = (
+        f"<span class='chip chip-ok'>ok {s.get('ok',0)}</span>"
+        f"<span class='chip chip-warn'>warn {s.get('warning',0)}</span>"
+        f"<span class='chip chip-err'>err {s.get('error',0)}</span>"
+    )
 
-    up_sum = snap["summary"]["upstreams"]
-    ep_sum = snap["summary"]["endpoints"]
-
-    def summary_chips(s):
-        return (
-            f"<span class='chip chip-ok'>ok {s.get('ok',0)}</span>"
-            f"<span class='chip chip-warn'>warn {s.get('warning',0)}</span>"
-            f"<span class='chip chip-err'>err {s.get('error',0)}</span>"
-        )
+    up_table = (
+        "<table><thead><tr>"
+        "<th>Status</th><th>Upstream</th><th>Detail</th>"
+        "<th>Age</th><th>Stale</th><th>Last OK</th><th>Last err</th>"
+        "</tr></thead><tbody>"
+        + "".join(upstream_row(u) for u in snap["upstreams"])
+        + "</tbody></table>"
+    )
+    res_table = (
+        "<table><thead><tr>"
+        "<th>Status</th><th>Name</th><th>Detail</th>"
+        "<th>HTTP</th><th>Count</th><th>Upstream</th><th>Meta</th><th>URL</th>"
+        "</tr></thead><tbody>"
+        + "".join(result_row(r) for r in snap["results"])
+        + "</tbody></table>"
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en"><head>
@@ -2736,17 +2814,17 @@ header{{background:linear-gradient(135deg,#2D1B69 0%,#FF3B30 100%);
   padding:1.5rem;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3)}}
 header h1{{font-size:1.8rem}}
 header p{{font-size:.9rem;color:rgba(245,245,245,.75);margin-top:.25rem}}
-.container{{max-width:1100px;margin:1.5rem auto;padding:1.5rem;
+.container{{max-width:1200px;margin:1.5rem auto;padding:1.5rem;
   background:rgba(26,11,61,.9);border-radius:14px;
   border:1px solid rgba(255,255,255,.15)}}
 h2{{font-size:1.15rem;color:#FFB400;margin:1.25rem 0 .5rem}}
 h2:first-child{{margin-top:0}}
 .summary{{margin-bottom:.5rem;font-size:.85rem}}
-table{{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:1rem}}
+table{{width:100%;border-collapse:collapse;font-size:.83rem;margin-bottom:1rem}}
 th,td{{padding:.4rem .55rem;text-align:left;
   border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}}
-th{{font-weight:600;color:#B8B8B8;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}}
-.mono{{font-family:'SF Mono',Menlo,monospace;font-size:.78rem}}
+th{{font-weight:600;color:#B8B8B8;font-size:.76rem;text-transform:uppercase;letter-spacing:.04em}}
+.mono{{font-family:'SF Mono',Menlo,monospace;font-size:.76rem}}
 .num{{text-align:right;white-space:nowrap}}
 .url{{color:#9aa;word-break:break-all}}
 .chip{{display:inline-block;padding:.1rem .5rem;border-radius:10px;
@@ -2757,14 +2835,14 @@ th{{font-weight:600;color:#B8B8B8;font-size:.78rem;text-transform:uppercase;lett
 footer{{text-align:center;padding:1.5rem;font-size:.75rem;color:rgba(245,245,245,.4)}}
 </style>
 </head><body>
-<header><h1>API status</h1><p>checked {snap['checked_at']} · {snap['api_base']}</p></header>
+<header><h1>API status</h1><p>checked {snap['checked_at']} · {snap['api_base_url']}</p></header>
 <div class="container">
-  <h2>Upstreams <span class="summary">{summary_chips(up_sum)}</span></h2>
-  {table(snap['upstreams'])}
-  <h2>Own endpoints <span class="summary">{summary_chips(ep_sum)}</span></h2>
-  {table(snap['endpoints'])}
+  <h2>Upstreams</h2>
+  {up_table}
+  <h2>Endpoints <span class="summary">{summary_html}</span></h2>
+  {res_table}
 </div>
-<footer>JSON: <a href="/api/v1/status" style="color:#9aa">/api/v1/status</a></footer>
+<footer>JSON: <a href="/api/v1/status" style="color:#9aa">/api/v1/status</a> · curl: <a href="/curl/v1/status" style="color:#9aa">/curl/v1/status</a></footer>
 </body></html>"""
 
 
