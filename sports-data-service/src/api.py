@@ -7,7 +7,7 @@ with both JSON and cURL-style text output.
 
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, Path, Query, HTTPException
+from fastapi import FastAPI, Path, Query, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
 import pytz
@@ -2616,6 +2616,111 @@ def get_cricket_season(
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+def _status_api_base(request_url: str) -> str:
+    # Probe ourselves over the same origin the client used so dev/prod hosts
+    # and ports don't need to be configured separately.
+    from urllib.parse import urlsplit
+    parts = urlsplit(request_url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+@app.get("/api/v1/status")
+def api_status_json(request: Request):
+    """JSON snapshot of upstream + own-endpoint health."""
+    from .services.status import get_status
+    return get_status(_status_api_base(str(request.url)))
+
+
+@app.get("/status", response_class=HTMLResponse)
+def api_status_page(request: Request):
+    """HTML status page (upstream + own-endpoint health)."""
+    from .services.status import get_status
+    snap = get_status(_status_api_base(str(request.url)))
+
+    def row(r):
+        cat = r.get("category", "error")
+        chip = {"ok": "chip-ok", "warning": "chip-warn", "error": "chip-err"}.get(cat, "chip-err")
+        latency = r.get("latency_ms")
+        latency_s = f"{latency} ms" if latency is not None else ""
+        sc = r.get("status_code")
+        sc_s = str(sc) if sc is not None else ""
+        return (
+            f"<tr>"
+            f"<td><span class='chip {chip}'>{cat}</span></td>"
+            f"<td>{r.get('name','')}</td>"
+            f"<td class='mono'>{r.get('detail','')}</td>"
+            f"<td class='mono num'>{sc_s}</td>"
+            f"<td class='mono num'>{latency_s}</td>"
+            f"<td class='mono url'>{r.get('url','')}</td>"
+            f"</tr>"
+        )
+
+    def table(rows):
+        head = (
+            "<thead><tr>"
+            "<th>Status</th><th>Name</th><th>Detail</th>"
+            "<th>HTTP</th><th>Latency</th><th>URL</th>"
+            "</tr></thead>"
+        )
+        body = "<tbody>" + "".join(row(r) for r in rows) + "</tbody>"
+        return f"<table>{head}{body}</table>"
+
+    up_sum = snap["summary"]["upstreams"]
+    ep_sum = snap["summary"]["endpoints"]
+
+    def summary_chips(s):
+        return (
+            f"<span class='chip chip-ok'>ok {s.get('ok',0)}</span>"
+            f"<span class='chip chip-warn'>warn {s.get('warning',0)}</span>"
+            f"<span class='chip chip-err'>err {s.get('error',0)}</span>"
+        )
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SportsPuff API · Status</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+  background:linear-gradient(135deg,#1A0B3D 0%,#2D1B69 50%,#3D2A7A 100%);
+  color:#F5F5F5;min-height:100vh}}
+header{{background:linear-gradient(135deg,#2D1B69 0%,#FF3B30 100%);
+  padding:1.5rem;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3)}}
+header h1{{font-size:1.8rem}}
+header p{{font-size:.9rem;color:rgba(245,245,245,.75);margin-top:.25rem}}
+.container{{max-width:1100px;margin:1.5rem auto;padding:1.5rem;
+  background:rgba(26,11,61,.9);border-radius:14px;
+  border:1px solid rgba(255,255,255,.15)}}
+h2{{font-size:1.15rem;color:#FFB400;margin:1.25rem 0 .5rem}}
+h2:first-child{{margin-top:0}}
+.summary{{margin-bottom:.5rem;font-size:.85rem}}
+table{{width:100%;border-collapse:collapse;font-size:.85rem;margin-bottom:1rem}}
+th,td{{padding:.4rem .55rem;text-align:left;
+  border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}}
+th{{font-weight:600;color:#B8B8B8;font-size:.78rem;text-transform:uppercase;letter-spacing:.04em}}
+.mono{{font-family:'SF Mono',Menlo,monospace;font-size:.78rem}}
+.num{{text-align:right;white-space:nowrap}}
+.url{{color:#9aa;word-break:break-all}}
+.chip{{display:inline-block;padding:.1rem .5rem;border-radius:10px;
+  font-size:.72rem;font-weight:600;margin-right:.3rem}}
+.chip-ok{{background:rgba(46,160,67,.25);color:#7ee08a}}
+.chip-warn{{background:rgba(255,180,0,.25);color:#FFB400}}
+.chip-err{{background:rgba(255,59,48,.25);color:#ff8a82}}
+footer{{text-align:center;padding:1.5rem;font-size:.75rem;color:rgba(245,245,245,.4)}}
+</style>
+</head><body>
+<header><h1>API status</h1><p>checked {snap['checked_at']} · {snap['api_base']}</p></header>
+<div class="container">
+  <h2>Upstreams <span class="summary">{summary_chips(up_sum)}</span></h2>
+  {table(snap['upstreams'])}
+  <h2>Own endpoints <span class="summary">{summary_chips(ep_sum)}</span></h2>
+  {table(snap['endpoints'])}
+</div>
+<footer>JSON: <a href="/api/v1/status" style="color:#9aa">/api/v1/status</a></footer>
+</body></html>"""
 
 
 # Catch-all routes for unknown /api/ and /curl/ paths - return help
