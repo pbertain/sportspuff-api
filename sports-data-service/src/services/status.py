@@ -62,6 +62,9 @@ def _probe_self(name: str, league: str, kind: str, url: str,
         "detail": "",
         "upstream": upstream,
         "meta": _meta_for(upstream, ttl),
+        "_league": league,
+        "_kind": kind,
+        "_payload": None,
     }
     try:
         resp = requests.get(url, timeout=timeout)
@@ -76,6 +79,8 @@ def _probe_self(name: str, league: str, kind: str, url: str,
             row["detail"] = "Invalid JSON"
             row["category"] = "error"
             return row
+        if kind == "season-info" and isinstance(data, dict):
+            row["_payload"] = data
         count = _count_results(data)
         row["count"] = count
         if count == 0:
@@ -201,6 +206,54 @@ def _default_cache_dir() -> str:
     return os.path.join(service_root, "cache", "cricket")
 
 
+def _league_phase_state(payload: Dict[str, Any]) -> str:
+    """Classify a season-info payload as 'in_season', 'off_season', or 'unknown'.
+
+    Trusts current_phase when present; otherwise checks today against
+    season_types[].start_date/end_date windows. Empty season_types -> unknown.
+    """
+    if not isinstance(payload, dict):
+        return "unknown"
+    types = payload.get("season_types") or []
+    current = (payload.get("current_phase") or "").strip().lower()
+    if not types:
+        return "unknown"
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    in_window = any(
+        (t.get("start_date") or "") <= today <= (t.get("end_date") or "9999-99-99")
+        for t in types
+        if t.get("start_date") and t.get("end_date")
+    )
+    if "off season" in current or "off-season" in current or "offseason" in current:
+        return "off_season"
+    if in_window:
+        return "in_season"
+    return "off_season"
+
+
+def _apply_no_games_downgrade(results: List[Dict[str, Any]]) -> None:
+    """For scores/schedule rows with count==0, distinguish off-season vs no-games-today
+    using each league's season-info payload, and downgrade warning -> ok with a clearer detail.
+    """
+    phase_by_league: Dict[str, str] = {}
+    for r in results:
+        if r.get("_kind") == "season-info" and r.get("_payload"):
+            phase_by_league[r["_league"]] = _league_phase_state(r["_payload"])
+
+    for r in results:
+        if r.get("_kind") not in ("scores", "schedule"):
+            continue
+        if r.get("count") != 0 or r.get("category") != "warning":
+            continue
+        phase = phase_by_league.get(r.get("_league"), "unknown")
+        if phase == "off_season":
+            r["category"] = "ok"
+            r["detail"] = "off-season"
+        elif phase == "in_season":
+            r["category"] = "ok"
+            r["detail"] = "no games today"
+
+
 def get_status(api_base: str) -> Dict[str, Any]:
     """Build the contract-shaped status payload (with a small assembly cache)."""
     with _payload_lock:
@@ -234,6 +287,12 @@ def get_status(api_base: str) -> Dict[str, Any]:
                     "meta": None,
                 })
     results.sort(key=_sort_key)
+
+    _apply_no_games_downgrade(results)
+    for r in results:
+        r.pop("_league", None)
+        r.pop("_kind", None)
+        r.pop("_payload", None)
 
     upstream_names = sorted({
         upstream_health.upstream_for(p["league"], p["kind"])
