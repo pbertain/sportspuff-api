@@ -23,6 +23,9 @@ class Settings(BaseSettings):
     cricapi_max_requests_per_day: int = Field(default=2000, description="Daily request limit for the shared CricAPI key (IPL/MLC)")
     cricapi_usage_reserve: int = Field(default=200, description="Headroom left below the CricAPI daily limit for other consumers of the shared key")
     cricapi_cache_dir: str = Field(default="", description="Directory for persisted CricAPI responses; defaults to <service>/cache/cricket")
+    cricapi_live_refresh: bool = Field(default=True, description="Force-refresh in-progress/recently-ended cricket matches each build. Disable on dev to conserve the shared quota.")
+    cricapi_cache_ttl: int = Field(default=900, description="TTL (s) for cached CricAPI series/series_info lookups. Raise on dev to refresh roughly hourly.")
+    cricapi_season_cache_ttl: int = Field(default=300, description="TTL (s) for the whole-season feed response cache, bounding CricAPI spend under frequent calls.")
     nba_api_timeout: int = Field(default=10)
     mlb_api_timeout: int = Field(default=10)
     nhl_api_timeout: int = Field(default=10)
@@ -85,7 +88,7 @@ class Settings(BaseSettings):
     proxy_port_start: int = Field(default=10001)
     proxy_port_end: int = Field(default=10010)
     
-    @field_validator('proxy_enabled', mode='before')
+    @field_validator('proxy_enabled', 'cricapi_live_refresh', mode='before')
     @classmethod
     def parse_bool(cls, v):
         """Parse boolean from string or bool."""
