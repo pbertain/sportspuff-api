@@ -83,8 +83,11 @@ LEAGUE_CONFIGS = {
 }
 
 _cricapi_cache: Dict[str, Dict[str, Any]] = {}
-_CRICAPI_CACHE_TTL = 900
 _MATCH_INFO_TTL = 86400  # ended-match details don't change; keep for a day
+# Whole-season response cache (TTL from settings.cricapi_season_cache_ttl):
+# bounds CricAPI spend if the season feed is hit frequently, since each live
+# build force-refreshes in-progress matches.
+_season_response_cache: Dict[str, Dict[str, Any]] = {}
 _DEFAULT_CACHE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "cache", "cricket"
 )
@@ -232,9 +235,30 @@ class CricketCollector(BaseCollector):
     def get_season(self) -> Dict[str, Any]:
         """Return the full enriched season: every match with raw per-inning
         scores, plus derived standings and current CricAPI usage. This is the
-        single-source feed CricketPuff consumes so it no longer hits CricAPI."""
-        series = self._find_series()
-        matches = self._get_cricapi_matches() if self.cricapi_key else []
+        single-source feed CricketPuff consumes so it no longer hits CricAPI.
+
+        Never raises: on quota exhaustion or upstream error it serves whatever
+        is cached and flags the payload with live=False so consumers can choose
+        to keep their existing snapshot instead of overwriting with stale/empty
+        data. Results are briefly cached to bound CricAPI spend under load."""
+        cache_key = f"{self.league}:season"
+        cached = _season_response_cache.get(cache_key)
+        if cached and time.time() - cached["timestamp"] < settings.cricapi_season_cache_ttl:
+            return cached["data"]
+
+        series = None
+        matches = []
+        live = True
+        try:
+            series = self._find_series()
+            if self.cricapi_key:
+                matches = self._get_cricapi_matches()
+        except CricAPIBudgetExceeded:
+            live = False
+            logger.warning("CricAPI budget exceeded building %s season; serving cached data", self.league)
+        except Exception as e:
+            live = False
+            logger.error("Error building %s season: %s", self.league, e)
 
         standings = self._calculate_standings(matches) if matches else {}
         ordered = sorted(
@@ -246,10 +270,11 @@ class CricketCollector(BaseCollector):
             rec["rank"] = rank
 
         hits_today = _cricapi_usage["hits_today"]
-        return {
+        payload = {
             "league": self.league,
             "series_id": series.get("id", "") if series else "",
             "series_name": series.get("name", "") if series else "",
+            "live": live,
             "matches": matches,
             "standings": ordered,
             "api_stats": {
@@ -259,6 +284,8 @@ class CricketCollector(BaseCollector):
                 "date": _cricapi_usage["date"],
             },
         }
+        _season_response_cache[cache_key] = {"data": payload, "timestamp": time.time()}
+        return payload
 
     def _cricapi_get(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
         self._enforce_usage_budget()
@@ -360,7 +387,9 @@ class CricketCollector(BaseCollector):
         except Exception as e:
             logger.debug("Could not write cricket disk cache %s: %s", key, e)
 
-    def _cached(self, key: str, fetcher, ttl: int = _CRICAPI_CACHE_TTL):
+    def _cached(self, key: str, fetcher, ttl: int = None):
+        if ttl is None:
+            ttl = settings.cricapi_cache_ttl
         now = time.time()
         mem = _cricapi_cache.get(key)
         if mem and now - mem["timestamp"] < ttl:
@@ -369,7 +398,17 @@ class CricketCollector(BaseCollector):
         if disk is not None:
             _cricapi_cache[key] = {"data": disk, "timestamp": now}
             return disk
-        data = fetcher()
+        try:
+            data = fetcher()
+        except CricAPIBudgetExceeded:
+            # Quota is spent: serve the last-known-good snapshot (ignoring TTL)
+            # rather than failing, so consumers keep working until it resets.
+            stale = mem["data"] if mem else self._read_disk_cache(key, ttl=float("inf"))
+            if stale is not None:
+                logger.warning("CricAPI budget exceeded; serving stale cache for %s", key)
+                _cricapi_cache[key] = {"data": stale, "timestamp": now}
+                return stale
+            raise
         _cricapi_cache[key] = {"data": data, "timestamp": now}
         self._write_disk_cache(key, data)
         return data
@@ -440,8 +479,9 @@ class CricketCollector(BaseCollector):
                 # is served from the persistent cache, so historical enrichment is a
                 # one-time cost rather than a per-refresh fan-out.
                 recently_ended = bool(match.get("matchEnded")) and match_date and (focus - match_date) <= timedelta(days=2)
+                force = settings.cricapi_live_refresh and (is_live or bool(recently_ended))
                 try:
-                    info = self._get_match_info(match["id"], force_refresh=is_live or bool(recently_ended))
+                    info = self._get_match_info(match["id"], force_refresh=force)
                 except CricAPIBudgetExceeded:
                     info = None
                 if info:
