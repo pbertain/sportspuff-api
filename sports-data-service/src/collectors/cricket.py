@@ -291,10 +291,23 @@ class CricketCollector(BaseCollector):
         self._enforce_usage_budget()
         params = dict(params)
         params["apikey"] = self.cricapi_key
-        response = requests.get(f"{CRICAPI_BASE}/{endpoint}", params=params, timeout=self.api_timeout)
-        response.raise_for_status()
-        data = response.json()
+        try:
+            response = requests.get(f"{CRICAPI_BASE}/{endpoint}", params=params, timeout=self.api_timeout)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            try:
+                from ..services.upstream_health import record_failure
+                record_failure("CricAPI", f"{type(e).__name__}: {e}")
+            except Exception:
+                pass
+            raise
         self._track_usage(data)
+        try:
+            from ..services.upstream_health import record_success
+            record_success("CricAPI")
+        except Exception:
+            pass
         return data
 
     def _track_usage(self, data: Dict[str, Any]) -> None:
