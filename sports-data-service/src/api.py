@@ -2633,6 +2633,51 @@ def api_status_json(request: Request):
     return get_status(_status_api_base(str(request.url)))
 
 
+@app.get("/curl/v1/status", response_class=PlainTextResponse)
+def api_status_curl(
+    request: Request,
+    only: Optional[str] = Query(None, description="Filter rows: errors, warnings, all (default all)"),
+):
+    """Plain-text status table for terminal use."""
+    from .services.status import get_status
+    snap = get_status(_status_api_base(str(request.url)))
+
+    keep = {"errors": {"error"}, "warnings": {"error", "warning"}}.get(
+        (only or "").lower(), {"ok", "warning", "error"}
+    )
+
+    def fmt_section(title, rows, summary):
+        lines = [
+            f"== {title} ==  ok={summary.get('ok',0)}  warn={summary.get('warning',0)}  err={summary.get('error',0)}",
+            f"{'CAT':<5} {'HTTP':>4} {'LAT':>6}  {'NAME':<28} DETAIL",
+        ]
+        shown = [r for r in rows if r.get("category") in keep]
+        if not shown:
+            lines.append("(none)")
+        for r in shown:
+            sc = r.get("status_code")
+            lat = r.get("latency_ms")
+            lines.append(
+                f"{r.get('category','')[:5]:<5} "
+                f"{(str(sc) if sc is not None else '-'):>4} "
+                f"{(str(lat)+'ms' if lat is not None else '-'):>6}  "
+                f"{r.get('name',''):<28} "
+                f"{r.get('detail','')}"
+            )
+        return "\n".join(lines)
+
+    out = [
+        f"sportspuff-api status  ({snap['checked_at']})",
+        f"base: {snap['api_base']}",
+        "",
+        fmt_section("UPSTREAMS", snap["upstreams"], snap["summary"]["upstreams"]),
+        "",
+        fmt_section("OWN ENDPOINTS", snap["endpoints"], snap["summary"]["endpoints"]),
+        "",
+    ]
+    return "\n".join(out)
+
+
 @app.get("/status", response_class=HTMLResponse)
 def api_status_page(request: Request):
     """HTML status page (upstream + own-endpoint health)."""
