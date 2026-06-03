@@ -2697,15 +2697,17 @@ def api_status_curl(
         )
 
     res_lines = ["== RESULTS =="]
-    res_lines.append(f"{'CAT':<5} {'HTTP':>4} {'CNT':>4}  {'NAME':<28} {'UPSTREAM':<14} DETAIL")
+    res_lines.append(f"{'CAT':<5} {'SRC':<5} {'HTTP':>4} {'CNT':>4}  {'NAME':<28} {'UPSTREAM':<14} DETAIL")
     shown_res = [r for r in snap["results"] if r.get("category") in keep]
     if not shown_res:
         res_lines.append("(none)")
     for r in shown_res:
         sc = r.get("status_code")
         cnt = r.get("count")
+        src = "synth" if (r.get("detail") or "").startswith("synth:") else "live"
         res_lines.append(
             f"{r.get('category','')[:5]:<5} "
+            f"{src:<5} "
             f"{(str(sc) if sc is not None else '-'):>4} "
             f"{(str(cnt) if cnt is not None else '-'):>4}  "
             f"{r.get('name',''):<28} "
@@ -2758,6 +2760,12 @@ def api_status_page(request: Request):
         sc_s = str(sc) if sc is not None else ""
         cnt = r.get("count")
         cnt_s = str(cnt) if cnt is not None else ""
+        is_synth = (r.get("detail") or "").startswith("synth:")
+        method_chip = (
+            "<span class='chip chip-synth' title='Derived from in-memory bookkeeping (no live probe — protects upstream quota)'>synth</span>"
+            if is_synth else
+            "<span class='chip chip-live' title='Live HTTP probe of this endpoint'>live</span>"
+        )
         meta = r.get("meta") or {}
         meta_s = ""
         if meta:
@@ -2771,6 +2779,7 @@ def api_status_page(request: Request):
         return (
             f"<tr>"
             f"<td>{chip(r.get('category','error'))}</td>"
+            f"<td>{method_chip}</td>"
             f"<td>{r.get('name','')}</td>"
             f"<td class='mono'>{r.get('detail','')}</td>"
             f"<td class='mono num'>{sc_s}</td>"
@@ -2798,7 +2807,7 @@ def api_status_page(request: Request):
     )
     res_table = (
         "<table><thead><tr>"
-        "<th>Status</th><th>Name</th><th>Detail</th>"
+        "<th>Status</th><th>Source</th><th>Name</th><th>Detail</th>"
         "<th>HTTP</th><th>Count</th><th>Upstream</th><th>Meta</th><th>URL</th>"
         "</tr></thead><tbody>"
         + "".join(result_row(r) for r in snap["results"])
@@ -2837,6 +2846,8 @@ th{{font-weight:600;color:#B8B8B8;font-size:.76rem;text-transform:uppercase;lett
 .chip-ok{{background:rgba(46,160,67,.25);color:#7ee08a}}
 .chip-warn{{background:rgba(255,180,0,.25);color:#FFB400}}
 .chip-err{{background:rgba(255,59,48,.25);color:#ff8a82}}
+.chip-live{{background:rgba(112,40,228,.25);color:#c4a0ff}}
+.chip-synth{{background:rgba(255,255,255,.08);color:#9aa;border:1px dashed rgba(255,255,255,.2)}}
 footer{{text-align:center;padding:1.5rem;font-size:.75rem;color:rgba(245,245,245,.4)}}
 </style>
 </head><body>
