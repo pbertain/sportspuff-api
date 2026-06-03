@@ -291,10 +291,23 @@ class CricketCollector(BaseCollector):
         self._enforce_usage_budget()
         params = dict(params)
         params["apikey"] = self.cricapi_key
-        response = requests.get(f"{CRICAPI_BASE}/{endpoint}", params=params, timeout=self.api_timeout)
-        response.raise_for_status()
-        data = response.json()
+        try:
+            response = requests.get(f"{CRICAPI_BASE}/{endpoint}", params=params, timeout=self.api_timeout)
+            response.raise_for_status()
+            data = response.json()
+        except Exception as e:
+            try:
+                from ..services.upstream_health import record_failure
+                record_failure("CricAPI", f"{type(e).__name__}: {e}")
+            except Exception:
+                pass
+            raise
         self._track_usage(data)
+        try:
+            from ..services.upstream_health import record_success
+            record_success("CricAPI")
+        except Exception:
+            pass
         return data
 
     def _track_usage(self, data: Dict[str, Any]) -> None:
@@ -475,10 +488,10 @@ class CricketCollector(BaseCollector):
                 is_live = bool(match.get("matchStarted")) and not match.get("matchEnded")
                 match_date = self._match_date(match)
                 # Force a fresh fetch only for live games and matches that ended in
-                # the last couple of days (to capture final scores). Everything else
+                # the last 24 hours (to capture final scores). Everything else
                 # is served from the persistent cache, so historical enrichment is a
                 # one-time cost rather than a per-refresh fan-out.
-                recently_ended = bool(match.get("matchEnded")) and match_date and (focus - match_date) <= timedelta(days=2)
+                recently_ended = bool(match.get("matchEnded")) and match_date and (focus - match_date) <= timedelta(days=1)
                 force = settings.cricapi_live_refresh and (is_live or bool(recently_ended))
                 try:
                     info = self._get_match_info(match["id"], force_refresh=force)

@@ -184,22 +184,30 @@ class MLSCollector(BaseCollector):
             self._check_rate_limit()
             url = f"{ESPN_BASE}/scoreboard?dates={year}0101-{year}1231"
             response = requests.get(url, timeout=self.api_timeout)
-            if response.status_code == 200:
-                data = response.json()
-                calendar = data.get('leagues', [{}])[0].get('calendar', [])
-                match_days = sorted({c[:10] for c in calendar if c})
-                if match_days:
-                    today = datetime.now().strftime('%Y-%m-%d')
-                    season_types = self._build_season_segments(match_days)
-                    current_phase = 'Off Season'
-                    for t in season_types:
-                        if t['start_date'] <= today <= t['end_date']:
-                            current_phase = t['name']
-                    return {
-                        'year': year,
-                        'current_phase': current_phase,
-                        'season_types': season_types,
-                    }
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            league = (data.get('leagues') or [{}])[0]
+            season = league.get('season') or {}
+            today = datetime.now().strftime('%Y-%m-%d')
+
+            # ESPN's calendar field is empty for soccer/usa.1 right now; events[]
+            # is paginated (~100 per call) so it only covers part of the season
+            # and can't drive gap detection reliably. Trust leagues.season for
+            # outer bounds; the FIFA gap split can return when ESPN restores
+            # calendar or we add multi-page event collection.
+            start = (season.get('startDate') or '')[:10]
+            end = (season.get('endDate') or '')[:10]
+            if start and end:
+                phase_name = (season.get('type') or {}).get('name') or 'Regular Season'
+                current_phase = phase_name if start <= today <= end else 'Off Season'
+                return {
+                    'year': year,
+                    'current_phase': current_phase,
+                    'season_types': [
+                        {'name': phase_name, 'start_date': start, 'end_date': end},
+                    ],
+                }
             return None
         except Exception as e:
             logger.error(f"Error fetching MLS season info: {e}")

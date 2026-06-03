@@ -7,10 +7,12 @@ from typing import Dict, List, Optional, Any
 from datetime import datetime, date
 import logging
 import time
+import requests
 from sqlalchemy.orm import Session
 
 from ..models import Game, ApiUsage
 from ..config import settings
+from ..utils import api_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -50,7 +52,7 @@ class BaseCollector(ABC):
         # Record this request
         self.request_times.append(now)
     
-    def _log_api_usage(self, db: Session, endpoint: str, success: bool, 
+    def _log_api_usage(self, db: Session, endpoint: str, success: bool,
                       error_message: Optional[str] = None, response_time_ms: Optional[int] = None):
         """Log API usage to the database."""
         try:
@@ -66,6 +68,42 @@ class BaseCollector(ABC):
         except Exception as e:
             logger.error(f"Failed to log API usage: {e}")
             db.rollback()
+
+    # Per-HTTP-call tracking. Collectors that hit paid quotas (Tank01 NFL,
+    # RapidAPI WNBA) should use this instead of bare requests.get so the
+    # budget gates count actual upstream calls, not collector-method calls.
+    def _tracked_get(self, url: str, endpoint_label: str = "http_get", **kwargs):
+        """Issue a GET and record one api_tracker entry per HTTP call."""
+        # Lazy DB-backed budget log; never block on DB hiccups.
+        from ..database import get_db_session
+        started = time.time()
+        success = True
+        error_message: Optional[str] = None
+        try:
+            response = requests.get(url, **kwargs)
+            return response
+        except Exception as e:
+            success = False
+            error_message = f"{type(e).__name__}: {e}"
+            raise
+        finally:
+            response_time_ms = int((time.time() - started) * 1000)
+            api_tracker.record_request(
+                self.league, endpoint_label,
+                success=success,
+                response_time_ms=response_time_ms,
+                error_message=error_message,
+            )
+            try:
+                with get_db_session() as db:
+                    api_tracker.log_to_database(
+                        db, self.league, endpoint_label,
+                        success=success,
+                        response_time_ms=response_time_ms,
+                        error_message=error_message,
+                    )
+            except Exception as exc:
+                logger.debug("Could not persist api usage for %s: %s", self.league, exc)
     
     @abstractmethod
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:

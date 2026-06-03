@@ -7,7 +7,7 @@ with both JSON and cURL-style text output.
 
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
-from fastapi import FastAPI, Path, Query, HTTPException
+from fastapi import FastAPI, Path, Query, HTTPException, Request
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
 import pytz
@@ -19,6 +19,7 @@ from .models import Game
 from .config import settings
 from .collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 from .utils import api_tracker
+from .services import upstream_health
 
 import time as _time
 
@@ -57,19 +58,30 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
         raise
     finally:
         response_time_ms = int((_time.time() - started_at) * 1000)
-        api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
-        try:
-            with get_db_session() as db:
-                api_tracker.log_to_database(
-                    db,
-                    league,
-                    'api_collector',
-                    success=success,
-                    response_time_ms=response_time_ms,
-                    error_message=error_message,
-                )
-        except Exception as exc:
-            logger.warning("Could not persist API usage for %s: %s", league, exc)
+        # NFL/WNBA collectors record per-HTTP-call internally; logging again
+        # at the method boundary would double-count against their paid quotas.
+        skip_method_record = league.upper() in ("NFL", "WNBA")
+        if not skip_method_record:
+            api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
+        upstream = upstream_health.upstream_for(league, cache_context or "scores")
+        if upstream:
+            if success:
+                upstream_health.record_success(upstream)
+            else:
+                upstream_health.record_failure(upstream, error_message or "fetch failed")
+        if not skip_method_record:
+            try:
+                with get_db_session() as db:
+                    api_tracker.log_to_database(
+                        db,
+                        league,
+                        'api_collector',
+                        success=success,
+                        response_time_ms=response_time_ms,
+                        error_message=error_message,
+                    )
+            except Exception as exc:
+                logger.warning("Could not persist API usage for %s: %s", league, exc)
     _collector_cache[cache_key] = {'data': result, 'timestamp': _time.time()}
     return result
 
@@ -2344,7 +2356,12 @@ def get_standings_api_v1(
     if sport_lower == 'mls':
         collector = get_collector('MLS')
         if collector:
-            standings = collector._fetch_standings()
+            try:
+                standings = collector._fetch_standings()
+                upstream_health.record_success(upstream_health.upstream_for('mls', 'standings'))
+            except Exception as e:
+                upstream_health.record_failure(upstream_health.upstream_for('mls', 'standings'), f"{type(e).__name__}: {e}")
+                raise
             teams = []
             for abbrev, rec in sorted(standings.items(), key=lambda x: -(x[1]['wins'] * 3 + x[1]['draws'])):
                 pts = rec['wins'] * 3 + rec['draws']
@@ -2360,7 +2377,12 @@ def get_standings_api_v1(
 
     if sport_lower in ('ipl', 'mlc'):
         collector = get_collector(SPORT_MAPPINGS[sport_lower])
-        standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+        try:
+            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+            upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
+        except Exception as e:
+            upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
+            raise
         teams = []
         for rec in standings:
             teams.append({
@@ -2379,7 +2401,12 @@ def get_standings_api_v1(
 
     if sport_lower in ('nba', 'mlb', 'nfl', 'nhl', 'wnba'):
         collector = get_collector(SPORT_MAPPINGS[sport_lower])
-        standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+        try:
+            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+            upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
+        except Exception as e:
+            upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
+            raise
         teams = []
         for rec in standings:
             team = {
@@ -2583,7 +2610,15 @@ def get_season_info(
     result = None
 
     if collector:
-        result = collector.get_season_info()
+        try:
+            result = collector.get_season_info()
+            upstream_health.record_success(upstream_health.upstream_for(league_upper.lower(), 'season-info'))
+        except Exception as e:
+            upstream_health.record_failure(
+                upstream_health.upstream_for(league_upper.lower(), 'season-info'),
+                f"{type(e).__name__}: {e}",
+            )
+            result = None
 
     if not result:
         result = _get_season_info_from_db(league_upper)
@@ -2616,6 +2651,215 @@ def get_cricket_season(
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
+def _status_api_base(request_url: str) -> str:
+    # Probe ourselves over the same origin the client used so dev/prod hosts
+    # and ports don't need to be configured separately.
+    from urllib.parse import urlsplit
+    parts = urlsplit(request_url)
+    return f"{parts.scheme}://{parts.netloc}"
+
+
+@app.get("/api/v1/status")
+def api_status_json(request: Request):
+    """JSON snapshot of upstream + own-endpoint health."""
+    from .services.status import get_status
+    return get_status(_status_api_base(str(request.url)))
+
+
+@app.get("/curl/v1/status", response_class=PlainTextResponse)
+def api_status_curl(
+    request: Request,
+    only: Optional[str] = Query(None, description="Filter rows: errors, warnings, all (default all)"),
+):
+    """Plain-text status table for terminal use."""
+    from .services.status import get_status
+    snap = get_status(_status_api_base(str(request.url)))
+
+    keep = {"errors": {"error"}, "warnings": {"error", "warning"}}.get(
+        (only or "").lower(), {"ok", "warning", "error"}
+    )
+
+    summary = snap["summary"]
+    sum_line = f"summary: ok={summary.get('ok',0)}  warn={summary.get('warning',0)}  err={summary.get('error',0)}"
+
+    up_lines = ["== UPSTREAMS =="]
+    up_lines.append(f"{'CAT':<5} {'AGE':>7}  {'NAME':<16} DETAIL")
+    shown_up = [u for u in snap["upstreams"] if u.get("category") in keep]
+    if not shown_up:
+        up_lines.append("(none)")
+    for u in shown_up:
+        age = u.get("age_seconds")
+        age_s = f"{age}s" if age is not None else "-"
+        up_lines.append(
+            f"{u.get('category','')[:5]:<5} {age_s:>7}  {u.get('name',''):<16} {u.get('detail','')}"
+        )
+
+    res_lines = ["== RESULTS =="]
+    res_lines.append(f"{'CAT':<5} {'SRC':<5} {'HTTP':>4} {'CNT':>4}  {'NAME':<28} {'UPSTREAM':<14} DETAIL")
+    shown_res = [r for r in snap["results"] if r.get("category") in keep]
+    if not shown_res:
+        res_lines.append("(none)")
+    for r in shown_res:
+        sc = r.get("status_code")
+        cnt = r.get("count")
+        src = "synth" if (r.get("detail") or "").startswith("synth:") else "live"
+        res_lines.append(
+            f"{r.get('category','')[:5]:<5} "
+            f"{src:<5} "
+            f"{(str(sc) if sc is not None else '-'):>4} "
+            f"{(str(cnt) if cnt is not None else '-'):>4}  "
+            f"{r.get('name',''):<28} "
+            f"{(r.get('upstream') or '-'):<14} "
+            f"{r.get('detail','')}"
+        )
+
+    return "\n".join([
+        f"sportspuff-api status  ({snap['checked_at']})",
+        f"base: {snap['api_base_url']}",
+        sum_line,
+        "",
+        *up_lines,
+        "",
+        *res_lines,
+        "",
+    ])
+
+
+@app.get("/status", response_class=HTMLResponse)
+def api_status_page(request: Request):
+    """HTML status page (upstreams + per-endpoint health)."""
+    from .services.status import get_status
+    snap = get_status(_status_api_base(str(request.url)))
+
+    def chip(cat):
+        cls = {"ok": "chip-ok", "warning": "chip-warn", "error": "chip-err"}.get(cat, "chip-err")
+        return f"<span class='chip {cls}'>{cat}</span>"
+
+    def upstream_row(u):
+        age = u.get("age_seconds")
+        age_s = f"{age}s" if age is not None else ""
+        last_ok = u.get("last_success_at") or ""
+        last_err = u.get("last_error_at") or ""
+        stale = "yes" if u.get("stale") else "no"
+        return (
+            f"<tr>"
+            f"<td>{chip(u.get('category','error'))}</td>"
+            f"<td>{u.get('name','')}</td>"
+            f"<td class='mono'>{u.get('detail','')}</td>"
+            f"<td class='mono num'>{age_s}</td>"
+            f"<td class='mono num'>{stale}</td>"
+            f"<td class='mono'>{last_ok}</td>"
+            f"<td class='mono'>{last_err}</td>"
+            f"</tr>"
+        )
+
+    def result_row(r):
+        sc = r.get("status_code")
+        sc_s = str(sc) if sc is not None else ""
+        cnt = r.get("count")
+        cnt_s = str(cnt) if cnt is not None else ""
+        is_synth = (r.get("detail") or "").startswith("synth:")
+        method_chip = (
+            "<span class='chip chip-synth' title='Derived from in-memory bookkeeping (no live probe — protects upstream quota)'>synth</span>"
+            if is_synth else
+            "<span class='chip chip-live' title='Live HTTP probe of this endpoint'>live</span>"
+        )
+        meta = r.get("meta") or {}
+        meta_s = ""
+        if meta:
+            ms = "stale" if meta.get("stale") else "fresh"
+            age = meta.get("age_seconds")
+            ttl = meta.get("ttl_seconds")
+            src = meta.get("source") or "?"
+            meta_s = f"{ms} · src={src}"
+            if age is not None and ttl is not None:
+                meta_s += f" · {age}s/{ttl}s"
+        return (
+            f"<tr>"
+            f"<td>{chip(r.get('category','error'))}</td>"
+            f"<td>{method_chip}</td>"
+            f"<td>{r.get('name','')}</td>"
+            f"<td class='mono'>{r.get('detail','')}</td>"
+            f"<td class='mono num'>{sc_s}</td>"
+            f"<td class='mono num'>{cnt_s}</td>"
+            f"<td>{r.get('upstream') or ''}</td>"
+            f"<td class='mono'>{meta_s}</td>"
+            f"<td class='mono url'>{r.get('url','')}</td>"
+            f"</tr>"
+        )
+
+    s = snap["summary"]
+    summary_html = (
+        f"<span class='chip chip-ok'>ok {s.get('ok',0)}</span>"
+        f"<span class='chip chip-warn'>warn {s.get('warning',0)}</span>"
+        f"<span class='chip chip-err'>err {s.get('error',0)}</span>"
+    )
+
+    up_table = (
+        "<table><thead><tr>"
+        "<th>Status</th><th>Upstream</th><th>Detail</th>"
+        "<th>Age</th><th>Stale</th><th>Last OK</th><th>Last err</th>"
+        "</tr></thead><tbody>"
+        + "".join(upstream_row(u) for u in snap["upstreams"])
+        + "</tbody></table>"
+    )
+    res_table = (
+        "<table><thead><tr>"
+        "<th>Status</th><th>Source</th><th>Name</th><th>Detail</th>"
+        "<th>HTTP</th><th>Count</th><th>Upstream</th><th>Meta</th><th>URL</th>"
+        "</tr></thead><tbody>"
+        + "".join(result_row(r) for r in snap["results"])
+        + "</tbody></table>"
+    )
+
+    return f"""<!DOCTYPE html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SportsPuff API · Status</title>
+<style>
+*{{margin:0;padding:0;box-sizing:border-box}}
+body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
+  background:linear-gradient(135deg,#1A0B3D 0%,#2D1B69 50%,#3D2A7A 100%);
+  color:#F5F5F5;min-height:100vh}}
+header{{background:linear-gradient(135deg,#2D1B69 0%,#FF3B30 100%);
+  padding:1.5rem;text-align:center;box-shadow:0 2px 10px rgba(0,0,0,.3)}}
+header h1{{font-size:1.8rem}}
+header p{{font-size:.9rem;color:rgba(245,245,245,.75);margin-top:.25rem}}
+.container{{max-width:1200px;margin:1.5rem auto;padding:1.5rem;
+  background:rgba(26,11,61,.9);border-radius:14px;
+  border:1px solid rgba(255,255,255,.15)}}
+h2{{font-size:1.15rem;color:#FFB400;margin:1.25rem 0 .5rem}}
+h2:first-child{{margin-top:0}}
+.summary{{margin-bottom:.5rem;font-size:.85rem}}
+table{{width:100%;border-collapse:collapse;font-size:.83rem;margin-bottom:1rem}}
+th,td{{padding:.4rem .55rem;text-align:left;
+  border-bottom:1px solid rgba(255,255,255,.08);vertical-align:top}}
+th{{font-weight:600;color:#B8B8B8;font-size:.76rem;text-transform:uppercase;letter-spacing:.04em}}
+.mono{{font-family:'SF Mono',Menlo,monospace;font-size:.76rem}}
+.num{{text-align:right;white-space:nowrap}}
+.url{{color:#9aa;word-break:break-all}}
+.chip{{display:inline-block;padding:.1rem .5rem;border-radius:10px;
+  font-size:.72rem;font-weight:600;margin-right:.3rem}}
+.chip-ok{{background:rgba(46,160,67,.25);color:#7ee08a}}
+.chip-warn{{background:rgba(255,180,0,.25);color:#FFB400}}
+.chip-err{{background:rgba(255,59,48,.25);color:#ff8a82}}
+.chip-live{{background:rgba(112,40,228,.25);color:#c4a0ff}}
+.chip-synth{{background:rgba(255,255,255,.08);color:#9aa;border:1px dashed rgba(255,255,255,.2)}}
+footer{{text-align:center;padding:1.5rem;font-size:.75rem;color:rgba(245,245,245,.4)}}
+</style>
+</head><body>
+<header><h1>API status</h1><p>checked {snap['checked_at']} · {snap['api_base_url']}</p></header>
+<div class="container">
+  <h2>Upstreams</h2>
+  {up_table}
+  <h2>Endpoints <span class="summary">{summary_html}</span></h2>
+  {res_table}
+</div>
+<footer>JSON: <a href="/api/v1/status" style="color:#9aa">/api/v1/status</a> · curl: <a href="/curl/v1/status" style="color:#9aa">/curl/v1/status</a></footer>
+</body></html>"""
 
 
 # Catch-all routes for unknown /api/ and /curl/ paths - return help

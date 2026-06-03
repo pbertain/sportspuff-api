@@ -59,23 +59,26 @@ class ScheduleUpdater:
                 
                 # Fetch schedule
                 games = collector.get_schedule(target_date)
-                
-                # Record API usage
-                api_tracker.record_request(league, 'schedule', success=True)
-                with get_db_session() as db:
-                    api_tracker.log_to_database(db, league, 'schedule', success=True)
-                
+
+                # NFL/WNBA collectors track per-HTTP-call internally; skip method-level
+                # logging to keep the budget gate counting actual upstream calls only.
+                if league.upper() not in ("NFL", "WNBA"):
+                    api_tracker.record_request(league, 'schedule', success=True)
+                    with get_db_session() as db:
+                        api_tracker.log_to_database(db, league, 'schedule', success=True)
+
                 # Store games in database
                 stored_count = self._store_games(games, league)
                 results[league] = stored_count
-                
+
                 logger.info(f"Updated {league}: {stored_count} games stored")
-                
+
             except Exception as e:
                 logger.error(f"Error updating {league} schedule: {e}")
-                api_tracker.record_request(league, 'schedule', success=False, error_message=str(e))
-                with get_db_session() as db:
-                    api_tracker.log_to_database(db, league, 'schedule', success=False, error_message=str(e))
+                if league.upper() not in ("NFL", "WNBA"):
+                    api_tracker.record_request(league, 'schedule', success=False, error_message=str(e))
+                    with get_db_session() as db:
+                        api_tracker.log_to_database(db, league, 'schedule', success=False, error_message=str(e))
                 results[league] = 0
         
         return results
@@ -118,23 +121,24 @@ class ScheduleUpdater:
                 
                 # Fetch schedule
                 games = collector.get_schedule(current_date)
-                
-                # Record API usage
-                api_tracker.record_request(league, 'schedule', success=True)
-                with get_db_session() as db:
-                    api_tracker.log_to_database(db, league, 'schedule', success=True)
-                
+
+                if league.upper() not in ("NFL", "WNBA"):
+                    api_tracker.record_request(league, 'schedule', success=True)
+                    with get_db_session() as db:
+                        api_tracker.log_to_database(db, league, 'schedule', success=True)
+
                 # Store games in database
                 stored_count = self._store_games(games, league)
                 total_stored += stored_count
-                
+
                 logger.info(f"Updated {league} for {current_date}: {stored_count} games stored")
-                
+
             except Exception as e:
                 logger.error(f"Error updating {league} schedule for {current_date}: {e}")
-                api_tracker.record_request(league, 'schedule', success=False, error_message=str(e))
-                with get_db_session() as db:
-                    api_tracker.log_to_database(db, league, 'schedule', success=False, error_message=str(e))
+                if league.upper() not in ("NFL", "WNBA"):
+                    api_tracker.record_request(league, 'schedule', success=False, error_message=str(e))
+                    with get_db_session() as db:
+                        api_tracker.log_to_database(db, league, 'schedule', success=False, error_message=str(e))
                 continue
         
         logger.info(f"Updated {league}: {total_stored} total games stored")
@@ -251,23 +255,24 @@ class ScheduleUpdater:
                 
                 # Fetch full season schedule
                 games = collector.get_season_schedule(season=season)
-                
-                # Record API usage
-                api_tracker.record_request(league_name, 'season_schedule', success=True)
-                with get_db_session() as db:
-                    api_tracker.log_to_database(db, league_name, 'season_schedule', success=True)
-                
+
+                if league_name.upper() not in ("NFL", "WNBA"):
+                    api_tracker.record_request(league_name, 'season_schedule', success=True)
+                    with get_db_session() as db:
+                        api_tracker.log_to_database(db, league_name, 'season_schedule', success=True)
+
                 # Store games in database
                 stored_count = self._store_games(games, league_name)
                 results[league_name] = stored_count
-                
+
                 logger.info(f"Updated {league_name} season: {stored_count} games stored")
-                
+
             except Exception as e:
                 logger.error(f"Error updating {league_name} season schedule: {e}")
-                api_tracker.record_request(league_name, 'season_schedule', success=False, error_message=str(e))
-                with get_db_session() as db:
-                    api_tracker.log_to_database(db, league_name, 'season_schedule', success=False, error_message=str(e))
+                if league_name.upper() not in ("NFL", "WNBA"):
+                    api_tracker.record_request(league_name, 'season_schedule', success=False, error_message=str(e))
+                    with get_db_session() as db:
+                        api_tracker.log_to_database(db, league_name, 'season_schedule', success=False, error_message=str(e))
                 results[league_name] = 0
         
         return results
