@@ -78,6 +78,15 @@ class APITracker:
                 return False
 
         if league == 'WNBA':
+            today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+            requests_today = self._count_requests_since(db, league, today_start)
+            if requests_today >= settings.wnba_max_requests_per_day:
+                logger.warning(
+                    "WNBA daily API budget reached: %s/%s",
+                    requests_today,
+                    settings.wnba_max_requests_per_day,
+                )
+                return False
             month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
             requests_this_month = self._count_requests_since(db, league, month_start)
             if requests_this_month >= settings.wnba_max_requests_per_month:
@@ -245,6 +254,8 @@ class APITracker:
         if league == 'NFL':
             return self.daily_usage[league] < settings.nfl_max_requests_per_day
         if league == 'WNBA':
+            if self.daily_usage[league] >= settings.wnba_max_requests_per_day:
+                return False
             return self.monthly_usage[league] < settings.wnba_max_requests_per_month
         return True
 
