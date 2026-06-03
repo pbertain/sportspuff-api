@@ -88,6 +88,10 @@ _MATCH_INFO_TTL = 86400  # ended-match details don't change; keep for a day
 # bounds CricAPI spend if the season feed is hit frequently, since each live
 # build force-refreshes in-progress matches.
 _season_response_cache: Dict[str, Dict[str, Any]] = {}
+# Sliding-window timestamps of CricAPI calls for hourly circuit-breaker. We
+# track our own count because CricAPI's info.hitsToday is daily-only.
+from collections import deque as _deque
+_cricapi_recent_calls: "_deque[float]" = _deque()
 _DEFAULT_CACHE_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "cache", "cricket"
 )
@@ -291,6 +295,7 @@ class CricketCollector(BaseCollector):
         self._enforce_usage_budget()
         params = dict(params)
         params["apikey"] = self.cricapi_key
+        _cricapi_recent_calls.append(time.time())
         try:
             response = requests.get(f"{CRICAPI_BASE}/{endpoint}", params=params, timeout=self.api_timeout)
             response.raise_for_status()
@@ -364,6 +369,21 @@ class CricketCollector(BaseCollector):
         if _cricapi_usage["date"] != today:
             _cricapi_usage["hits_today"] = 0
             _cricapi_usage["date"] = today
+
+        # Hourly circuit-breaker: prune timestamps older than 1h, then check
+        # against the configured hourly cap. Catches runaway fan-outs in
+        # minutes instead of letting them drain the daily quota.
+        now_ts = time.time()
+        while _cricapi_recent_calls and now_ts - _cricapi_recent_calls[0] > 3600:
+            _cricapi_recent_calls.popleft()
+        if len(_cricapi_recent_calls) >= settings.cricapi_max_requests_per_hour:
+            logger.warning(
+                "CricAPI hourly circuit-breaker tripped: %s/%s in last 60 min",
+                len(_cricapi_recent_calls),
+                settings.cricapi_max_requests_per_hour,
+            )
+            return False
+
         hits = _cricapi_usage["hits_today"]
         if not hits:
             return True
@@ -371,10 +391,22 @@ class CricketCollector(BaseCollector):
 
     def _enforce_usage_budget(self) -> None:
         if not self._cricapi_can_fetch():
-            raise CricAPIBudgetExceeded(
-                f"CricAPI daily usage {_cricapi_usage['hits_today']}/{self._usage_limit()} "
-                f"(reserve {settings.cricapi_usage_reserve}) reached"
-            )
+            now_ts = time.time()
+            recent = sum(1 for ts in _cricapi_recent_calls if now_ts - ts <= 3600)
+            hourly_cap = settings.cricapi_max_requests_per_hour
+            if recent >= hourly_cap:
+                reason = f"hourly cap reached ({recent}/{hourly_cap} in last 60 min)"
+            else:
+                reason = (
+                    f"daily usage {_cricapi_usage['hits_today']}/{self._usage_limit()} "
+                    f"(reserve {settings.cricapi_usage_reserve}) reached"
+                )
+            try:
+                from ..services.upstream_health import record_failure
+                record_failure("CricAPI", f"budget gate: {reason}")
+            except Exception:
+                pass
+            raise CricAPIBudgetExceeded(f"CricAPI {reason}")
 
     def _disk_cache_path(self, key: str) -> str:
         base = settings.cricapi_cache_dir or _DEFAULT_CACHE_DIR

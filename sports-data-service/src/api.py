@@ -45,6 +45,9 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
 
     if not can_fetch:
         logger.warning("Skipping %s collector fetch due to API budget/rate limit", league)
+        upstream = upstream_health.upstream_for(league, cache_context or "scores")
+        if upstream:
+            upstream_health.record_failure(upstream, "budget gate: rate/budget limit reached")
         return []
 
     started_at = _time.time()

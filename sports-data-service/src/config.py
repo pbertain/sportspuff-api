@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     # API Configuration
     cricapi_key: str = Field(default="", description="CricAPI key for IPL/MLC cricket data")
     cricapi_max_requests_per_day: int = Field(default=2000, description="Daily request limit for the shared CricAPI key (IPL/MLC)")
+    cricapi_max_requests_per_hour: int = Field(default=300, description="Hourly circuit-breaker for CricAPI; sized to catch runaway fan-outs without throttling normal cricket-day surges (~15% of daily)")
     cricapi_usage_reserve: int = Field(default=200, description="Headroom left below the CricAPI daily limit for other consumers of the shared key")
     cricapi_cache_dir: str = Field(default="", description="Directory for persisted CricAPI responses; defaults to <service>/cache/cricket")
     cricapi_live_refresh: bool = Field(default=True, description="Force-refresh in-progress/recently-ended cricket matches each build. Disable on dev to conserve the shared quota.")
@@ -72,9 +73,11 @@ class Settings(BaseSettings):
     
     # Paid API limits (for Tank01/RapidAPI)
     nfl_max_requests_per_day: int = Field(default=1000, description="Daily included request limit for NFL API (Tank01/RapidAPI)")
+    nfl_max_requests_per_hour: int = Field(default=150, description="Hourly circuit-breaker for NFL Tank01 (~15% of daily)")
     nfl_max_requests_per_month: int = Field(default=10000, description="Monthly limit for NFL API (Tank01/RapidAPI)")
     wnba_max_requests_per_month: int = Field(default=14000, description="Monthly included request limit for WNBA API (RapidAPI)")
     wnba_max_requests_per_day: int = Field(default=460, description="Daily soft cap for WNBA API to keep monthly under quota (~14000/30)")
+    wnba_max_requests_per_hour: int = Field(default=80, description="Hourly circuit-breaker for WNBA RapidAPI (~17% of daily)")
     wnba_max_requests_per_second: int = Field(default=10, description="Per-second rate limit for WNBA API (RapidAPI)")
     
     # API Server

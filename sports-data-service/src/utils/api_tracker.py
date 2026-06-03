@@ -66,7 +66,16 @@ class APITracker:
             return self._can_make_in_memory_budgeted_request(league)
 
         now = datetime.utcnow()
+        hour_start = now - timedelta(hours=1)
         if league == 'NFL':
+            requests_last_hour = self._count_requests_since(db, league, hour_start)
+            if requests_last_hour >= settings.nfl_max_requests_per_hour:
+                logger.warning(
+                    "NFL hourly API budget reached: %s/%s",
+                    requests_last_hour,
+                    settings.nfl_max_requests_per_hour,
+                )
+                return False
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             requests_today = self._count_requests_since(db, league, today_start)
             if requests_today >= settings.nfl_max_requests_per_day:
@@ -78,6 +87,14 @@ class APITracker:
                 return False
 
         if league == 'WNBA':
+            requests_last_hour = self._count_requests_since(db, league, hour_start)
+            if requests_last_hour >= settings.wnba_max_requests_per_hour:
+                logger.warning(
+                    "WNBA hourly API budget reached: %s/%s",
+                    requests_last_hour,
+                    settings.wnba_max_requests_per_hour,
+                )
+                return False
             today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
             requests_today = self._count_requests_since(db, league, today_start)
             if requests_today >= settings.wnba_max_requests_per_day:
@@ -251,6 +268,10 @@ class APITracker:
         self._reset_daily_usage_if_needed()
         self._reset_monthly_usage_if_needed()
 
+        # In-memory hourly counter: count entries in request_history (last 60s
+        # only) is too narrow; use daily_usage as a coarse signal and rely on
+        # the DB-backed path for accurate hourly enforcement. The in-memory
+        # path is just a fallback when DB is unavailable.
         if league == 'NFL':
             return self.daily_usage[league] < settings.nfl_max_requests_per_day
         if league == 'WNBA':
