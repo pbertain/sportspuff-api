@@ -73,7 +73,7 @@ class NFLCollector(BaseCollector):
                 "teamStats": "true",
                 "teamStatsSeason": str(season_year),
             }
-            response = requests.get(endpoint, headers=self.headers, params=params, timeout=self.api_timeout)
+            response = self._tracked_get(endpoint, "tank01_get", headers=self.headers, params=params, timeout=self.api_timeout)
             if response.status_code != 200:
                 logger.warning(f"NFL standings API returned status {response.status_code}")
                 return self._standings_cache
@@ -215,7 +215,7 @@ class NFLCollector(BaseCollector):
             params = {'gameDate': date_str}
             
             start_time = time.time()
-            response = requests.get(url, headers=self.headers, params=params, timeout=self.api_timeout)
+            response = self._tracked_get(url, "tank01_get", headers=self.headers, params=params, timeout=self.api_timeout)
             response_time = int((time.time() - start_time) * 1000)
             
             if response.status_code == 200:
@@ -314,7 +314,7 @@ class NFLCollector(BaseCollector):
             params = {'gameDate': date_str, 'topPerformers': 'false'}
             
             start_time = time.time()
-            response = requests.get(url, headers=self.headers, params=params, timeout=self.api_timeout)
+            response = self._tracked_get(url, "tank01_get", headers=self.headers, params=params, timeout=self.api_timeout)
             response_time = int((time.time() - start_time) * 1000)
             
             if response.status_code == 200:
@@ -344,7 +344,7 @@ class NFLCollector(BaseCollector):
                     logger.debug(f"No live scores found, trying schedule endpoint for date {date_str}")
                     url_schedule = f"{self.base_url}/getNFLGamesForDate"
                     params_schedule = {'gameDate': date_str}
-                    response_schedule = requests.get(url_schedule, headers=self.headers, params=params_schedule, timeout=self.api_timeout)
+                    response_schedule = self._tracked_get(url_schedule, "tank01_get", headers=self.headers, params=params_schedule, timeout=self.api_timeout)
                     
                     if response_schedule.status_code == 200:
                         schedule_data = response_schedule.json()
@@ -494,7 +494,7 @@ class NFLCollector(BaseCollector):
     def _get_game_details(self, game_id: str) -> Dict[str, Any]:
         """Get detailed game data from NFL API."""
         url = f"{self.base_url}/getNFLGameBoxScore/{game_id}"
-        response = requests.get(url, headers=self.headers, timeout=self.api_timeout)
+        response = self._tracked_get(url, "tank01_get", headers=self.headers, timeout=self.api_timeout)
         
         if response.status_code == 200:
             return response.json()
@@ -786,7 +786,7 @@ class NFLCollector(BaseCollector):
             try:
                 logger.debug(f"Syncing NFL teams from: {endpoint}")
                 self._check_rate_limit()
-                response = requests.get(endpoint, headers=self.headers, params=params, timeout=self.api_timeout)
+                response = self._tracked_get(endpoint, "tank01_get", headers=self.headers, params=params, timeout=self.api_timeout)
                 
                 if response.status_code == 200:
                     data = response.json()
@@ -1011,7 +1011,7 @@ class NFLCollector(BaseCollector):
             try:
                 logger.debug(f"Trying to fetch NFL records from: {endpoint} with params: {params}")
                 self._check_rate_limit()
-                response = requests.get(endpoint, headers=self.headers, params=params, timeout=self.api_timeout)
+                response = self._tracked_get(endpoint, "tank01_get", headers=self.headers, params=params, timeout=self.api_timeout)
                     
                 if response.status_code == 200:
                     data = response.json()

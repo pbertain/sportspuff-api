@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     nfl_max_requests_per_day: int = Field(default=1000, description="Daily included request limit for NFL API (Tank01/RapidAPI)")
     nfl_max_requests_per_month: int = Field(default=10000, description="Monthly limit for NFL API (Tank01/RapidAPI)")
     wnba_max_requests_per_month: int = Field(default=14000, description="Monthly included request limit for WNBA API (RapidAPI)")
+    wnba_max_requests_per_day: int = Field(default=460, description="Daily soft cap for WNBA API to keep monthly under quota (~14000/30)")
     wnba_max_requests_per_second: int = Field(default=10, description="Per-second rate limit for WNBA API (RapidAPI)")
     
     # API Server

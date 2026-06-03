@@ -58,25 +58,30 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
         raise
     finally:
         response_time_ms = int((_time.time() - started_at) * 1000)
-        api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
+        # NFL/WNBA collectors record per-HTTP-call internally; logging again
+        # at the method boundary would double-count against their paid quotas.
+        skip_method_record = league.upper() in ("NFL", "WNBA")
+        if not skip_method_record:
+            api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
         upstream = upstream_health.upstream_for(league, cache_context or "scores")
         if upstream:
             if success:
                 upstream_health.record_success(upstream)
             else:
                 upstream_health.record_failure(upstream, error_message or "fetch failed")
-        try:
-            with get_db_session() as db:
-                api_tracker.log_to_database(
-                    db,
-                    league,
-                    'api_collector',
-                    success=success,
-                    response_time_ms=response_time_ms,
-                    error_message=error_message,
-                )
-        except Exception as exc:
-            logger.warning("Could not persist API usage for %s: %s", league, exc)
+        if not skip_method_record:
+            try:
+                with get_db_session() as db:
+                    api_tracker.log_to_database(
+                        db,
+                        league,
+                        'api_collector',
+                        success=success,
+                        response_time_ms=response_time_ms,
+                        error_message=error_message,
+                    )
+            except Exception as exc:
+                logger.warning("Could not persist API usage for %s: %s", league, exc)
     _collector_cache[cache_key] = {'data': result, 'timestamp': _time.time()}
     return result
 

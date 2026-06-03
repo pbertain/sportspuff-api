@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 
 SELF_RESULT_KEYS = ("teams", "standings", "scores", "games", "season_types", "matches")
 SELF_LEAGUES = ("mlb", "nba", "nfl", "nhl", "mls", "wnba", "ipl", "mlc")
+CRICKET_LEAGUES = ("ipl", "mlc")
 SELF_ENDPOINT_KINDS = ("standings", "season-info", "schedule", "scores")
 
 _PAYLOAD_TTL = 10  # seconds
@@ -136,6 +137,12 @@ def _meta_for(upstream: Optional[str], ttl: Optional[int]) -> Optional[Dict[str,
 def _self_probes(api_base: str) -> List[Dict[str, str]]:
     probes = []
     for lg in SELF_LEAGUES:
+        # Cricket leagues share a tightly-quota-capped upstream (CricAPI). Live
+        # probing them on every status call would fan out 5-15 CricAPI hits per
+        # league per probe; instead we synthesize their rows from bookkeeping
+        # in _cricket_synth_rows().
+        if lg in CRICKET_LEAGUES:
+            continue
         u = lg.upper()
         probes.append({"league": lg, "kind": "standings",
                        "name": f"{u} standings",
@@ -150,6 +157,66 @@ def _self_probes(api_base: str) -> List[Dict[str, str]]:
                        "name": f"{u} scores (today)",
                        "url": f"{api_base}/api/v1/scores/{lg}/today"})
     return probes
+
+
+def _cricket_synth_rows(api_base: str) -> List[Dict[str, Any]]:
+    """Build status rows for cricket leagues from CricAPI bookkeeping rather
+    than probing /api/v1/standings/ipl etc., which would fan out 5-15 CricAPI
+    hits per probe."""
+    snap = upstream_health.snapshot().get("CricAPI", {})
+    last_ok = snap.get("last_success_at")
+    last_err = snap.get("last_error_at")
+    last_err_msg = snap.get("last_error")
+    now_ts = time.time()
+    age = int((datetime.now(timezone.utc) - last_ok).total_seconds()) if last_ok else None
+
+    cache_dir = settings.cricapi_cache_dir or _default_cache_dir()
+    have_cache = os.path.isdir(cache_dir) and any(
+        f.endswith(".json") and f != "usage.json"
+        for f in (os.listdir(cache_dir) if os.path.isdir(cache_dir) else [])
+    )
+    hits_today = _cricapi_usage.get("hits_today") or 0
+    hits_limit = _cricapi_usage.get("hits_limit") or settings.cricapi_max_requests_per_day
+    reserve = settings.cricapi_usage_reserve
+    quota_exhausted = hits_today >= max(0, hits_limit - reserve)
+
+    if last_err and (not last_ok or last_err > last_ok):
+        category = "error"
+        detail_base = last_err_msg or "last CricAPI attempt failed"
+    elif quota_exhausted and have_cache:
+        category = "warning"
+        detail_base = f"quota exhausted ({hits_today}/{hits_limit}); served from cache"
+    elif last_ok is None and not have_cache:
+        category = "warning"
+        detail_base = "no CricAPI activity yet this process"
+    elif age is not None and age > upstream_health.UPSTREAM_TTLS.get("CricAPI", 3600):
+        category = "warning"
+        detail_base = f"CricAPI stale (last ok {age}s ago); cache available" if have_cache else f"CricAPI stale (last ok {age}s ago); no cache"
+    else:
+        category = "ok"
+        detail_base = f"CricAPI fresh ({age}s ago)" if age is not None else "CricAPI cached"
+
+    rows = []
+    ttl_by_kind = upstream_health.ENDPOINT_TTLS
+    for lg in CRICKET_LEAGUES:
+        u = lg.upper()
+        for kind, label, path in (
+            ("standings", "standings", f"/api/v1/standings/{lg}"),
+            ("season-info", "season-info", f"/api/v1/season-info/{lg}"),
+            ("schedule", "schedule (today)", f"/api/v1/schedule/{lg}/today"),
+            ("scores", "scores (today)", f"/api/v1/scores/{lg}/today"),
+        ):
+            rows.append({
+                "name": f"{u} {label}",
+                "url": f"{api_base}{path}",
+                "category": category,
+                "status_code": None,
+                "count": None,
+                "detail": f"synth: {detail_base}",
+                "upstream": "CricAPI",
+                "meta": _meta_for("CricAPI", ttl_by_kind.get(kind)),
+            })
+    return rows
 
 
 def _summarize(rows: List[Dict[str, Any]]) -> Dict[str, int]:
@@ -286,19 +353,21 @@ def get_status(api_base: str) -> Dict[str, Any]:
                     "upstream": None,
                     "meta": None,
                 })
-    results.sort(key=_sort_key)
-
     _apply_no_games_downgrade(results)
     for r in results:
         r.pop("_league", None)
         r.pop("_kind", None)
         r.pop("_payload", None)
 
+    # Cricket rows are synthesized (no live probe) to protect CricAPI quota.
+    results.extend(_cricket_synth_rows(api_base))
+    results.sort(key=_sort_key)
+
     upstream_names = sorted({
         upstream_health.upstream_for(p["league"], p["kind"])
         for p in self_probes
         if upstream_health.upstream_for(p["league"], p["kind"])
-    })
+    } | {"CricAPI"})  # CricAPI is no longer reached via the probe set; include it explicitly.
     upstreams: List[Dict[str, Any]] = []
     for name in upstream_names:
         if name == "CricAPI":

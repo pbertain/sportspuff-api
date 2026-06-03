@@ -160,26 +160,29 @@ class LivePoller:
         
         try:
             collector = self.collectors[league]
-            
+
             # Get live scores
             live_games = collector.get_live_scores()
-            
-            # Record API usage
-            api_tracker.record_request(league, 'live_scores', success=True)
-            with get_db_session() as db:
-                api_tracker.log_to_database(db, league, 'live_scores', success=True)
-            
+
+            # NFL/WNBA collectors record per-HTTP-call internally; the
+            # method-level record below would double-count their paid quotas.
+            if league.upper() not in ("NFL", "WNBA"):
+                api_tracker.record_request(league, 'live_scores', success=True)
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league, 'live_scores', success=True)
+
             # Update games in database
             updated_count = self._update_live_games(live_games, league)
-            
+
             logger.debug(f"Updated {updated_count} live games for {league}")
             return updated_count
-            
+
         except Exception as e:
             logger.error(f"Error polling live scores for {league}: {e}")
-            api_tracker.record_request(league, 'live_scores', success=False, error_message=str(e))
-            with get_db_session() as db:
-                api_tracker.log_to_database(db, league, 'live_scores', success=False, error_message=str(e))
+            if league.upper() not in ("NFL", "WNBA"):
+                api_tracker.record_request(league, 'live_scores', success=False, error_message=str(e))
+                with get_db_session() as db:
+                    api_tracker.log_to_database(db, league, 'live_scores', success=False, error_message=str(e))
             return 0
     
     def _update_live_games(self, live_games: List[Dict[str, Any]], league: str) -> int:

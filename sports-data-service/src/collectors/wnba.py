@@ -44,7 +44,7 @@ class WNBACollector(BaseCollector):
             "month": f"{target_date.month:02d}",
             "day": f"{target_date.day:02d}",
         }
-        response = requests.get(url, headers=self.headers, params=params, timeout=self.api_timeout)
+        response = self._tracked_get(url, "rapidapi_get", headers=self.headers, params=params, timeout=self.api_timeout)
         if response.status_code != 200:
             logger.error(f"WNBA API error: {response.status_code}")
             return []
@@ -270,7 +270,7 @@ class WNBACollector(BaseCollector):
             self._check_rate_limit()
             url = f"{self.base_url}/wnbastandings"
             params = {"year": year}
-            response = requests.get(url, headers=self.headers, params=params, timeout=self.api_timeout)
+            response = self._tracked_get(url, "rapidapi_get", headers=self.headers, params=params, timeout=self.api_timeout)
             if response.status_code != 200:
                 return None
 

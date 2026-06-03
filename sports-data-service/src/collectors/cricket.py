@@ -488,10 +488,10 @@ class CricketCollector(BaseCollector):
                 is_live = bool(match.get("matchStarted")) and not match.get("matchEnded")
                 match_date = self._match_date(match)
                 # Force a fresh fetch only for live games and matches that ended in
-                # the last couple of days (to capture final scores). Everything else
+                # the last 24 hours (to capture final scores). Everything else
                 # is served from the persistent cache, so historical enrichment is a
                 # one-time cost rather than a per-refresh fan-out.
-                recently_ended = bool(match.get("matchEnded")) and match_date and (focus - match_date) <= timedelta(days=2)
+                recently_ended = bool(match.get("matchEnded")) and match_date and (focus - match_date) <= timedelta(days=1)
                 force = settings.cricapi_live_refresh and (is_live or bool(recently_ended))
                 try:
                     info = self._get_match_info(match["id"], force_refresh=force)
