@@ -29,64 +29,108 @@ logger = logging.getLogger(__name__)
 _collector_cache: Dict[str, Any] = {}
 _COLLECTOR_CACHE_TTL = 300  # 5 minutes
 
+# In-flight fetch coalescing: when N concurrent requests miss the same cache
+# key, only the first runs the fetcher; the rest wait on its result. Prevents
+# thundering-herd fan-out at cache-miss boundaries (especially against shared
+# upstreams like CricAPI).
+import threading as _threading
+_inflight_fetches: Dict[str, "_threading.Event"] = {}
+_inflight_lock = _threading.Lock()
+_INFLIGHT_WAIT_TIMEOUT = 30  # seconds
+
 
 def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""):
     """Fetch games with 5-minute caching."""
+    # For cricket leagues, drop the per-timezone component from the cache key.
+    # CricAPI is shared/quota-capped and the upstream serves a single global
+    # match calendar, so different ?tz= variants for the same league/date
+    # should share one slot (prevents thundering-herd fan-out under load).
+    # The only field that differs per timezone is cricket_start_time.local;
+    # cricket_start_time.{pt,utc,ist} are absolute. Frontends that need an
+    # exact local time should compute it from the utc field.
+    if league.upper() in ("IPL", "MLC"):
+        cache_context = "cricket-shared"
     cache_key = f"{league}:{target_date.isoformat()}:{cache_context}"
     cached = _collector_cache.get(cache_key)
     if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):
         return cached['data']
-    try:
-        with get_db_session() as db:
-            can_fetch = api_tracker.can_make_budgeted_request(league, db)
-    except Exception as exc:
-        logger.warning("Could not check persistent API budget for %s: %s", league, exc)
-        can_fetch = api_tracker.can_make_budgeted_request(league)
 
-    if not can_fetch:
-        logger.warning("Skipping %s collector fetch due to API budget/rate limit", league)
-        upstream = upstream_health.upstream_for(league, cache_context or "scores")
-        if upstream:
-            upstream_health.record_failure(upstream, "budget gate: rate/budget limit reached")
-        return []
+    # In-flight coalescing: if another request is already fetching this key,
+    # wait for it instead of starting a parallel fetch.
+    with _inflight_lock:
+        existing = _inflight_fetches.get(cache_key)
+        if existing is not None:
+            event = existing
+            we_lead = False
+        else:
+            event = _threading.Event()
+            _inflight_fetches[cache_key] = event
+            we_lead = True
 
-    started_at = _time.time()
-    success = True
-    error_message = None
+    if not we_lead:
+        event.wait(timeout=_INFLIGHT_WAIT_TIMEOUT)
+        cached = _collector_cache.get(cache_key)
+        if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):
+            return cached['data']
+        # In-flight leader failed or timed out; fall through and try ourselves.
+
     try:
-        result = fetcher()
-    except Exception as exc:
-        success = False
-        error_message = str(exc)
-        raise
+        try:
+            with get_db_session() as db:
+                can_fetch = api_tracker.can_make_budgeted_request(league, db)
+        except Exception as exc:
+            logger.warning("Could not check persistent API budget for %s: %s", league, exc)
+            can_fetch = api_tracker.can_make_budgeted_request(league)
+
+        if not can_fetch:
+            logger.warning("Skipping %s collector fetch due to API budget/rate limit", league)
+            upstream = upstream_health.upstream_for(league, cache_context or "scores")
+            if upstream:
+                upstream_health.record_failure(upstream, "budget gate: rate/budget limit reached")
+            return []
+
+        started_at = _time.time()
+        success = True
+        error_message = None
+        try:
+            result = fetcher()
+        except Exception as exc:
+            success = False
+            error_message = str(exc)
+            raise
+        finally:
+            response_time_ms = int((_time.time() - started_at) * 1000)
+            # NFL/WNBA collectors record per-HTTP-call internally; logging again
+            # at the method boundary would double-count against their paid quotas.
+            skip_method_record = league.upper() in ("NFL", "WNBA")
+            if not skip_method_record:
+                api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
+            upstream = upstream_health.upstream_for(league, cache_context or "scores")
+            if upstream:
+                if success:
+                    upstream_health.record_success(upstream)
+                else:
+                    upstream_health.record_failure(upstream, error_message or "fetch failed")
+            if not skip_method_record:
+                try:
+                    with get_db_session() as db:
+                        api_tracker.log_to_database(
+                            db,
+                            league,
+                            'api_collector',
+                            success=success,
+                            response_time_ms=response_time_ms,
+                            error_message=error_message,
+                        )
+                except Exception as exc:
+                    logger.warning("Could not persist API usage for %s: %s", league, exc)
+        _collector_cache[cache_key] = {'data': result, 'timestamp': _time.time()}
+        return result
     finally:
-        response_time_ms = int((_time.time() - started_at) * 1000)
-        # NFL/WNBA collectors record per-HTTP-call internally; logging again
-        # at the method boundary would double-count against their paid quotas.
-        skip_method_record = league.upper() in ("NFL", "WNBA")
-        if not skip_method_record:
-            api_tracker.record_request(league, 'api_collector', success=success, response_time_ms=response_time_ms, error_message=error_message)
-        upstream = upstream_health.upstream_for(league, cache_context or "scores")
-        if upstream:
-            if success:
-                upstream_health.record_success(upstream)
-            else:
-                upstream_health.record_failure(upstream, error_message or "fetch failed")
-        if not skip_method_record:
-            try:
-                with get_db_session() as db:
-                    api_tracker.log_to_database(
-                        db,
-                        league,
-                        'api_collector',
-                        success=success,
-                        response_time_ms=response_time_ms,
-                        error_message=error_message,
-                    )
-            except Exception as exc:
-                logger.warning("Could not persist API usage for %s: %s", league, exc)
-    _collector_cache[cache_key] = {'data': result, 'timestamp': _time.time()}
-    return result
+        if we_lead:
+            with _inflight_lock:
+                _inflight_fetches.pop(cache_key, None)
+            event.set()
 
 
 def get_collector(league: str):
