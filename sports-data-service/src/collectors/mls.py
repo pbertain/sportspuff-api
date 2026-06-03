@@ -181,25 +181,58 @@ class MLSCollector(BaseCollector):
         try:
             if year is None:
                 year = datetime.now().year
-            self._check_rate_limit()
-            url = f"{ESPN_BASE}/scoreboard?dates={year}0101-{year}1231"
-            response = requests.get(url, timeout=self.api_timeout)
-            if response.status_code != 200:
-                return None
-            data = response.json()
-            league = (data.get('leagues') or [{}])[0]
-            season = league.get('season') or {}
             today = datetime.now().strftime('%Y-%m-%d')
 
-            # ESPN's calendar field is empty for soccer/usa.1 right now; events[]
-            # is paginated (~100 per call) so it only covers part of the season
-            # and can't drive gap detection reliably. Trust leagues.season for
-            # outer bounds; the FIFA gap split can return when ESPN restores
-            # calendar or we add multi-page event collection.
-            start = (season.get('startDate') or '')[:10]
-            end = (season.get('endDate') or '')[:10]
+            # ESPN's calendar field is empty for soccer/usa.1, and a year-long
+            # scoreboard query caps at ~100 events (covers only the first
+            # months). Pull match days month-by-month and merge — that gives
+            # us the full season calendar, which _build_season_segments needs
+            # to detect the FIFA World Cup mid-season gap.
+            match_days = set()
+            season_meta = {}
+            month_lengths = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+            for month in range(1, 13):
+                self._check_rate_limit()
+                last_day = month_lengths[month - 1]
+                url = (
+                    f"{ESPN_BASE}/scoreboard?dates="
+                    f"{year}{month:02d}01-{year}{month:02d}{last_day:02d}"
+                )
+                try:
+                    response = requests.get(url, timeout=self.api_timeout)
+                    if response.status_code != 200:
+                        continue
+                    data = response.json()
+                except Exception as e:
+                    logger.debug("MLS season-info: month %s fetch failed: %s", month, e)
+                    continue
+                if not season_meta:
+                    league = (data.get('leagues') or [{}])[0]
+                    season_meta = league.get('season') or {}
+                for ev in (data.get('events') or []):
+                    d = (ev.get('date') or '')[:10]
+                    if d:
+                        match_days.add(d)
+
+            if match_days:
+                ordered = sorted(match_days)
+                season_types = self._build_season_segments(ordered)
+                current_phase = 'Off Season'
+                for t in season_types:
+                    if t['start_date'] <= today <= t['end_date']:
+                        current_phase = t['name']
+                return {
+                    'year': year,
+                    'current_phase': current_phase,
+                    'season_types': season_types,
+                }
+
+            # Fallback when monthly queries return nothing (e.g., ESPN outage):
+            # use leagues.season outer bounds with a single segment.
+            start = (season_meta.get('startDate') or '')[:10]
+            end = (season_meta.get('endDate') or '')[:10]
             if start and end:
-                phase_name = (season.get('type') or {}).get('name') or 'Regular Season'
+                phase_name = (season_meta.get('type') or {}).get('name') or 'Regular Season'
                 current_phase = phase_name if start <= today <= end else 'Off Season'
                 return {
                     'year': year,
