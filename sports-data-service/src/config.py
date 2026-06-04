@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     cricapi_live_refresh: bool = Field(default=True, description="Force-refresh in-progress/recently-ended cricket matches each build. Disable on dev to conserve the shared quota.")
     cricapi_cache_ttl: int = Field(default=900, description="TTL (s) for cached CricAPI series/series_info lookups. Raise on dev to refresh roughly hourly.")
     cricapi_season_cache_ttl: int = Field(default=300, description="TTL (s) for the whole-season feed response cache, bounding CricAPI spend under frequent calls.")
+
+    # TheSportsDB (lifetime license; replacing several upstreams over time)
+    thesportsdb_key: str = Field(default="", description="TheSportsDB API key (set via vault_thesportsdb_key in ansible)")
+    thesportsdb_max_requests_per_hour: int = Field(default=600, description="Hourly circuit-breaker for TheSportsDB; conservative since their docs don't expose rate-limit headers")
+    thesportsdb_cache_dir: str = Field(default="", description="Directory for persisted TheSportsDB responses; defaults to <service>/cache/thesportsdb")
+    thesportsdb_season_cache_ttl: int = Field(default=300, description="TTL (s) for the bulk-season events response in memory; disk cache is served indefinitely as a fallback")
+    nba_provider: str = Field(default="thesportsdb", description="NBA data source: thesportsdb | nba_api")
     nba_api_timeout: int = Field(default=10)
     mlb_api_timeout: int = Field(default=10)
     nhl_api_timeout: int = Field(default=10)

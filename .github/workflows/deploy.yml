@@ -54,4 +54,5 @@ jobs:
             -e "github_sha=${{ github.sha }}" \
             -e "vault_postgres_password=${{ secrets.POSTGRES_PASSWORD }}" \
             -e "vault_wnba_api_key=${{ secrets.WNBA_API_KEY }}" \
-            -e "vault_cricapi_key=${{ secrets.CRICAPI_KEY }}"
+            -e "vault_cricapi_key=${{ secrets.CRICAPI_KEY }}" \
+            -e "vault_thesportsdb_key=${{ secrets.THESPORTSDB_KEY }}"
