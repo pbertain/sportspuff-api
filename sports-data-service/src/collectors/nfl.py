@@ -190,7 +190,81 @@ class NFLCollector(BaseCollector):
         
         # If no number found, return original (might be "OT" or similar)
         return period
-    
+
+    def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
+        """Build NFL season phases from ESPN's NFL scoreboard `calendar` field,
+        which already returns a list of {label, startDate, endDate, value}
+        entries for Preseason / Regular Season / Postseason / Off Season.
+
+        Pinned to the appropriate season's anchor date:
+          - Aug-Dec: current year's season is in progress
+          - Jan-Feb: previous year's season is in postseason
+          - Mar-Jul: previous year's season just ended; show the upcoming season
+        One ESPN call.
+        """
+        try:
+            now = datetime.now()
+            if year is None:
+                if now.month >= 8:
+                    year = now.year
+                elif now.month <= 2:
+                    year = now.year - 1
+                else:
+                    # Mar-Jul: prefer the upcoming season so v6's
+                    # "Regular season starts {date}" banner points forward.
+                    year = now.year
+            self._check_rate_limit()
+            anchor = f"{year}0915"
+            url = (
+                f"https://site.api.espn.com/apis/site/v2/sports/football/nfl/scoreboard"
+                f"?dates={anchor}"
+            )
+            response = requests.get(url, timeout=self.api_timeout)
+            if response.status_code != 200:
+                return None
+            data = response.json()
+            league = (data.get('leagues') or [{}])[0]
+            cal = league.get('calendar') or []
+
+            include = {'Preseason', 'Regular Season', 'Postseason'}
+            season_types = []
+            for c in cal:
+                if not isinstance(c, dict):
+                    continue
+                label = c.get('label')
+                if label not in include:
+                    continue
+                start = (c.get('startDate') or '')[:10]
+                end = (c.get('endDate') or '')[:10]
+                if not start or not end:
+                    continue
+                # ESPN renders Postseason as "Post Season (Playoffs)" elsewhere
+                # in our codebase; keep that label for UI consistency.
+                name = 'Post Season (Playoffs)' if label == 'Postseason' else label
+                season_types.append({
+                    'name': name,
+                    'start_date': start,
+                    'end_date': end,
+                })
+
+            if not season_types:
+                return None
+
+            today = now.strftime('%Y-%m-%d')
+            current_phase = 'Off Season'
+            for t in season_types:
+                if t['start_date'] <= today <= t['end_date']:
+                    current_phase = t['name']
+
+            return {
+                'year': year,
+                'current_phase': current_phase,
+                'season_types': season_types,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching NFL season info: {e}")
+            return None
+
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
         Get NFL schedule for specified date or current games.

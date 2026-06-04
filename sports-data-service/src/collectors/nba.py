@@ -148,7 +148,96 @@ class NBACollector(BaseCollector):
         else:
             # Not in main thread, can't use signals - just call the function
             return func()
-    
+
+    def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
+        """Build NBA season phases (Preseason / Regular Season / Postseason)
+        from ESPN's monthly scoreboard. ESPN's calendar field is a list of
+        date strings (no phase tags), so we walk events month-by-month and
+        group them by event.season.type:
+            1 = Preseason, 2 = Regular Season, 3 = Postseason.
+        Then min/max(date) per type gives us the phase ranges.
+
+        ~12 ESPN calls per build, cached 24h via api.py:_season_info_cache.
+
+        `year` is the season's end year (NBA convention): "2025-26" -> 2026.
+        """
+        try:
+            from collections import defaultdict
+            now = datetime.now()
+            today = now.strftime('%Y-%m-%d')
+            if year is None:
+                # Aug-Dec: we've entered the season ending NEXT calendar year.
+                # Jan-Jul: we're in or just past the season ending THIS year.
+                end_year = now.year + 1 if now.month >= 8 else now.year
+            else:
+                end_year = year
+
+            # Walk Aug(end_year-1) through Jul(end_year) — covers preseason,
+            # regular season, and postseason for the requested NBA season.
+            month_lengths = (31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31)
+            windows = []
+            for y_offset, m in [(-1, 8), (-1, 9), (-1, 10), (-1, 11), (-1, 12),
+                                (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7)]:
+                yyyy = end_year + y_offset
+                last = month_lengths[m - 1]
+                windows.append((yyyy, m, last))
+
+            by_type: Dict[int, List[str]] = defaultdict(list)
+            for yyyy, m, last in windows:
+                self._check_rate_limit()
+                url = (
+                    f"https://site.api.espn.com/apis/site/v2/sports/basketball/nba/scoreboard"
+                    f"?dates={yyyy}{m:02d}01-{yyyy}{m:02d}{last:02d}"
+                )
+                try:
+                    response = requests.get(url, timeout=self.api_timeout)
+                    if response.status_code != 200:
+                        continue
+                    data = response.json()
+                except Exception as e:
+                    logger.debug("NBA season-info: %s-%02d fetch failed: %s", yyyy, m, e)
+                    continue
+                for ev in (data.get('events') or []):
+                    d = (ev.get('date') or '')[:10]
+                    if not d:
+                        continue
+                    s_type = ((ev.get('season') or {}).get('type'))
+                    try:
+                        s_type = int(s_type)
+                    except Exception:
+                        continue
+                    by_type[s_type].append(d)
+
+            if not by_type:
+                return None
+
+            type_label = {1: 'Preseason', 2: 'Regular Season', 3: 'Post Season (Playoffs)'}
+            type_order = [1, 2, 3]
+            season_types = []
+            for s_type in type_order:
+                dates = sorted(set(by_type.get(s_type, [])))
+                if not dates:
+                    continue
+                season_types.append({
+                    'name': type_label[s_type],
+                    'start_date': dates[0],
+                    'end_date': dates[-1],
+                })
+
+            current_phase = 'Off Season'
+            for t in season_types:
+                if t['start_date'] <= today <= t['end_date']:
+                    current_phase = t['name']
+
+            return {
+                'year': end_year,
+                'current_phase': current_phase,
+                'season_types': season_types,
+            }
+        except Exception as e:
+            logger.error(f"Error fetching NBA season info: {e}")
+            return None
+
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         """
         Get NBA schedule for specified date or current games.
