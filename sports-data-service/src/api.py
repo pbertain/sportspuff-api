@@ -1564,11 +1564,16 @@ def get_schedule_api_v1(
         if sport_lower == 'all':
             sport_games = _get_all_sport_games(target_date, timezone)
             all_games = []
+            by_sport: Dict[str, List[Dict[str, Any]]] = {}
             for sport_key, games in sport_games.items():
                 for g in games:
                     d = _game_wrapper_to_dict(g, SPORT_MAPPINGS[sport_key])
                     d['sport'] = sport_key
                     all_games.append(d)
+                    by_sport.setdefault(sport_key, []).append(d)
+            from .services.playoff_series import enrich_games as _enrich_playoff
+            for sport_key, batch in by_sport.items():
+                _enrich_playoff(sport_key, target_date, batch)
             all_games.sort(key=lambda x: x.get('game_time') or '')
             return {"sport": "all", "date": target_date.isoformat(), "games": all_games}
 
@@ -1577,10 +1582,13 @@ def get_schedule_api_v1(
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
 
         games = _get_games_for_curl(league, target_date, timezone)
+        games_out = [_game_wrapper_to_dict(g, league) for g in games]
+        from .services.playoff_series import enrich_games as _enrich_playoff
+        games_out = _enrich_playoff(sport_lower, target_date, games_out)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
-            "games": [_game_wrapper_to_dict(g, league) for g in games]
+            "games": games_out,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -2215,11 +2223,16 @@ def get_scores_api_v1(
         if sport_lower == 'all':
             sport_games = _get_all_sport_games(target_date, timezone)
             all_scores = []
+            by_sport: Dict[str, List[Dict[str, Any]]] = {}
             for sport_key, games in sport_games.items():
                 for g in games:
                     d = _game_wrapper_to_dict(g, SPORT_MAPPINGS[sport_key])
                     d['sport'] = sport_key
                     all_scores.append(d)
+                    by_sport.setdefault(sport_key, []).append(d)
+            from .services.playoff_series import enrich_games as _enrich_playoff
+            for sport_key, batch in by_sport.items():
+                _enrich_playoff(sport_key, target_date, batch)
             return {"sport": "all", "date": target_date.isoformat(), "scores": all_scores}
 
         league = SPORT_MAPPINGS.get(sport_lower)
@@ -2227,10 +2240,13 @@ def get_scores_api_v1(
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
 
         games = _get_games_for_curl(league, target_date, timezone)
+        scores = [_game_wrapper_to_dict(g, league) for g in games]
+        from .services.playoff_series import enrich_games as _enrich_playoff
+        scores = _enrich_playoff(sport_lower, target_date, scores)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
-            "scores": [_game_wrapper_to_dict(g, league) for g in games]
+            "scores": scores,
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

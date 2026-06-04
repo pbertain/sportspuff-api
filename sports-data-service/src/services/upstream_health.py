@@ -26,10 +26,13 @@ UPSTREAM_TTLS: Dict[str, int] = {
 }
 
 # Endpoint freshness budgets used to populate results[].meta.ttl_seconds.
+# Match the collector-layer cache (5 min) so a row that's actually fresh in
+# the cache doesn't get synth-flagged as stale just because we computed
+# meta.cached_at from upstream.last_success_at.
 ENDPOINT_TTLS: Dict[str, int] = {
     "standings": 1800,
     "season-info": 86400,
-    "scores": 60,
+    "scores": 300,
     "schedule": 600,
 }
 
