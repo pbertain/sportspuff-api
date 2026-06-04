@@ -22,6 +22,7 @@ UPSTREAM_TTLS: Dict[str, int] = {
     "Tank01 NFL": 1800,
     "RapidAPI WNBA": 1800,
     "CricAPI": 3600,
+    "TheSportsDB": 1800,
 }
 
 # Endpoint freshness budgets used to populate results[].meta.ttl_seconds.
@@ -41,8 +42,8 @@ SPORT_UPSTREAM_MAP: Dict[tuple, str] = {
     ("mlb", "schedule"): "MLB stats",
     ("nba", "standings"): "ESPN",
     ("nba", "season-info"): "NBA stats",
-    ("nba", "scores"): "NBA stats",
-    ("nba", "schedule"): "NBA stats",
+    ("nba", "scores"): "TheSportsDB",
+    ("nba", "schedule"): "TheSportsDB",
     ("nfl", "standings"): "ESPN",
     ("nfl", "season-info"): "Tank01 NFL",
     ("nfl", "scores"): "Tank01 NFL",

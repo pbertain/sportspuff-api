@@ -2,8 +2,21 @@
 # Copy this to vault.yml and fill in your values
 # Encrypt with: ansible-vault encrypt vault.yml
 
+# NOTE: vault.yml is not actually loaded by this project. Secrets are passed
+# from GitHub Secrets via the deploy workflow (see .github/workflows/deploy.yml)
+# as ansible-playbook -e "vault_<name>=...". This file is kept only as a
+# reference for which vault_* variables exist.
+#
+# Required GitHub Secrets:
+#   POSTGRES_PASSWORD     -> vault_postgres_password
+#   CRICAPI_KEY           -> vault_cricapi_key
+#   WNBA_API_KEY          -> vault_wnba_api_key
+#   THESPORTSDB_KEY       -> vault_thesportsdb_key
+
 vault_postgres_password: your-secure-password-here
 vault_cricapi_key: your-cricapi-key-here
+vault_thesportsdb_key: your-thesportsdb-key-here
+vault_wnba_api_key: your-rapidapi-wnba-key-here
 
 # Generate a secure password:
 # python3 -c "import secrets; print(secrets.token_urlsafe(32))"

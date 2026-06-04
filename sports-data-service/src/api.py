@@ -134,9 +134,21 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
 
 
 def get_collector(league: str):
-    """Get collector instance for a league."""
+    """Get collector instance for a league.
+
+    NBA has a provider switch via settings.nba_provider:
+      - 'thesportsdb' (default): bulk-season fetch from TheSportsDB
+      - 'nba_api':              the legacy stats.nba.com path
+    The legacy path is broken on prod (stats.nba.com unreachable from the
+    deployment host) so the default cuts NBA over to TheSportsDB.
+    """
+    if league == 'NBA' and settings.nba_provider == 'thesportsdb':
+        from .collectors.nba_thesportsdb import NBATheSportsDBCollector
+        nba = NBATheSportsDBCollector()
+    else:
+        nba = NBACollector()
     collectors = {
-        'NBA': NBACollector(),
+        'NBA': nba,
         'MLB': MLBCollector(),
         'NHL': NHLCollector(),
         'NFL': NFLCollector(),
