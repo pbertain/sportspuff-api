@@ -158,6 +158,11 @@ def get_collector(league: str):
         ipl = CricketCollector('IPL')
         mlc = CricketCollector('MLC')
 
+    wc = None
+    if league == 'WC':
+        from .collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+        wc = WorldCupTheSportsDBCollector()
+
     collectors = {
         'NBA': nba,
         'MLB': MLBCollector(),
@@ -167,6 +172,7 @@ def get_collector(league: str):
         'IPL': ipl if league == 'IPL' else CricketCollector('IPL'),
         'MLC': mlc if league == 'MLC' else CricketCollector('MLC'),
         'MLS': MLSCollector(),
+        'WC':  wc,
     }
     return collectors.get(league)
 
@@ -190,6 +196,7 @@ SPORT_MAPPINGS = {
     'ipl': 'IPL',
     'mlc': 'MLC',
     'mls': 'MLS',
+    'wc':  'WC',
 }
 
 def get_help_json() -> Dict[str, Any]:
@@ -2511,6 +2518,32 @@ def get_standings_api_v1(
                     team[optional_key] = rec[optional_key]
             teams.append(team)
         return {"sport": sport_lower, "teams": teams}
+
+    if sport_lower == 'wc':
+        collector = get_collector('WC')
+        try:
+            standings = collector.get_standings() if collector else []
+            upstream_health.record_success(upstream_health.upstream_for('wc', 'standings'))
+        except Exception as e:
+            upstream_health.record_failure(upstream_health.upstream_for('wc', 'standings'), f"{type(e).__name__}: {e}")
+            raise
+        teams = []
+        for rec in standings:
+            teams.append({
+                'rank': rec['rank'],
+                'team_name': rec['team_name'],
+                'abbreviation': rec['abbreviation'],
+                'matches': rec['matches'],
+                'wins': rec['wins'],
+                'draws': rec['draws'],
+                'losses': rec['losses'],
+                'goals_for': rec['goals_for'],
+                'goals_against': rec['goals_against'],
+                'goal_difference': rec['goal_difference'],
+                'points': rec['points'],
+                'record': rec['record'],
+            })
+        return {"sport": "wc", "teams": teams, "available": bool(teams)}
 
     return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
 
