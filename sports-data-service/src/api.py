@@ -172,6 +172,11 @@ def get_collector(league: str):
         from .collectors.tennis_thesportsdb import TennisTheSportsDBCollector
         wta = TennisTheSportsDBCollector('WTA')
 
+    cycling = None
+    if league == 'CYCLING':
+        from .collectors.cycling_thesportsdb import CyclingTheSportsDBCollector
+        cycling = CyclingTheSportsDBCollector()
+
     collectors = {
         'NBA': nba,
         'MLB': MLBCollector(),
@@ -184,6 +189,7 @@ def get_collector(league: str):
         'WC':  wc,
         'ATP': atp,
         'WTA': wta,
+        'CYCLING': cycling,
     }
     return collectors.get(league)
 
@@ -2567,6 +2573,16 @@ def get_standings_api_v1(
             "teams": [],
             "available": False,
             "message": "Tennis has no league table; see /api/v1/season-info/{atp,wta} for the tour calendar.",
+        }
+
+    if sport_lower == 'cycling':
+        # Cycling general-classification standings are per-race and not
+        # exposed via TheSportsDB. Return empty with a hint.
+        return {
+            "sport": "cycling",
+            "teams": [],
+            "available": False,
+            "message": "Cycling has no league table; see /api/v1/season-info/cycling for the UCI World Tour calendar.",
         }
 
     return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
