@@ -3,15 +3,15 @@
   hosts: all
   become: yes
   vars:
-    deployment_dir: /opt/sportspuff-api
+    deployment_dir: /opt/prod/sportspuff-api
     app_user: ansible
-    backup_dir: /opt/sportspuff-api-backups
-  
+    backup_dir: /opt/prod/sportspuff-api-backups
+
   pre_tasks:
     - name: Set deployment directory based on environment
       set_fact:
-        deployment_dir: "{{ '/opt/sportspuff-api' if deployment_env == 'prod' else '/opt/sportspuff-api-dev' }}"
-        backup_dir: "{{ '/opt/sportspuff-api-backups' if deployment_env == 'prod' else '/opt/sportspuff-api-dev-backups' }}"
+        deployment_dir: "/opt/{{ deployment_env }}/sportspuff-api"
+        backup_dir: "/opt/{{ deployment_env }}/sportspuff-api-backups"
   
   tasks:
     - name: Ensure deployment directory exists

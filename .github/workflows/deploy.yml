@@ -28,6 +28,7 @@ jobs:
       - name: Add host to known hosts
         run: |
           ssh-keyscan -H host74.nird.club >> ~/.ssh/known_hosts || true
+          ssh-keyscan -H host78.nird.club >> ~/.ssh/known_hosts || true
       
       - name: Set deployment environment
         id: env

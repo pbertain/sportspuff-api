@@ -6,7 +6,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 ExecStart=/usr/bin/docker-compose exec -T sports-service python scripts/poll_live_scores.py
-WorkingDirectory=/opt/sportspuff-api/sports-data-service
+WorkingDirectory=/opt/prod/sportspuff-api/sports-data-service
 Restart=on-failure
 StandardOutput=journal
 StandardError=journal
