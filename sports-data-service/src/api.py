@@ -163,6 +163,15 @@ def get_collector(league: str):
         from .collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
         wc = WorldCupTheSportsDBCollector()
 
+    atp = None
+    wta = None
+    if league == 'ATP':
+        from .collectors.tennis_thesportsdb import TennisTheSportsDBCollector
+        atp = TennisTheSportsDBCollector('ATP')
+    if league == 'WTA':
+        from .collectors.tennis_thesportsdb import TennisTheSportsDBCollector
+        wta = TennisTheSportsDBCollector('WTA')
+
     collectors = {
         'NBA': nba,
         'MLB': MLBCollector(),
@@ -173,6 +182,8 @@ def get_collector(league: str):
         'MLC': mlc if league == 'MLC' else CricketCollector('MLC'),
         'MLS': MLSCollector(),
         'WC':  wc,
+        'ATP': atp,
+        'WTA': wta,
     }
     return collectors.get(league)
 
@@ -197,6 +208,8 @@ SPORT_MAPPINGS = {
     'mlc': 'MLC',
     'mls': 'MLS',
     'wc':  'WC',
+    'atp': 'ATP',
+    'wta': 'WTA',
 }
 
 def get_help_json() -> Dict[str, Any]:
@@ -2544,6 +2557,17 @@ def get_standings_api_v1(
                 'record': rec['record'],
             })
         return {"sport": "wc", "teams": teams, "available": bool(teams)}
+
+    if sport_lower in ('atp', 'wta'):
+        # Tennis tours have no league standings (every tournament is single
+        # elimination); a meaningful response is "not applicable" plus a
+        # hint pointing the frontend at the tour calendar instead.
+        return {
+            "sport": sport_lower,
+            "teams": [],
+            "available": False,
+            "message": "Tennis has no league table; see /api/v1/season-info/{atp,wta} for the tour calendar.",
+        }
 
     return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
 
