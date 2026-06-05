@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     thesportsdb_season_cache_ttl: int = Field(default=300, description="TTL (s) for the bulk-season events response in memory; disk cache is served indefinitely as a fallback")
     nba_provider: str = Field(default="thesportsdb", description="NBA data source: thesportsdb | nba_api")
     cricket_provider: str = Field(default="thesportsdb", description="Cricket (IPL/MLC) data source: thesportsdb | cricapi")
+    cricket_live_enrichment: str = Field(default="cricapi", description="Augment in-progress cricket matches with rich CricAPI detail (overs, wickets, per-inning). 'cricapi' uses match_info on live games only; 'none' disables.")
     nba_api_timeout: int = Field(default=10)
     mlb_api_timeout: int = Field(default=10)
     nhl_api_timeout: int = Field(default=10)
