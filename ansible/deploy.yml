@@ -137,9 +137,14 @@
         
         - name: Download Docker Compose
           get_url:
-            url: https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64
+            # Pinned tag (latest/download/* sometimes returns an HTML
+            # redirect page that ends up at /usr/local/bin/docker-compose
+            # and trips sh's parser when invoked). Force re-download in
+            # case a previous failed deploy left a corrupt binary behind.
+            url: "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-{{ ansible_architecture }}"
             dest: /usr/local/bin/docker-compose
             mode: '0755'
+            force: yes
         
         - name: Start Docker service
           systemd:
@@ -165,11 +170,31 @@
         name: ansible
         groups: docker
         append: yes
-      when: 
+      when:
         - docker_which.rc == 0
         - ansible_groups.stdout is defined
         - "'docker' not in ansible_groups.stdout"
-    
+
+    # Verify docker-compose works regardless of how Docker got installed.
+    # A previous failed deploy can leave a corrupt /usr/local/bin/docker-compose
+    # (e.g. an HTML redirect page from latest/download/...), which causes
+    # subsequent deploys to fail at "build and start containers" with a
+    # shell parse error. Re-download the pinned binary if the existing one
+    # doesn't respond to --version.
+    - name: Verify docker-compose binary works
+      command: /usr/local/bin/docker-compose --version
+      register: docker_compose_check
+      changed_when: false
+      failed_when: false
+
+    - name: Re-download Docker Compose if corrupt or missing
+      get_url:
+        url: "https://github.com/docker/compose/releases/download/v2.29.7/docker-compose-linux-{{ ansible_architecture }}"
+        dest: /usr/local/bin/docker-compose
+        mode: '0755'
+        force: yes
+      when: docker_compose_check.rc != 0
+
     - name: Stop and remove existing containers
       script: scripts/stop_existing_containers.sh
       environment:
