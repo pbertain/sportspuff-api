@@ -216,6 +216,7 @@ SPORT_MAPPINGS = {
     'wc':  'WC',
     'atp': 'ATP',
     'wta': 'WTA',
+    'cycling': 'CYCLING',
 }
 
 def get_help_json() -> Dict[str, Any]:
