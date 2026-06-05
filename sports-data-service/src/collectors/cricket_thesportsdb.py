@@ -213,6 +213,25 @@ class CricketTheSportsDBCollector(TheSportsDBCollector):
             rec["rank"] = rank
         return ordered
 
+    # ---- public collector overrides: enrich live games with CricAPI -------
+    def get_live_scores(self, target_date=None) -> List[Dict[str, Any]]:
+        games = super().get_live_scores(target_date)
+        return self._enrich_live(games, target_date)
+
+    def get_schedule(self, target_date=None) -> List[Dict[str, Any]]:
+        games = super().get_schedule(target_date)
+        return self._enrich_live(games, target_date)
+
+    def _enrich_live(self, games, target_date):
+        if not games:
+            return games
+        try:
+            from ..services.cricket_live_enricher import enrich_with_cricapi_live
+            return enrich_with_cricapi_live(self.SPORTSPUFF_CODE, games, target_date)
+        except Exception as e:
+            logger.debug("cricket live enrich skipped: %s", e)
+            return games
+
     # ---- season feed for /api/v1/cricket/{league}/season -------------------
     def get_season(self) -> Dict[str, Any]:
         """Bulk feed CricketPuff consumes. Mirrors the cricket.py shape but
@@ -228,6 +247,11 @@ class CricketTheSportsDBCollector(TheSportsDBCollector):
 
         matches = [m for m in (self._parse_event(e) for e in events) if m]
         matches.sort(key=lambda m: m.get("game_date", "") or "")
+
+        # Enrich any in-progress matches with CricAPI's per-inning detail
+        # (overs, wickets, formatted score). No-op when disabled or when no
+        # match is currently in progress.
+        matches = self._enrich_live(matches, datetime.now(timezone.utc).date())
 
         standings = self.get_standings()
 
