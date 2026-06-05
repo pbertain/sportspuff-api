@@ -136,25 +136,36 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
 def get_collector(league: str):
     """Get collector instance for a league.
 
-    NBA has a provider switch via settings.nba_provider:
-      - 'thesportsdb' (default): bulk-season fetch from TheSportsDB
-      - 'nba_api':              the legacy stats.nba.com path
-    The legacy path is broken on prod (stats.nba.com unreachable from the
-    deployment host) so the default cuts NBA over to TheSportsDB.
+    Provider switches:
+      - settings.nba_provider:     'thesportsdb' (default) | 'nba_api'
+      - settings.cricket_provider: 'thesportsdb' (default) | 'cricapi'
+
+    NBA legacy (nba_api) is unreachable from prod (stats.nba.com timeouts).
+    Cricket legacy (CricAPI) shares a 2000/day key with another consumer.
+    Both default to TheSportsDB.
     """
     if league == 'NBA' and settings.nba_provider == 'thesportsdb':
         from .collectors.nba_thesportsdb import NBATheSportsDBCollector
         nba = NBATheSportsDBCollector()
     else:
         nba = NBACollector()
+
+    if league in ('IPL', 'MLC') and settings.cricket_provider == 'thesportsdb':
+        from .collectors.cricket_thesportsdb import CricketTheSportsDBCollector
+        ipl = CricketTheSportsDBCollector('IPL') if league == 'IPL' else None
+        mlc = CricketTheSportsDBCollector('MLC') if league == 'MLC' else None
+    else:
+        ipl = CricketCollector('IPL')
+        mlc = CricketCollector('MLC')
+
     collectors = {
         'NBA': nba,
         'MLB': MLBCollector(),
         'NHL': NHLCollector(),
         'NFL': NFLCollector(),
         'WNBA': WNBACollector(),
-        'IPL': CricketCollector('IPL'),
-        'MLC': CricketCollector('MLC'),
+        'IPL': ipl if league == 'IPL' else CricketCollector('IPL'),
+        'MLC': mlc if league == 'MLC' else CricketCollector('MLC'),
         'MLS': MLSCollector(),
     }
     return collectors.get(league)
@@ -2700,6 +2711,16 @@ def get_season_info(
 
     if not result:
         result = {"year": datetime.now().year, "current_phase": "Off Season", "season_types": []}
+
+    # Augment with last_champion when known (PR #18). Cheap: cached internally
+    # for 1h memory / 24h disk in services/champions.
+    try:
+        from .services.champions import get_last_champion
+        champion = get_last_champion(league_upper)
+        if champion:
+            result['last_champion'] = champion
+    except Exception as e:
+        logger.debug("champion lookup failed for %s: %s", league_upper, e)
 
     _season_info_cache[league_upper] = {'data': result, 'timestamp': _time.time()}
     return result
