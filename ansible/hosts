@@ -2,7 +2,7 @@
 host74.nird.club
 
 [dev]
-host74.nird.club
+host78.nird.club
 
 [all:vars]
 ansible_user=ansible
