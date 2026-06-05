@@ -75,6 +75,14 @@ SPORT_UPSTREAM_MAP: Dict[tuple, str] = {
     ("wc", "season-info"): "TheSportsDB",
     ("wc", "scores"): "TheSportsDB",
     ("wc", "schedule"): "TheSportsDB",
+    ("atp", "standings"): "TheSportsDB",
+    ("atp", "season-info"): "TheSportsDB",
+    ("atp", "scores"): "TheSportsDB",
+    ("atp", "schedule"): "TheSportsDB",
+    ("wta", "standings"): "TheSportsDB",
+    ("wta", "season-info"): "TheSportsDB",
+    ("wta", "scores"): "TheSportsDB",
+    ("wta", "schedule"): "TheSportsDB",
 }
 
 

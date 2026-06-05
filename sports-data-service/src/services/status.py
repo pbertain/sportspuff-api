@@ -23,7 +23,7 @@ from . import upstream_health
 logger = logging.getLogger(__name__)
 
 SELF_RESULT_KEYS = ("teams", "standings", "scores", "games", "season_types", "matches")
-SELF_LEAGUES = ("mlb", "nba", "nfl", "nhl", "mls", "wnba", "ipl", "mlc", "wc")
+SELF_LEAGUES = ("mlb", "nba", "nfl", "nhl", "mls", "wnba", "ipl", "mlc", "wc", "atp", "wta")
 CRICKET_LEAGUES = ("ipl", "mlc")
 SELF_ENDPOINT_KINDS = ("standings", "season-info", "schedule", "scores")
 
