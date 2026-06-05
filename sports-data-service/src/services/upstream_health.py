@@ -71,6 +71,10 @@ SPORT_UPSTREAM_MAP: Dict[tuple, str] = {
     ("mlc", "season-info"): "CricAPI",
     ("mlc", "scores"): "CricAPI",
     ("mlc", "schedule"): "CricAPI",
+    ("wc", "standings"): "TheSportsDB",
+    ("wc", "season-info"): "TheSportsDB",
+    ("wc", "scores"): "TheSportsDB",
+    ("wc", "schedule"): "TheSportsDB",
 }
 
 

@@ -35,6 +35,7 @@ logger = logging.getLogger(__name__)
 _ESPN_SUBPATH: Dict[str, str] = {
     "nba": "basketball/nba",
     "wnba": "basketball/wnba",
+    "wc":  "soccer/fifa.world",
     # Future: "mlb": "baseball/mlb", "nhl": "hockey/nhl"
 }
 
