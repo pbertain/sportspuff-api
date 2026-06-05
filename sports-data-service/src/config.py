@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     thesportsdb_cache_dir: str = Field(default="", description="Directory for persisted TheSportsDB responses; defaults to <service>/cache/thesportsdb")
     thesportsdb_season_cache_ttl: int = Field(default=300, description="TTL (s) for the bulk-season events response in memory; disk cache is served indefinitely as a fallback")
     nba_provider: str = Field(default="thesportsdb", description="NBA data source: thesportsdb | nba_api")
+    cricket_provider: str = Field(default="thesportsdb", description="Cricket (IPL/MLC) data source: thesportsdb | cricapi")
     nba_api_timeout: int = Field(default=10)
     mlb_api_timeout: int = Field(default=10)
     nhl_api_timeout: int = Field(default=10)

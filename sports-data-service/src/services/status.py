@@ -303,19 +303,29 @@ def _apply_no_games_downgrade(results: List[Dict[str, Any]]) -> None:
     using each league's season-info payload, and downgrade warning -> ok with a clearer detail.
     """
     phase_by_league: Dict[str, str] = {}
+    champion_by_league: Dict[str, Dict[str, Any]] = {}
     for r in results:
         if r.get("_kind") == "season-info" and r.get("_payload"):
             phase_by_league[r["_league"]] = _league_phase_state(r["_payload"])
+            champ = (r["_payload"] or {}).get("last_champion")
+            if isinstance(champ, dict):
+                champion_by_league[r["_league"]] = champ
 
     for r in results:
         if r.get("_kind") not in ("scores", "schedule"):
             continue
         if r.get("count") != 0 or r.get("category") != "warning":
             continue
-        phase = phase_by_league.get(r.get("_league"), "unknown")
+        league = r.get("_league")
+        phase = phase_by_league.get(league, "unknown")
         if phase == "off_season":
             r["category"] = "ok"
-            r["detail"] = "off-season"
+            champ = champion_by_league.get(league)
+            if champ:
+                abbr = champ.get("abbreviation") or champ.get("team", "")
+                r["detail"] = f"off-season — {abbr} won {champ.get('year')} {(league or '').upper()}"
+            else:
+                r["detail"] = "off-season"
         elif phase == "in_season":
             r["category"] = "ok"
             r["detail"] = "no games today"
