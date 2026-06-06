@@ -1,0 +1,133 @@
+/* SportsPuff branding for Swagger UI + ReDoc.
+   Override the default look with the dark purple → red gradient palette
+   used elsewhere in the API surface (root page, /status). */
+
+:root {
+  --sp-bg-deep:   #1A0B3D;
+  --sp-bg-mid:    #2D1B69;
+  --sp-bg-warm:   #3D2A7A;
+  --sp-accent:    #FF3B30;
+  --sp-yellow:    #FFB400;
+  --sp-text:      #F5F5F5;
+  --sp-text-mute: #B8B8B8;
+  --sp-panel:     rgba(26, 11, 61, 0.92);
+  --sp-border:    rgba(255, 255, 255, 0.15);
+  --sp-code-bg:   rgba(255, 255, 255, 0.06);
+}
+
+body {
+  background: linear-gradient(135deg,
+              var(--sp-bg-deep) 0%,
+              var(--sp-bg-mid) 50%,
+              var(--sp-bg-warm) 100%) !important;
+  color: var(--sp-text) !important;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif !important;
+  min-height: 100vh;
+}
+
+/* ------- Swagger UI ------- */
+.swagger-ui { color: var(--sp-text) !important; }
+.swagger-ui .topbar {
+  background: linear-gradient(135deg, var(--sp-bg-mid) 0%, var(--sp-accent) 100%) !important;
+  padding: 0.75rem 1rem !important;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.3) !important;
+}
+.swagger-ui .topbar .topbar-wrapper a span { color: var(--sp-text) !important; }
+/* Replace the default Swagger logo in the topbar with the SportsPuff one. */
+.swagger-ui .topbar .topbar-wrapper img { display: none !important; }
+.swagger-ui .topbar .topbar-wrapper a {
+  background-image: url("https://www.splitsp.lat/logos/sportspuff/sportspuff-logo.png") !important;
+  background-repeat: no-repeat;
+  background-position: left center;
+  background-size: contain;
+  padding-left: 56px !important;
+  min-height: 48px;
+  display: flex;
+  align-items: center;
+}
+.swagger-ui .topbar .topbar-wrapper a::after {
+  content: "SportsPuff API";
+  color: var(--sp-text);
+  font-weight: 700;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+.swagger-ui .topbar .download-url-wrapper { display: none !important; }
+.swagger-ui .info { color: var(--sp-text) !important; }
+.swagger-ui .info .title,
+.swagger-ui .info p,
+.swagger-ui .info li,
+.swagger-ui .info table,
+.swagger-ui h1,
+.swagger-ui h2,
+.swagger-ui h3,
+.swagger-ui h4,
+.swagger-ui h5 { color: var(--sp-text) !important; }
+.swagger-ui .info .title small { background: var(--sp-accent) !important; color: #fff !important; }
+.swagger-ui .scheme-container {
+  background: var(--sp-panel) !important;
+  border: 1px solid var(--sp-border) !important;
+  border-radius: 8px;
+  box-shadow: none !important;
+}
+.swagger-ui .opblock-tag { color: var(--sp-yellow) !important; border-bottom: 1px solid var(--sp-border) !important; }
+.swagger-ui .opblock-tag:hover { background: rgba(255, 180, 0, 0.05) !important; }
+.swagger-ui .opblock { background: var(--sp-panel) !important; border: 1px solid var(--sp-border) !important; }
+.swagger-ui .opblock .opblock-summary-method { color: #fff !important; }
+.swagger-ui .opblock .opblock-summary-path,
+.swagger-ui .opblock .opblock-summary-description { color: var(--sp-text) !important; }
+.swagger-ui .opblock .opblock-section-header { background: rgba(255, 255, 255, 0.03) !important; box-shadow: none !important; }
+.swagger-ui .opblock .opblock-section-header h4,
+.swagger-ui .opblock .opblock-section-header label { color: var(--sp-text) !important; }
+.swagger-ui table thead tr td,
+.swagger-ui table thead tr th { color: var(--sp-text-mute) !important; border-bottom-color: var(--sp-border) !important; }
+.swagger-ui .parameter__name,
+.swagger-ui .parameter__type,
+.swagger-ui .parameter__in,
+.swagger-ui .response-col_status,
+.swagger-ui .response-col_description__inner div.markdown,
+.swagger-ui .responses-inner h4,
+.swagger-ui .responses-inner h5 { color: var(--sp-text) !important; }
+.swagger-ui .parameter__name.required:after { color: var(--sp-accent) !important; }
+.swagger-ui input[type=text],
+.swagger-ui textarea {
+  background: var(--sp-code-bg) !important;
+  color: var(--sp-text) !important;
+  border: 1px solid var(--sp-border) !important;
+}
+.swagger-ui .highlight-code,
+.swagger-ui .microlight,
+.swagger-ui pre,
+.swagger-ui code { background: var(--sp-code-bg) !important; color: var(--sp-text) !important; }
+.swagger-ui .btn { color: var(--sp-text) !important; border-color: var(--sp-border) !important; }
+.swagger-ui .btn.execute { background: var(--sp-accent) !important; border-color: var(--sp-accent) !important; color: #fff !important; }
+.swagger-ui .btn.try-out__btn { background: rgba(112, 40, 228, 0.4) !important; }
+.swagger-ui .model-box,
+.swagger-ui .model { background: var(--sp-code-bg) !important; color: var(--sp-text) !important; }
+.swagger-ui section.models { background: var(--sp-panel) !important; border: 1px solid var(--sp-border) !important; }
+.swagger-ui section.models h4 span { color: var(--sp-yellow) !important; }
+
+/* Method colors — keep the standard meaning but tone them down to fit the dark palette */
+.swagger-ui .opblock.opblock-get  { background: rgba(46, 160, 67, 0.12) !important; border-color: rgba(46, 160, 67, 0.4) !important; }
+.swagger-ui .opblock.opblock-post { background: rgba(112, 40, 228, 0.12) !important; border-color: rgba(112, 40, 228, 0.4) !important; }
+.swagger-ui .opblock.opblock-put  { background: rgba(255, 180, 0, 0.12) !important; border-color: rgba(255, 180, 0, 0.4) !important; }
+.swagger-ui .opblock.opblock-delete { background: rgba(255, 59, 48, 0.12) !important; border-color: rgba(255, 59, 48, 0.4) !important; }
+
+/* ------- ReDoc ------- */
+.redoc-wrap { color: var(--sp-text) !important; }
+.menu-content { background: var(--sp-panel) !important; border-right: 1px solid var(--sp-border) !important; }
+.menu-content label,
+.menu-content span { color: var(--sp-text) !important; }
+.api-content { background: transparent !important; }
+.api-content h1,
+.api-content h2,
+.api-content h3,
+.api-content h4,
+.api-content h5,
+.api-content p,
+.api-content li,
+.api-content code,
+.api-content span { color: var(--sp-text) !important; }
+.api-content h2 { color: var(--sp-yellow) !important; }
+.api-content code { background: var(--sp-code-bg) !important; }
+.api-content table { color: var(--sp-text) !important; }
