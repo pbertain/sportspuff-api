@@ -198,10 +198,69 @@ def set_collector_timezone(collector, timezone: pytz.BaseTzInfo) -> None:
         collector.set_timezone(timezone)
 
 app = FastAPI(
-    title="Sports Data Service API",
-    description="API for accessing sports schedules, scores, and standings",
-    version="1.0.0"
+    title="SportsPuff Sports Data API",
+    description=(
+        "Scores, schedules, standings, and season info across 12 sports/leagues — "
+        "MLB, NBA, NFL, NHL, WNBA, MLS, IPL, MLC, FIFA World Cup, ATP, WTA, and the "
+        "UCI World Tour (Tour de France, Giro, classics). Responses available as "
+        "JSON or plain text. Health snapshot at /api/v1/status."
+    ),
+    version="1.0.0",
+    # Disable the default docs routes so we can serve branded ones below.
+    docs_url=None,
+    redoc_url=None,
 )
+
+# SportsPuff logo. Prefer a locally-bundled file (faster, works offline,
+# survives splitsp.lat outages) and fall back to the canonical remote URL.
+SPORTSPUFF_LOGO_REMOTE = "https://www.splitsp.lat/logos/sportspuff/sportspuff-logo.png"
+
+
+def _sportspuff_logo_url() -> str:
+    for fname in ("sportspuff-logo.png", "sportspuff-logo.svg"):
+        if _os.path.exists(_os.path.join(_static_dir, fname)):
+            return f"/static/{fname}"
+    return SPORTSPUFF_LOGO_REMOTE
+
+
+SPORTSPUFF_LOGO_URL = SPORTSPUFF_LOGO_REMOTE  # rebound below after _static_dir is defined
+
+# Serve /static for the branded docs CSS.
+import os as _os
+from fastapi.staticfiles import StaticFiles
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+_static_dir = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "static")
+if _os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
+# Resolve once now that _static_dir exists.
+SPORTSPUFF_LOGO_URL = _sportspuff_logo_url()
+
+
+@app.get("/docs", include_in_schema=False)
+def custom_swagger_ui_html():
+    return get_swagger_ui_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} — Swagger UI",
+        swagger_favicon_url=SPORTSPUFF_LOGO_URL,
+        swagger_css_url="/static/sportspuff-docs.css",
+        swagger_ui_parameters={
+            "defaultModelsExpandDepth": 0,
+            "docExpansion": "list",
+            "tryItOutEnabled": True,
+            "persistAuthorization": True,
+        },
+    )
+
+
+@app.get("/redoc", include_in_schema=False)
+def custom_redoc_html():
+    return get_redoc_html(
+        openapi_url=app.openapi_url,
+        title=f"{app.title} — ReDoc",
+        redoc_favicon_url=SPORTSPUFF_LOGO_URL,
+        with_google_fonts=False,
+    )
 
 # Sport mappings
 SPORT_MAPPINGS = {
@@ -1275,6 +1334,7 @@ def root():
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SportsPuff API</title>
+<link rel="icon" type="image/png" href="https://www.splitsp.lat/logos/sportspuff/sportspuff-logo.png">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{
@@ -1360,8 +1420,44 @@ footer{
     <p class="blurb">
       This is the API backend for
       <a href="https://www.sportspuff.org">www.sportspuff.org</a>.
-      It serves live scores, schedules, and standings for MLB, NBA, NFL, NHL, and WNBA.
+      It serves live scores, schedules, standings, and season info across
+      <strong>12 sports/leagues</strong>:
+      MLB, NBA, NFL, NHL, WNBA, MLS, IPL, MLC, FIFA World Cup, ATP, WTA, and the UCI World Tour (Tour de France, Giro, Vuelta, classics).
       Responses are available as JSON (for apps) or plain text (for curl/terminal use).
+      Interactive API docs at <a href="/docs">/docs</a> and <a href="/redoc">/redoc</a>.
+    </p>
+  </div>
+
+  <div class="section endpoint-group">
+    <h2>Sports</h2>
+    <table>
+      <thead>
+        <tr>
+          <th style="text-align:left">League</th>
+          <th>Slug</th>
+          <th>Scores</th>
+          <th>Schedule</th>
+          <th>Standings</th>
+          <th>Season info</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>MLB</td><td><code>mlb</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>NBA</td><td><code>nba</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>NFL</td><td><code>nfl</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>NHL</td><td><code>nhl</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>WNBA</td><td><code>wnba</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>MLS</td><td><code>mls</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>IPL (cricket)</td><td><code>ipl</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>MLC (cricket)</td><td><code>mlc</code></td><td>✓</td><td>✓</td><td>✓</td><td>✓</td></tr>
+        <tr><td>FIFA World Cup</td><td><code>wc</code></td><td>✓</td><td>✓</td><td>✓ (group stage)</td><td>✓</td></tr>
+        <tr><td>ATP tennis</td><td><code>atp</code></td><td>fixture only</td><td>✓</td><td>n/a</td><td>tour calendar</td></tr>
+        <tr><td>WTA tennis</td><td><code>wta</code></td><td>fixture only</td><td>✓</td><td>n/a</td><td>tour calendar</td></tr>
+        <tr><td>UCI World Tour (cycling)</td><td><code>cycling</code></td><td>calendar only</td><td>✓</td><td>n/a</td><td>race calendar</td></tr>
+      </tbody>
+    </table>
+    <p class="blurb" style="margin-top:1rem;font-size:0.85rem">
+      Tennis and cycling have limited data coverage upstream — tennis has no set scores, cycling has no rider/GC standings. Standings rows for those sports return an empty list with an explanatory message.
     </p>
   </div>
 
@@ -1424,7 +1520,35 @@ footer{
     <table>
       <tr>
         <td><a href="/api/v1/season-info/mlb">/api/v1/season-info/{league}</a> <span class="tag tag-json">JSON</span></td>
-        <td>Season phase dates (cached 24h)</td>
+        <td>Season phase dates, current phase, last champion (when known)</td>
+      </tr>
+    </table>
+
+    <h3>Status &amp; docs</h3>
+    <table>
+      <tr>
+        <td><a href="/api/v1/status">/api/v1/status</a> <span class="tag tag-json">JSON</span></td>
+        <td>Upstream + endpoint health snapshot</td>
+      </tr>
+      <tr>
+        <td><a href="/status">/status</a></td>
+        <td>HTML status page</td>
+      </tr>
+      <tr>
+        <td><a href="/curl/v1/status">/curl/v1/status</a> <span class="tag tag-text">TEXT</span></td>
+        <td>Plain-text status (oncall-friendly; supports <code>?only=errors|warnings</code>)</td>
+      </tr>
+      <tr>
+        <td><a href="/docs">/docs</a></td>
+        <td>Interactive API docs (Swagger UI)</td>
+      </tr>
+      <tr>
+        <td><a href="/redoc">/redoc</a></td>
+        <td>Reference API docs (ReDoc)</td>
+      </tr>
+      <tr>
+        <td><a href="/openapi.json">/openapi.json</a> <span class="tag tag-json">JSON</span></td>
+        <td>OpenAPI 3 spec (for client codegen)</td>
       </tr>
     </table>
 
@@ -1468,7 +1592,7 @@ footer{
 
 <footer>SportsPuff &mdash; sportspuff.org</footer>
 </body>
-</html>"""
+</html>""".replace(SPORTSPUFF_LOGO_REMOTE, SPORTSPUFF_LOGO_URL)
 
 
 @app.get("/help", response_class=HTMLResponse)
@@ -2991,6 +3115,7 @@ def api_status_page(request: Request):
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SportsPuff API · Status</title>
+<link rel="icon" type="image/png" href="https://www.splitsp.lat/logos/sportspuff/sportspuff-logo.png">
 <style>
 *{{margin:0;padding:0;box-sizing:border-box}}
 body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Arial,sans-serif;
@@ -3031,7 +3156,7 @@ footer{{text-align:center;padding:1.5rem;font-size:.75rem;color:rgba(245,245,245
   {res_table}
 </div>
 <footer>JSON: <a href="/api/v1/status" style="color:#9aa">/api/v1/status</a> · curl: <a href="/curl/v1/status" style="color:#9aa">/curl/v1/status</a></footer>
-</body></html>"""
+</body></html>""".replace(SPORTSPUFF_LOGO_REMOTE, SPORTSPUFF_LOGO_URL)
 
 
 # Catch-all routes for unknown /api/ and /curl/ paths - return help
