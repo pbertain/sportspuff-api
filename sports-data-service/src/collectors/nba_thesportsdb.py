@@ -16,6 +16,43 @@ from typing import Any, Dict, List, Optional
 from .thesportsdb import TheSportsDBCollector
 
 
+# Standard NBA team -> 3-letter abbreviation. TheSportsDB doesn't expose
+# strHomeTeamShort for NBA so we maintain this map ourselves.
+NBA_TEAM_ABBREVS: Dict[str, str] = {
+    "Atlanta Hawks": "ATL",
+    "Boston Celtics": "BOS",
+    "Brooklyn Nets": "BKN",
+    "Charlotte Hornets": "CHA",
+    "Chicago Bulls": "CHI",
+    "Cleveland Cavaliers": "CLE",
+    "Dallas Mavericks": "DAL",
+    "Denver Nuggets": "DEN",
+    "Detroit Pistons": "DET",
+    "Golden State Warriors": "GSW",
+    "Houston Rockets": "HOU",
+    "Indiana Pacers": "IND",
+    "LA Clippers": "LAC",
+    "Los Angeles Clippers": "LAC",
+    "Los Angeles Lakers": "LAL",
+    "Memphis Grizzlies": "MEM",
+    "Miami Heat": "MIA",
+    "Milwaukee Bucks": "MIL",
+    "Minnesota Timberwolves": "MIN",
+    "New Orleans Pelicans": "NOP",
+    "New York Knicks": "NYK",
+    "Oklahoma City Thunder": "OKC",
+    "Orlando Magic": "ORL",
+    "Philadelphia 76ers": "PHI",
+    "Phoenix Suns": "PHX",
+    "Portland Trail Blazers": "POR",
+    "Sacramento Kings": "SAC",
+    "San Antonio Spurs": "SAS",
+    "Toronto Raptors": "TOR",
+    "Utah Jazz": "UTA",
+    "Washington Wizards": "WAS",
+}
+
+
 class NBATheSportsDBCollector(TheSportsDBCollector):
     LEAGUE_ID = 4387
     SPORTSPUFF_CODE = "NBA"
@@ -53,13 +90,13 @@ class NBATheSportsDBCollector(TheSportsDBCollector):
                 "game_time": dt,
                 "game_type": "regular",
                 "home_team": raw.get("strHomeTeam") or "",
-                "home_team_abbrev": "",
+                "home_team_abbrev": NBA_TEAM_ABBREVS.get(raw.get("strHomeTeam") or "", ""),
                 "home_team_id": str(raw.get("idHomeTeam") or ""),
                 "home_wins": 0,
                 "home_losses": 0,
                 "home_score_total": home_score,
                 "visitor_team": raw.get("strAwayTeam") or "",
-                "visitor_team_abbrev": "",
+                "visitor_team_abbrev": NBA_TEAM_ABBREVS.get(raw.get("strAwayTeam") or "", ""),
                 "visitor_team_id": str(raw.get("idAwayTeam") or ""),
                 "visitor_wins": 0,
                 "visitor_losses": 0,

@@ -1099,10 +1099,11 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
     output = _format_curl_header(tz, target_date, "Here is the schedule:")
 
-    sport_order = ['ipl', 'mlb', 'mlc', 'mls', 'nba', 'nfl', 'nhl', 'wnba']
+    sport_order = ['ipl', 'mlb', 'mlc', 'mls', 'nba', 'nfl', 'nhl', 'wnba', 'wc', 'atp', 'wta', 'cycling']
     sport_to_league = {
         'ipl': 'IPL', 'mlb': 'MLB', 'mlc': 'MLC', 'mls': 'MLS',
-        'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL', 'wnba': 'WNBA'
+        'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL', 'wnba': 'WNBA',
+        'wc': 'WC', 'atp': 'ATP', 'wta': 'WTA', 'cycling': 'CYCLING',
     }
 
     game_type_map = {
@@ -1154,10 +1155,11 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
 
     output = _format_curl_header(tz, target_date, "Here are the scores:")
 
-    sport_order = ['ipl', 'mlb', 'mlc', 'mls', 'nba', 'nfl', 'nhl', 'wnba']
+    sport_order = ['ipl', 'mlb', 'mlc', 'mls', 'nba', 'nfl', 'nhl', 'wnba', 'wc', 'atp', 'wta', 'cycling']
     sport_to_league = {
         'ipl': 'IPL', 'mlb': 'MLB', 'mlc': 'MLC', 'mls': 'MLS',
-        'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL', 'wnba': 'WNBA'
+        'nba': 'NBA', 'nfl': 'NFL', 'nhl': 'NHL', 'wnba': 'WNBA',
+        'wc': 'WC', 'atp': 'ATP', 'wta': 'WTA', 'cycling': 'CYCLING',
     }
 
     game_type_map = {
