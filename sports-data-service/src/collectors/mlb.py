@@ -343,7 +343,7 @@ class MLBCollector(BaseCollector):
                 'visitor_losses': away_rec.get('losses', 0),
                 'visitor_score_total': raw_game.get('away_score', 0),
                 'game_status': self.normalize_game_status(raw_game.get('status', 'scheduled')),
-                'current_period': raw_game.get('current_inning', ''),
+                'current_period': str(raw_game.get('current_inning', '') or ''),
                 'time_remaining': raw_game.get('inning_state', ''),
                 'is_final': raw_game.get('status') in ('Final', 'Game Over', 'Completed Early'),
                 'is_overtime': False,  # MLB doesn't have overtime
@@ -423,7 +423,7 @@ class MLBCollector(BaseCollector):
                 'visitor_losses': away_record.get('losses', 0),
                 'visitor_score_total': linescore.get('teams', {}).get('away', {}).get('runs', 0),
                 'game_status': self.normalize_game_status(detailed_state),
-                'current_period': linescore.get('currentInning', ''),
+                'current_period': str(linescore.get('currentInning', '') or ''),
                 'time_remaining': linescore.get('inningState', ''),
                 'is_final': detailed_state in ('Final', 'Game Over', 'Completed Early'),
                 'is_overtime': False,
