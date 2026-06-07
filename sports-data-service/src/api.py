@@ -20,6 +20,7 @@ from .config import settings
 from .collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 from .utils import api_tracker
 from .services import upstream_health
+from . import schemas
 
 import time as _time
 
@@ -1625,7 +1626,7 @@ def help_curl_v1():
     return get_help_text()
 
 
-@app.get("/api/v1/schedules/{date}")
+@app.get("/api/v1/schedules/{date}", response_model=schemas.AllSportsScheduleResponse)
 def get_schedules_all_sports_api_v1(
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
     tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
@@ -1669,7 +1670,7 @@ def get_schedules_all_sports_curl_v1(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/scores/{date}")
+@app.get("/api/v1/scores/{date}", response_model=schemas.AllSportsScoresResponse)
 def get_scores_all_sports_api_v1(
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
     tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
@@ -1713,7 +1714,7 @@ def get_scores_all_sports_curl_v1(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/schedule/{sport}/{date}")
+@app.get("/api/v1/schedule/{sport}/{date}", response_model=schemas.ScheduleResponse)
 def get_schedule_api_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
@@ -2372,7 +2373,7 @@ def get_schedule_curl_v1(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/scores/{sport}/{date}")
+@app.get("/api/v1/scores/{sport}/{date}", response_model=schemas.ScoresResponse)
 def get_scores_api_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
@@ -2582,7 +2583,7 @@ def get_scores_curl_v1(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/v1/standings/{sport}")
+@app.get("/api/v1/standings/{sport}", response_model=schemas.StandingsResponse)
 def get_standings_api_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, mls, ipl, mlc, all)"),
 ):
@@ -2876,7 +2877,7 @@ def _get_season_info_from_db(league: str) -> Optional[Dict[str, Any]]:
         return None
 
 
-@app.get("/api/v1/season-info/{league}")
+@app.get("/api/v1/season-info/{league}", response_model=schemas.SeasonInfoResponse)
 def get_season_info(
     league: str = Path(..., description="League (mlb, nba, nfl, nhl, wnba)"),
 ):
@@ -2926,7 +2927,7 @@ def get_season_info(
     return result
 
 
-@app.get("/api/v1/cricket/{league}/season")
+@app.get("/api/v1/cricket/{league}/season", response_model=schemas.CricketSeasonResponse)
 def get_cricket_season(
     league: str = Path(..., description="Cricket league (ipl, mlc)"),
 ):
@@ -2943,7 +2944,7 @@ def get_cricket_season(
     return collector.get_season()
 
 
-@app.get("/health")
+@app.get("/health", response_model=schemas.HealthOut)
 def health_check():
     """Health check endpoint."""
     return {"status": "healthy"}
@@ -2957,7 +2958,7 @@ def _status_api_base(request_url: str) -> str:
     return f"{parts.scheme}://{parts.netloc}"
 
 
-@app.get("/api/v1/status")
+@app.get("/api/v1/status", response_model=schemas.StatusResponse)
 def api_status_json(request: Request):
     """JSON snapshot of upstream + own-endpoint health."""
     from .services.status import get_status
