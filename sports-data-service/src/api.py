@@ -1093,19 +1093,35 @@ def _format_cricket_game(game, tz):
 
 
 def _format_tennis_match(game, tz) -> str:
-    """Format a tennis match for curl output. No scoreline (TheSportsDB
-    doesn't expose set scores), no team abbreviations — just the two
-    player names with a status / start time. Tournament context is
-    rendered as a sub-banner one level up."""
+    """Format a tennis match for curl output. When ESPN-sourced set scores
+    are available, surface them; otherwise show the matchup with status.
+    Tournament context is rendered as a sub-banner one level up."""
     home = (getattr(game, 'home_team', '') or '').strip() or '?'
     visitor = (getattr(game, 'visitor_team', '') or '').strip() or '?'
     name_w = 14
     visitor_disp = visitor.ljust(name_w)
     home_disp = home.ljust(name_w)
 
+    set_scores = getattr(game, 'tennis_set_scores', None) or []
+    home_sets = getattr(game, 'home_sets_won', None)
+    visitor_sets = getattr(game, 'visitor_sets_won', None)
+    winner = getattr(game, 'tennis_winner', None)
+
     if game.is_final:
+        if set_scores:
+            # Compact per-set: "Sinner 6 6 vs Alcaraz 1 3   F"
+            v_sets = " ".join(f"{s['visitor']:>2d}" for s in set_scores)
+            h_sets = " ".join(f"{s['home']:>2d}" for s in set_scores)
+            v_mark = '*' if winner == 'visitor' else ' '
+            h_mark = '*' if winner == 'home' else ' '
+            return f" {v_mark}{visitor_disp} {v_sets}  vs   {h_mark}{home_disp} {h_sets}  F"
         return f"  {visitor_disp} vs    {home_disp}  F"
+
     if getattr(game, 'game_status', '') == 'in_progress':
+        if set_scores:
+            v_sets = " ".join(f"{s['visitor']:>2d}" for s in set_scores)
+            h_sets = " ".join(f"{s['home']:>2d}" for s in set_scores)
+            return f"  {visitor_disp} {v_sets}  vs    {home_disp} {h_sets}  LIVE"
         return f"  {visitor_disp} vs    {home_disp}  LIVE"
 
     if game.game_time:
@@ -1816,9 +1832,8 @@ def get_schedule_api_v1(
                     d['sport'] = sport_key
                     all_games.append(d)
                     by_sport.setdefault(sport_key, []).append(d)
-            from .services.playoff_series import enrich_games as _enrich_playoff
             for sport_key, batch in by_sport.items():
-                _enrich_playoff(sport_key, target_date, batch)
+                _apply_dict_enrichers(sport_key, target_date, batch)
             all_games.sort(key=lambda x: x.get('game_time') or '')
             return {"sport": "all", "date": target_date.isoformat(), "games": all_games}
 
@@ -1828,8 +1843,7 @@ def get_schedule_api_v1(
 
         games = _get_games_for_curl(league, target_date, timezone)
         games_out = [_game_wrapper_to_dict(g, league) for g in games]
-        from .services.playoff_series import enrich_games as _enrich_playoff
-        games_out = _enrich_playoff(sport_lower, target_date, games_out)
+        _apply_dict_enrichers(sport_lower, target_date, games_out)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
@@ -2201,14 +2215,31 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         d["tennis_round"] = getattr(g, 'tennis_round', '') or ''
         d["tennis_country"] = getattr(g, 'tennis_country', '') or ''
         d["tennis_video"] = getattr(g, 'tennis_video', '') or ''
+        # ESPN-sourced enrichment. None if match wasn't matched against ESPN.
+        d["tennis_set_scores"] = getattr(g, 'tennis_set_scores', None)
+        d["home_sets_won"] = getattr(g, 'home_sets_won', None)
+        d["visitor_sets_won"] = getattr(g, 'visitor_sets_won', None)
+        d["tennis_summary"] = getattr(g, 'tennis_summary', None)
+        d["tennis_winner"] = getattr(g, 'tennis_winner', None)
     return d
 
 
+def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> list:
+    """Run all dict-based enrichers (playoff_series, tennis_scores) on a list
+    of game dicts. Each enricher is a no-op for sports it doesn't handle, so
+    this can be called for any sport."""
+    from .services.playoff_series import enrich_games as _enrich_playoff
+    from .services.tennis_scores import enrich_games as _enrich_tennis
+    _enrich_playoff(sport, target_date, games_dicts)
+    _enrich_tennis(sport, target_date, games_dicts)
+    return games_dicts
+
+
 def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list:
-    """Apply playoff_series.enrich_games to GameWrapper instances by round-
-    tripping through dict proxies. The dict-based enricher is what the JSON
-    routes use; this gives the curl/text routes the same series-record data
-    so playoff games can show '(2-0) @ (0-2)' instead of regular-season 0-0."""
+    """Apply dict-based enrichers (playoff series, tennis scores) to
+    GameWrapper instances by round-tripping through dict proxies. Mirrors
+    the JSON path so curl/text routes get the same series-record + tennis
+    set-score data."""
     if not wrappers:
         return wrappers
     proxies = [
@@ -2218,13 +2249,18 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         }
         for w in wrappers
     ]
-    from .services.playoff_series import enrich_games as _enrich_playoff
-    _enrich_playoff(sport, target_date, proxies)
+    _apply_dict_enrichers(sport, target_date, proxies)
     keys = (
+        # playoff_series
         "is_playoff", "series_summary", "series_round",
         "series_total", "series_completed",
         "home_series_wins", "home_series_losses",
         "visitor_series_wins", "visitor_series_losses",
+        # tennis_scores
+        "tennis_set_scores", "home_sets_won", "visitor_sets_won",
+        "tennis_summary", "tennis_winner",
+        # tennis_scores may also override these:
+        "is_final", "game_status",
     )
     for w, p in zip(wrappers, proxies):
         for k in keys:
@@ -2407,6 +2443,11 @@ def _get_games_for_curl(
                         'tennis_round': game_dict.get('tennis_round', ''),
                         'tennis_country': game_dict.get('tennis_country', ''),
                         'tennis_video': game_dict.get('tennis_video', ''),
+                        'tennis_set_scores': game_dict.get('tennis_set_scores'),
+                        'home_sets_won': game_dict.get('home_sets_won'),
+                        'visitor_sets_won': game_dict.get('visitor_sets_won'),
+                        'tennis_summary': game_dict.get('tennis_summary'),
+                        'tennis_winner': game_dict.get('tennis_winner'),
                     }
                     games.append(GameWrapper(game_data))
 
@@ -2516,9 +2557,8 @@ def get_scores_api_v1(
                     d['sport'] = sport_key
                     all_scores.append(d)
                     by_sport.setdefault(sport_key, []).append(d)
-            from .services.playoff_series import enrich_games as _enrich_playoff
             for sport_key, batch in by_sport.items():
-                _enrich_playoff(sport_key, target_date, batch)
+                _apply_dict_enrichers(sport_key, target_date, batch)
             return {"sport": "all", "date": target_date.isoformat(), "scores": all_scores}
 
         league = SPORT_MAPPINGS.get(sport_lower)
@@ -2527,8 +2567,7 @@ def get_scores_api_v1(
 
         games = _get_games_for_curl(league, target_date, timezone)
         scores = [_game_wrapper_to_dict(g, league) for g in games]
-        from .services.playoff_series import enrich_games as _enrich_playoff
-        scores = _enrich_playoff(sport_lower, target_date, scores)
+        _apply_dict_enrichers(sport_lower, target_date, scores)
         return {
             "sport": sport,
             "date": target_date.isoformat(),

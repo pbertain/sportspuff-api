@@ -119,6 +119,16 @@ class GameOut(BaseModel):
     tennis_round: Optional[Union[int, str]] = Field(default=None, description="Bracket round number from upstream.")
     tennis_country: Optional[str] = None
     tennis_video: Optional[str] = None
+    # Set-by-set scoring + match summary, sourced from ESPN's tennis scoreboard.
+    # `tennis_set_scores` is per-set: [{"set": 1, "home": 6, "visitor": 1}, ...].
+    # `home_sets_won` / `visitor_sets_won` are the counts (1 vs 2 for sets won).
+    # `tennis_summary` is ESPN's one-line result (e.g. "Onclin bt Luz 6-1 6-3").
+    # `tennis_winner` is "home" / "visitor" / None.
+    tennis_set_scores: Optional[List[Dict[str, int]]] = None
+    home_sets_won: Optional[int] = None
+    visitor_sets_won: Optional[int] = None
+    tennis_summary: Optional[str] = None
+    tennis_winner: Optional[str] = None
 
     # ---- Cycling (UCI World Tour) ----
     cycling_race: Optional[str] = Field(default=None, description='Parsed race name, e.g. "Tour de France".')
