@@ -1093,38 +1093,31 @@ def _format_cricket_game(game, tz):
 
 
 def _format_tennis_match(game, tz) -> str:
-    """Format a tennis match for curl output. When ESPN-sourced set scores
-    are available, surface them; otherwise show the matchup with status.
-    Tournament context is rendered as a sub-banner one level up."""
+    """Format a tennis match for curl output. Two-line layout — visitor on
+    line 1, home on line 2, set-score columns aligned, status on the home
+    line. ESPN-sourced set scores show when present; otherwise the rows
+    just carry the names. Tournament context is rendered as a sub-banner
+    one level up."""
     home = (getattr(game, 'home_team', '') or '').strip() or '?'
     visitor = (getattr(game, 'visitor_team', '') or '').strip() or '?'
     name_w = 14
-    visitor_disp = visitor.ljust(name_w)
-    home_disp = home.ljust(name_w)
 
     set_scores = getattr(game, 'tennis_set_scores', None) or []
-    home_sets = getattr(game, 'home_sets_won', None)
-    visitor_sets = getattr(game, 'visitor_sets_won', None)
     winner = getattr(game, 'tennis_winner', None)
+    v_mark = '*' if winner == 'visitor' else ' '
+    h_mark = '*' if winner == 'home' else ' '
+
+    v_sets = ""
+    h_sets = ""
+    if set_scores:
+        v_sets = "  " + " ".join(f"{s['visitor']:>2d}" for s in set_scores)
+        h_sets = "  " + " ".join(f"{s['home']:>2d}" for s in set_scores)
 
     if game.is_final:
-        if set_scores:
-            # Compact per-set: "Sinner 6 6 vs Alcaraz 1 3   F"
-            v_sets = " ".join(f"{s['visitor']:>2d}" for s in set_scores)
-            h_sets = " ".join(f"{s['home']:>2d}" for s in set_scores)
-            v_mark = '*' if winner == 'visitor' else ' '
-            h_mark = '*' if winner == 'home' else ' '
-            return f" {v_mark}{visitor_disp} {v_sets}  vs   {h_mark}{home_disp} {h_sets}  F"
-        return f"  {visitor_disp} vs    {home_disp}  F"
-
-    if getattr(game, 'game_status', '') == 'in_progress':
-        if set_scores:
-            v_sets = " ".join(f"{s['visitor']:>2d}" for s in set_scores)
-            h_sets = " ".join(f"{s['home']:>2d}" for s in set_scores)
-            return f"  {visitor_disp} {v_sets}  vs    {home_disp} {h_sets}  LIVE"
-        return f"  {visitor_disp} vs    {home_disp}  LIVE"
-
-    if game.game_time:
+        status = "F"
+    elif getattr(game, 'game_status', '') == 'in_progress':
+        status = "LIVE"
+    elif game.game_time:
         try:
             gt = game.game_time
             if hasattr(gt, 'tzinfo') and gt.tzinfo is None:
@@ -1137,7 +1130,10 @@ def _format_tennis_match(game, tz) -> str:
             status = "TBD"
     else:
         status = "TBD"
-    return f"  {visitor_disp} @     {home_disp}  {status}"
+
+    line1 = f" {v_mark}{visitor.ljust(name_w)}{v_sets}"
+    line2 = f" {h_mark}{home.ljust(name_w)}{h_sets}  {status}"
+    return f"{line1}\n{line2}"
 
 
 def _get_season_type_for_sport(sport: str, target_date: date) -> str:
@@ -1247,9 +1243,12 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
             for t_name in sorted(by_t.keys()):
                 output += f"{league_name} — {t_name}\n"
                 output += "-" * 45 + "\n"
-                for game in by_t[t_name]:
+                matches = by_t[t_name]
+                for i, game in enumerate(matches):
                     output += _format_tennis_match(game, tz)
                     output += "\n"
+                    if i < len(matches) - 1:
+                        output += "  ---\n"
                 output += "-" * 45 + "\n"
             continue
 
@@ -1339,9 +1338,12 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
             for t_name in sorted(by_t.keys()):
                 output += f"{league_name} — {t_name}\n"
                 output += "-" * 45 + "\n"
-                for game in by_t[t_name]:
+                matches = by_t[t_name]
+                for i, game in enumerate(matches):
                     output += _format_tennis_match(game, tz)
                     output += "\n"
+                    if i < len(matches) - 1:
+                        output += "  ---\n"
                 output += "-" * 45 + "\n"
             continue
 
