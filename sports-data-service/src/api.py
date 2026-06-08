@@ -904,6 +904,18 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
     home_wins = game.home_wins or 0
     home_losses = game.home_losses or 0
 
+    # For playoff games, prefer the per-series record over the regular-season
+    # record (which is 0-0 once the post-season starts). Series fields are
+    # populated by services.playoff_series.enrich_games when ESPN has the data.
+    if getattr(game, 'is_playoff', False) or game.game_type == 'playoffs':
+        h_sw = getattr(game, 'home_series_wins', None)
+        v_sw = getattr(game, 'visitor_series_wins', None)
+        if h_sw is not None or v_sw is not None:
+            visitor_wins = v_sw or 0
+            visitor_losses = getattr(game, 'visitor_series_losses', 0) or 0
+            home_wins = h_sw or 0
+            home_losses = getattr(game, 'home_series_losses', 0) or 0
+
     visitor_abbrev = game.visitor_team_abbrev
     if not visitor_abbrev or visitor_abbrev.strip() == '':
         visitor_abbrev = (game.visitor_team or '???')[:4].upper()
@@ -2186,6 +2198,35 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
     return d
 
 
+def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list:
+    """Apply playoff_series.enrich_games to GameWrapper instances by round-
+    tripping through dict proxies. The dict-based enricher is what the JSON
+    routes use; this gives the curl/text routes the same series-record data
+    so playoff games can show '(2-0) @ (0-2)' instead of regular-season 0-0."""
+    if not wrappers:
+        return wrappers
+    proxies = [
+        {
+            "home_team": getattr(w, "home_team", "") or "",
+            "visitor_team": getattr(w, "visitor_team", "") or "",
+        }
+        for w in wrappers
+    ]
+    from .services.playoff_series import enrich_games as _enrich_playoff
+    _enrich_playoff(sport, target_date, proxies)
+    keys = (
+        "is_playoff", "series_summary", "series_round",
+        "series_total", "series_completed",
+        "home_series_wins", "home_series_losses",
+        "visitor_series_wins", "visitor_series_losses",
+    )
+    for w, p in zip(wrappers, proxies):
+        for k in keys:
+            if k in p:
+                setattr(w, k, p[k])
+    return wrappers
+
+
 def _get_games_for_curl(
     league: str,
     target_date: date,
@@ -2355,6 +2396,11 @@ def _get_games_for_curl(
                         'home_draws': int(game_dict.get('home_draws', 0) or 0),
                         'visitor_draws': int(game_dict.get('visitor_draws', 0) or 0),
                         'mls_detail': game_dict.get('mls_detail', ''),
+                        'tennis_tournament': game_dict.get('tennis_tournament', ''),
+                        'tennis_match_label': game_dict.get('tennis_match_label', ''),
+                        'tennis_round': game_dict.get('tennis_round', ''),
+                        'tennis_country': game_dict.get('tennis_country', ''),
+                        'tennis_video': game_dict.get('tennis_video', ''),
                     }
                     games.append(GameWrapper(game_data))
 
@@ -2434,7 +2480,8 @@ def get_schedule_curl_v1(
             else:
                 # If no game_id, include it (shouldn't happen)
                 unique_games.append(game)
-        
+
+        _enrich_curl_wrappers(sport_lower, target_date, unique_games)
         return format_schedule_curl(unique_games, target_date, timezone)
 
     except Exception as e:
@@ -2645,6 +2692,7 @@ def get_scores_curl_v1(
                 seen_game_ids.add(game_id)
             unique_games.append(game)
 
+        _enrich_curl_wrappers(sport_lower, target_date, unique_games)
         return format_scores_curl(unique_games, target_date, timezone)
 
     except Exception as e:
