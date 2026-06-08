@@ -2234,7 +2234,64 @@ def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> l
     from .services.tennis_scores import enrich_games as _enrich_tennis
     _enrich_playoff(sport, target_date, games_dicts)
     _enrich_tennis(sport, target_date, games_dicts)
+    _apply_tennis_contract(sport, games_dicts)
     return games_dicts
+
+
+def _apply_tennis_contract(sport: str, games_dicts: list) -> None:
+    """Add the v6-facing tennis contract (player1_*/player2_* aliases and a
+    tennis_score block) on top of the existing tennis fields. Pure aliasing
+    — every new field is derived from values already on the dict.
+
+    Convention: player1 = visitor, player2 = home. Matches the curl layout
+    where the visitor row prints first."""
+    if sport.lower() not in ("atp", "wta"):
+        return
+    for g in games_dicts:
+        if not isinstance(g, dict):
+            continue
+        g.setdefault("match_status", g.get("game_status") or "scheduled")
+        g.setdefault("tournament_name", g.get("tennis_tournament") or "")
+
+        visitor_last = (g.get("visitor_team") or "").strip()
+        home_last = (g.get("home_team") or "").strip()
+        g["player1_last_name"] = visitor_last
+        g["player2_last_name"] = home_last
+        g["player1_name"] = g.get("visitor_full_name") or visitor_last
+        g["player2_name"] = g.get("home_full_name") or home_last
+        g["player1_seed"] = g.get("visitor_seed")
+        g["player2_seed"] = g.get("home_seed")
+
+        sets = g.get("tennis_set_scores") or []
+        if sets:
+            g["player1_score"] = [s.get("visitor", 0) for s in sets]
+            g["player2_score"] = [s.get("home", 0) for s in sets]
+        else:
+            g["player1_score"] = None
+            g["player2_score"] = None
+        g["player1_sets_won"] = g.get("visitor_sets_won")
+        g["player2_sets_won"] = g.get("home_sets_won")
+
+        tw = g.get("tennis_winner")
+        if tw == "visitor":
+            g["winner"] = "player1"
+            g["winner_name"] = g["player1_name"]
+        elif tw == "home":
+            g["winner"] = "player2"
+            g["winner_name"] = g["player2_name"]
+        else:
+            g["winner"] = None
+            g["winner_name"] = None
+
+        if sets:
+            g["tennis_score"] = {
+                "columns": [f"S{i+1}" for i in range(len(sets))],
+                "player1": g["player1_score"],
+                "player2": g["player2_score"],
+                "winner": g["winner"],
+            }
+        else:
+            g["tennis_score"] = None
 
 
 def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list:
