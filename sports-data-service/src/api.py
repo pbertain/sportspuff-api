@@ -1080,6 +1080,38 @@ def _format_cricket_game(game, tz):
         return f" {away_abbrev} @ {home_abbrev} {time_str}{countdown}"
 
 
+def _format_tennis_match(game, tz) -> str:
+    """Format a tennis match for curl output. No scoreline (TheSportsDB
+    doesn't expose set scores), no team abbreviations — just the two
+    player names with a status / start time. Tournament context is
+    rendered as a sub-banner one level up."""
+    home = (getattr(game, 'home_team', '') or '').strip() or '?'
+    visitor = (getattr(game, 'visitor_team', '') or '').strip() or '?'
+    name_w = 14
+    visitor_disp = visitor.ljust(name_w)
+    home_disp = home.ljust(name_w)
+
+    if game.is_final:
+        return f"  {visitor_disp} vs    {home_disp}  F"
+    if getattr(game, 'game_status', '') == 'in_progress':
+        return f"  {visitor_disp} vs    {home_disp}  LIVE"
+
+    if game.game_time:
+        try:
+            gt = game.game_time
+            if hasattr(gt, 'tzinfo') and gt.tzinfo is None:
+                gt = pytz.UTC.localize(gt)
+            game_time_local = gt.astimezone(tz)
+            tz_abbrev = game_time_local.strftime('%Z')
+            time_str = game_time_local.strftime('%-I:%M %p')
+            status = f"{time_str} {tz_abbrev}"
+        except Exception:
+            status = "TBD"
+    else:
+        status = "TBD"
+    return f"  {visitor_disp} @     {home_disp}  {status}"
+
+
 def _get_season_type_for_sport(sport: str, target_date: date) -> str:
     """Get season type for a sport from database when there are no games for the date."""
     sport_to_league = {
@@ -1178,6 +1210,21 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
         sport_games = by_sport.get(sport, [])
 
+        if sport in ('atp', 'wta') and sport_games:
+            league_name = sport_games[0].league
+            by_t: Dict[str, List[Game]] = {}
+            for g in sport_games:
+                t = (getattr(g, 'tennis_tournament', '') or '').strip() or 'Other'
+                by_t.setdefault(t, []).append(g)
+            for t_name in sorted(by_t.keys()):
+                output += f"{league_name} — {t_name}\n"
+                output += "-" * 45 + "\n"
+                for game in by_t[t_name]:
+                    output += _format_tennis_match(game, tz)
+                    output += "\n"
+                output += "-" * 45 + "\n"
+            continue
+
         if sport_games:
             first_game = sport_games[0]
             season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
@@ -1251,7 +1298,22 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
             if is_final_or_live:
                 seen_game_ids.add(game_id or 'no_id')
                 scored_games.append(g)
-        
+
+        if sport in ('atp', 'wta') and scored_games:
+            league_name = scored_games[0].league
+            by_t: Dict[str, List[Game]] = {}
+            for g in scored_games:
+                t = (getattr(g, 'tennis_tournament', '') or '').strip() or 'Other'
+                by_t.setdefault(t, []).append(g)
+            for t_name in sorted(by_t.keys()):
+                output += f"{league_name} — {t_name}\n"
+                output += "-" * 45 + "\n"
+                for game in by_t[t_name]:
+                    output += _format_tennis_match(game, tz)
+                    output += "\n"
+                output += "-" * 45 + "\n"
+            continue
+
         # Get season info - either from games or from database
         if scored_games:
             # Determine season info from first game
@@ -2115,6 +2177,12 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
     if league == 'MLS':
         d["home_draws"] = getattr(g, 'home_draws', 0)
         d["visitor_draws"] = getattr(g, 'visitor_draws', 0)
+    if league in ('ATP', 'WTA'):
+        d["tennis_tournament"] = getattr(g, 'tennis_tournament', '') or ''
+        d["tennis_match_label"] = getattr(g, 'tennis_match_label', '') or ''
+        d["tennis_round"] = getattr(g, 'tennis_round', '') or ''
+        d["tennis_country"] = getattr(g, 'tennis_country', '') or ''
+        d["tennis_video"] = getattr(g, 'tennis_video', '') or ''
     return d
 
 

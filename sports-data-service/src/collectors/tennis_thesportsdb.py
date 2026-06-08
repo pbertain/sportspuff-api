@@ -84,9 +84,16 @@ KNOWN_TOURNAMENTS: List[str] = [
 _VS_RE = re.compile(r"\s+vs\s+", re.IGNORECASE)
 
 
-def parse_tennis_strevent(strevent: str) -> Dict[str, str]:
+def parse_tennis_strevent(strevent: str, player_set: Optional[set] = None) -> Dict[str, str]:
     """Return {tournament, home_player, visitor_player, raw} parsed from
     a TheSportsDB tennis event name. Best-effort; missing fields are ''.
+
+    `player_set` is a collection of known player names (typically the right
+    side of every "X vs Y" event in a season — those are unambiguous). When
+    KNOWN_TOURNAMENTS doesn't match, we look for the longest player name in
+    the set that's a suffix of the left side; the remainder becomes the
+    tournament. This rescues multi-word surnames like "Davidovich Fokina"
+    or "Dada Mascoll" that a structural heuristic can't separate.
     """
     if not strevent:
         return {"tournament": "", "home_player": "", "visitor_player": "", "raw": ""}
@@ -105,13 +112,37 @@ def parse_tennis_strevent(strevent: str) -> Dict[str, str]:
                 tournament = t
                 home_player = rest
                 break
+
+    if not tournament and player_set:
+        # Find the longest player from the set that's a suffix of `left`.
+        # Match either left == player or left endswith " <player>" so we
+        # don't grab a substring inside another word (e.g. "Sinner" should
+        # not match "Sinner-Open").
+        best = ""
+        for p in player_set:
+            if not p:
+                continue
+            if left == p or left.endswith(" " + p):
+                if len(p) > len(best):
+                    best = p
+        if best:
+            home_player = best
+            tournament = left[:-len(best)].strip()
+
     if not tournament:
-        # Fall back: heuristic — last 1 or 2 words are the player surname,
-        # everything before is the tournament. Multi-word player names
-        # (e.g. "Felix Auger Aliassime") aren't separable without a
-        # deeper parse, so we punt and put the full left in home_player.
-        tournament = ""
-        home_player = left
+        # Last-resort fallback: peel the final word off `left` as the home
+        # player's surname; everything before becomes the tournament name.
+        # Matches v6's existing client-side behavior. Loses information on
+        # multi-word surnames (e.g. "Davidovich Fokina" → "Fokina") that
+        # weren't rescued by KNOWN_TOURNAMENTS or player_set above — those
+        # need either a curated list entry or the player to appear as
+        # visitor somewhere else in the season.
+        words = left.split()
+        if len(words) >= 2:
+            home_player = words[-1]
+            tournament = " ".join(words[:-1]).strip()
+        else:
+            home_player = left
 
     return {
         "tournament": tournament,
@@ -128,14 +159,45 @@ class TennisTheSportsDBCollector(TheSportsDBCollector):
         super().__init__(league_code.upper())
         self.LEAGUE_ID = LEAGUE_IDS[self.SPORTSPUFF_CODE]
         self.timezone = pytz.timezone("US/Pacific")
+        self._player_set_cache: Dict[str, set] = {}
 
     def current_season(self) -> str:
         return str(datetime.now(timezone.utc).year)
 
+    def _player_set_for_season(self, season: str) -> set:
+        """Build a set of known player names from the right side of every
+        'X vs Y' strEvent in the season. The right side is unambiguous (no
+        tournament prefix), so this gives us a reliable lookup table for
+        disambiguating multi-word surnames on the home side.
+
+        Cached per-instance per-season. Underlying _season_events is itself
+        memory+disk cached, so worst-case cost is one upstream fetch the
+        first time a season is parsed in this process."""
+        if season in self._player_set_cache:
+            return self._player_set_cache[season]
+        try:
+            events = self._season_events(season) or []
+        except Exception as e:
+            logger.warning("Tennis player-set fetch failed for %s %s: %s",
+                           self.SPORTSPUFF_CODE, season, e)
+            events = []
+        players: set = set()
+        for raw in events:
+            strevent = raw.get("strEvent") or ""
+            parts = _VS_RE.split(strevent, maxsplit=1)
+            if len(parts) == 2:
+                visitor = parts[1].strip()
+                if visitor:
+                    players.add(visitor)
+        self._player_set_cache[season] = players
+        return players
+
     def _parse_event(self, raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             strevent = raw.get("strEvent") or ""
-            parsed = parse_tennis_strevent(strevent)
+            season = raw.get("strSeason") or self.current_season()
+            player_set = self._player_set_for_season(season)
+            parsed = parse_tennis_strevent(strevent, player_set)
             if not parsed["home_player"] or not parsed["visitor_player"]:
                 return None
 
@@ -199,11 +261,12 @@ class TennisTheSportsDBCollector(TheSportsDBCollector):
         if not events:
             return None
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        player_set = self._player_set_for_season(season)
 
         # Bucket events by tournament + date range.
         by_t: Dict[str, Dict[str, Any]] = {}
         for raw in events:
-            parsed = parse_tennis_strevent(raw.get("strEvent") or "")
+            parsed = parse_tennis_strevent(raw.get("strEvent") or "", player_set)
             t = parsed["tournament"]
             d = (raw.get("dateEvent") or "")[:10]
             if not t or not d:
