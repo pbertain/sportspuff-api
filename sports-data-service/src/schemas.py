@@ -130,6 +130,29 @@ class GameOut(BaseModel):
     tennis_summary: Optional[str] = None
     tennis_winner: Optional[str] = None
 
+    # ---- Tennis v6-facing contract (additive aliases of the fields above) ----
+    # Convention: player1 = visitor, player2 = home. Populated for ATP/WTA.
+    tournament_name: Optional[str] = None
+    match_status: Optional[str] = None
+    player1_name: Optional[str] = None
+    player1_last_name: Optional[str] = None
+    player1_seed: Optional[int] = None
+    player1_score: Optional[List[int]] = None
+    player1_sets_won: Optional[int] = None
+    player2_name: Optional[str] = None
+    player2_last_name: Optional[str] = None
+    player2_seed: Optional[int] = None
+    player2_score: Optional[List[int]] = None
+    player2_sets_won: Optional[int] = None
+    winner: Optional[str] = Field(default=None, description='"player1" or "player2" once final.')
+    winner_name: Optional[str] = None
+    venue_name: Optional[str] = None
+    court_name: Optional[str] = None
+    tennis_score: Optional[Dict[str, Any]] = Field(
+        default=None,
+        description='Combined block: {columns:["S1","S2"], player1:[...], player2:[...], winner:"player1"|"player2"}.',
+    )
+
     # ---- Cycling (UCI World Tour) ----
     cycling_race: Optional[str] = Field(default=None, description='Parsed race name, e.g. "Tour de France".')
     cycling_stage_label: Optional[str] = Field(default=None, description='"Stage 1" / "Prologue" / "" for one-day classics.')

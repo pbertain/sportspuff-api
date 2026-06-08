@@ -17,6 +17,7 @@ Doubles are skipped — our event shape only carries one player per side.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from datetime import date as _date
 from threading import Lock
@@ -31,6 +32,12 @@ _ESPN_SUBPATH: Dict[str, str] = {
     "atp": "tennis/atp",
     "wta": "tennis/wta",
 }
+
+
+# ESPN puts seed in parens before the player's full name, e.g.
+#   "(7) Alejandro Davidovich Fokina (ESP) bt Mattia Bellucci (ITA) 6-1 6-3"
+# Captures (seed, full_name).
+_SEED_PATTERN = re.compile(r"\((\d+)\)\s+([A-Z][^()]*?)\s+\([A-Z]{2,3}\)")
 
 
 _cache: Dict[str, Dict[str, Any]] = {}
@@ -87,6 +94,20 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
     if notes and isinstance(notes, list) and isinstance(notes[0], dict):
         summary = (notes[0].get("text") or "").strip()
 
+    venue = comp.get("venue") or {}
+    venue_name = venue.get("fullName") or ""
+    court_name = venue.get("court") or ""
+
+    # Parse seeds out of the summary string. ESPN tags the seeded player
+    # with "(N)" before their full name. Map per full-name (lowercased).
+    seeds: Dict[str, int] = {}
+    if summary:
+        for m in _SEED_PATTERN.finditer(summary):
+            try:
+                seeds[m.group(2).strip().lower()] = int(m.group(1))
+            except (ValueError, IndexError):
+                continue
+
     return {
         "competition_date": (comp.get("date") or "")[:10],
         "tournament": tournament,
@@ -96,10 +117,14 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
         "side2_sets_won": sides[1]["sets_won"],
         "side1_winner": sides[0]["winner"],
         "side2_winner": sides[1]["winner"],
+        "side1_seed": seeds.get(sides[0]["name"].strip().lower()),
+        "side2_seed": seeds.get(sides[1]["name"].strip().lower()),
         "set_scores": set_scores,
         "summary": summary,
         "is_final": is_final,
         "state": state,
+        "venue_name": venue_name,
+        "court_name": court_name,
     }
 
 
@@ -205,6 +230,17 @@ def enrich_games(
         home_won = m["side2_winner"] if swap else m["side1_winner"]
         visitor_won = m["side1_winner"] if swap else m["side2_winner"]
         g["tennis_winner"] = "home" if home_won else ("visitor" if visitor_won else None)
+
+        # Full names (ESPN's displayName) — preserve so v6 can render
+        # "Alejandro Davidovich Fokina" alongside the surname.
+        g["home_full_name"] = m["side2_name"] if swap else m["side1_name"]
+        g["visitor_full_name"] = m["side1_name"] if swap else m["side2_name"]
+        g["home_seed"] = m["side2_seed"] if swap else m["side1_seed"]
+        g["visitor_seed"] = m["side1_seed"] if swap else m["side2_seed"]
+        if m.get("venue_name"):
+            g["venue_name"] = m["venue_name"]
+        if m.get("court_name"):
+            g["court_name"] = m["court_name"]
 
         # ESPN is more authoritative on status — if it says final, trust it.
         if m["is_final"]:
