@@ -211,6 +211,34 @@ def _fetch_season_events(league_id: int, season: str) -> Optional[list]:
         return None
 
 
+def _next_season(season: str) -> Optional[str]:
+    """One season newer than `season`. Handles 'YYYY' and 'YYYY-YYYY'."""
+    if season.isdigit():
+        return str(int(season) + 1)
+    m = re.match(r"^(\d{4})-(\d{4})$", season)
+    if m:
+        a, b = int(m.group(1)), int(m.group(2))
+        return f"{a + 1}-{b + 1}"
+    return None
+
+
+# Statuses TheSportsDB uses for events that have reached a terminal state.
+# A season with no events outside this set is considered concluded.
+_TERMINAL_STATUSES = {"FT", "POSTPONED", "POSTP", "CANCELLED", "CANCELED", "ABANDONED"}
+
+
+def _is_season_concluded(events: list) -> bool:
+    """True if every event has a terminal status (no scheduled or in-progress
+    games left). Empty seasons are not considered concluded."""
+    if not events:
+        return False
+    for e in events:
+        status = (e.get("strStatus") or "").upper().strip()
+        if status not in _TERMINAL_STATUSES:
+            return False
+    return True
+
+
 def _identify_champion(events: list) -> Optional[Dict[str, Any]]:
     """Pick the championship game and the winner.
 
@@ -259,41 +287,53 @@ def get_last_champion(league_code: str, now: Optional[datetime] = None) -> Optio
     """Return {team, abbreviation, year} for the most recently completed season's
     championship, or None if it can't be determined for this league.
 
+    Tries the season one newer than the heuristic's pick first (covers leagues
+    that wrap before the heuristic's calendar cutoff, e.g. IPL ending in late
+    May). A candidate season is only accepted if it has events AND every event
+    is in a terminal state — otherwise we'd misread an in-progress regular
+    season as a championship and pick the latest FT regular-season game as
+    the champion.
+
     Cached per (league, season) for 1h in memory and 24h on disk.
     """
     cfg = CHAMPION_CONFIG.get(league_code.upper())
     if not cfg:
         return None
-    season = cfg["season_fn"](now)
-    cache_key = f"{league_code}:{season}"
-    now_ts = time.time()
-    with _memory_lock:
-        mem = _memory_cache.get(cache_key)
-        if mem and now_ts - mem["ts"] < _MEMORY_TTL:
-            return mem["data"]
-
-    events = _fetch_season_events(cfg["league_id"], season)
-    if not events:
-        with _memory_lock:
-            _memory_cache[cache_key] = {"data": None, "ts": now_ts}
-        return None
-
-    info = _identify_champion(events)
-    if not info:
-        with _memory_lock:
-            _memory_cache[cache_key] = {"data": None, "ts": now_ts}
-        return None
-
+    primary = cfg["season_fn"](now)
+    nxt = _next_season(primary)
+    candidates = [s for s in (nxt, primary) if s]
     abbr_fn = cfg["abbr_fn"]
-    # Year on output — split-year seasons keep the string form.
-    year_field: Any = season
-    if season.isdigit():
-        year_field = int(season)
-    out = {
-        "team": info["team"],
-        "abbreviation": abbr_fn(info["team"]),
-        "year": year_field,
-    }
-    with _memory_lock:
-        _memory_cache[cache_key] = {"data": out, "ts": now_ts}
-    return out
+    now_ts = time.time()
+
+    for season in candidates:
+        cache_key = f"{league_code}:{season}"
+        with _memory_lock:
+            mem = _memory_cache.get(cache_key)
+            if mem and now_ts - mem["ts"] < _MEMORY_TTL:
+                if mem["data"]:
+                    return mem["data"]
+                continue
+
+        events = _fetch_season_events(cfg["league_id"], season)
+        if not events or not _is_season_concluded(events):
+            with _memory_lock:
+                _memory_cache[cache_key] = {"data": None, "ts": now_ts}
+            continue
+
+        info = _identify_champion(events)
+        if not info:
+            with _memory_lock:
+                _memory_cache[cache_key] = {"data": None, "ts": now_ts}
+            continue
+
+        year_field: Any = int(season) if season.isdigit() else season
+        out = {
+            "team": info["team"],
+            "abbreviation": abbr_fn(info["team"]),
+            "year": year_field,
+        }
+        with _memory_lock:
+            _memory_cache[cache_key] = {"data": out, "ts": now_ts}
+        return out
+
+    return None
