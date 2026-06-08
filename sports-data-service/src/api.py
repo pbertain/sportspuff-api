@@ -1239,7 +1239,10 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
         if sport_games:
             first_game = sport_games[0]
-            season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
+            if getattr(first_game, 'is_playoff', False):
+                season_type = 'Post Season (Playoffs)'
+            else:
+                season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
             league_name = first_game.league
         else:
             league_name = sport_to_league.get(sport, sport.upper())
@@ -1330,7 +1333,10 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
         if scored_games:
             # Determine season info from first game
             first_game = scored_games[0]
-            season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
+            if getattr(first_game, 'is_playoff', False):
+                season_type = 'Post Season (Playoffs)'
+            else:
+                season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
             league_name = first_game.league
         else:
             league_name = sport_to_league.get(sport, sport.upper())
