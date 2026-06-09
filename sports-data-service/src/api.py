@@ -2229,13 +2229,16 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
 
 
 def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> list:
-    """Run all dict-based enrichers (playoff_series, tennis_scores) on a list
-    of game dicts. Each enricher is a no-op for sports it doesn't handle, so
-    this can be called for any sport."""
+    """Run all dict-based enrichers (playoff_series, tennis_scores,
+    box_score) on a list of game dicts. Each enricher is a no-op for sports
+    it doesn't handle, so this can be called for any sport."""
     from .services.playoff_series import enrich_games as _enrich_playoff
     from .services.tennis_scores import enrich_games as _enrich_tennis
+    from .services.box_score import enrich_games as _enrich_box
     _enrich_playoff(sport, target_date, games_dicts)
     _enrich_tennis(sport, target_date, games_dicts)
+    # Fill period dicts from ESPN before _apply_box_score derives the contract.
+    _enrich_box(sport, target_date, games_dicts)
     _apply_tennis_contract(sport, games_dicts)
     _apply_box_score(sport, games_dicts)
     return games_dicts
