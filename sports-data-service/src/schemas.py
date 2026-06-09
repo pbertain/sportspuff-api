@@ -92,6 +92,13 @@ class GameOut(BaseModel):
     visitor_team_badge: Optional[str] = None
     league_badge: Optional[str] = None
 
+    # ---- Per-period scoring (NBA/WNBA: q1..q4, NHL: period_1..period_3, MLB: inning_1..., NFL: q1..q4) ----
+    home_period_scores: Optional[Dict[str, int]] = Field(default=None, description="Per-period score dict; key shape varies per league.")
+    visitor_period_scores: Optional[Dict[str, int]] = None
+    # v6-facing box_score block: aligned arrays with column labels.
+    # {columns:["Q1","Q2","Q3","Q4","F"], home:[29,31,22,34,116], visitor:[24,28,25,32,109]}.
+    box_score: Optional[Dict[str, Any]] = None
+
     # ---- Playoff series records (NBA/WNBA/WC/NHL/MLB knockouts) ----
     is_playoff: Optional[bool] = Field(default=None, description="True when this game is a playoff/knockout match.")
     series_summary: Optional[str] = Field(default=None, description='ESPN-derived series summary, e.g. "NY leads series 1-0".')
