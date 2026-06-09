@@ -968,6 +968,13 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
                 status = "F/OT" if period_num >= 4 else "F"
             except (ValueError, TypeError):
                 status = "F"
+        elif sport.lower() == 'mlb':
+            period = str(game.current_period) if game.current_period is not None else ''
+            try:
+                inn = int(period) if period.isdigit() else 0
+                status = f"F/{inn}" if inn > 9 else "F"
+            except (ValueError, TypeError):
+                status = "F"
         elif sport.lower() == 'mls':
             status = "FT"
         else:
@@ -1383,6 +1390,13 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                             try:
                                 period_num = int(period) if str(period).isdigit() else 0
                                 status = "F/OT" if period_num >= 4 else "F"
+                            except (ValueError, TypeError):
+                                status = "F"
+                        elif sport == 'mlb':
+                            period = str(game.current_period) if game.current_period is not None else ''
+                            try:
+                                inn = int(period) if period.isdigit() else 0
+                                status = f"F/{inn}" if inn > 9 else "F"
                             except (ValueError, TypeError):
                                 status = "F"
                         elif sport == 'mls':
