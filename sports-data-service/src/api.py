@@ -2196,6 +2196,8 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         "visitor_wins": getattr(g, 'visitor_wins', 0),
         "visitor_losses": getattr(g, 'visitor_losses', 0),
         "visitor_otl": getattr(g, 'visitor_otl', None) if league == 'NHL' else None,
+        "home_period_scores": getattr(g, 'home_period_scores', None) or {},
+        "visitor_period_scores": getattr(g, 'visitor_period_scores', None) or {},
     }
     if league in ('IPL', 'MLC'):
         d["home_score"] = getattr(g, 'cricket_home_score', '') or ''
@@ -2235,7 +2237,89 @@ def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> l
     _enrich_playoff(sport, target_date, games_dicts)
     _enrich_tennis(sport, target_date, games_dicts)
     _apply_tennis_contract(sport, games_dicts)
+    _apply_box_score(sport, games_dicts)
     return games_dicts
+
+
+# Per-league period-score conventions for the box_score block.
+# `prefix` matches the dict key the collectors write
+# (mlb.py writes 'inning_1', nhl.py writes 'period_1', nba/nfl write 'q1').
+# `label` is the column header per period number.
+# `total_label` is the final-score column at the end.
+_BOX_SCORE_CONFIG: Dict[str, Dict[str, Any]] = {
+    "nba":  {"prefix": "q",       "label": lambda n: f"Q{n}", "total_label": "F"},
+    "wnba": {"prefix": "q",       "label": lambda n: f"Q{n}", "total_label": "F"},
+    "nfl":  {"prefix": "q",       "label": lambda n: f"Q{n}", "total_label": "F"},
+    "nhl":  {"prefix": "period_", "label": lambda n: str(n),  "total_label": "F"},
+    "mlb":  {"prefix": "inning_", "label": lambda n: str(n),  "total_label": "R"},
+    "mls":  {"prefix": "h",       "label": lambda n: f"H{n}", "total_label": "F"},
+    "wc":   {"prefix": "h",       "label": lambda n: f"H{n}", "total_label": "F"},
+}
+
+
+def _apply_box_score(sport: str, games_dicts: list) -> None:
+    """Derive a v6-facing `box_score` block per game from the collector's
+    period-score dicts. Per-league key conventions handled in _BOX_SCORE_CONFIG.
+
+      box_score = {
+        "columns": ["Q1","Q2","Q3","Q4","F"],
+        "visitor": [24,28,25,32,109],
+        "home":    [29,31,22,34,116],
+      }
+
+    Periods that don't fit the per-league prefix (e.g. 'ot', 'so') are
+    appended verbatim with their key uppercased. No box_score added when
+    both sides have empty period dicts."""
+    cfg = _BOX_SCORE_CONFIG.get(sport.lower())
+    if not cfg:
+        return
+    prefix = cfg["prefix"]
+    label_fn = cfg["label"]
+    total_label = cfg["total_label"]
+
+    def _period_num(key: str) -> Optional[int]:
+        if not key.startswith(prefix):
+            return None
+        try:
+            return int(key[len(prefix):])
+        except ValueError:
+            return None
+
+    for g in games_dicts:
+        if not isinstance(g, dict):
+            continue
+        home_p = g.get("home_period_scores") or {}
+        visitor_p = g.get("visitor_period_scores") or {}
+        if not home_p and not visitor_p:
+            g.setdefault("box_score", None)
+            continue
+        # Order numbered periods first (by number), then any extras (OT/SO) by key.
+        all_keys = set(home_p.keys()) | set(visitor_p.keys())
+        numbered = sorted(
+            [k for k in all_keys if _period_num(k) is not None],
+            key=_period_num,
+        )
+        extras = sorted(k for k in all_keys if _period_num(k) is None)
+        columns: List[str] = []
+        home_arr: List[int] = []
+        visitor_arr: List[int] = []
+        for k in numbered:
+            n = _period_num(k)
+            columns.append(label_fn(n))
+            home_arr.append(int(home_p.get(k, 0) or 0))
+            visitor_arr.append(int(visitor_p.get(k, 0) or 0))
+        for k in extras:
+            columns.append(k.upper())
+            home_arr.append(int(home_p.get(k, 0) or 0))
+            visitor_arr.append(int(visitor_p.get(k, 0) or 0))
+        columns.append(total_label)
+        home_arr.append(int(g.get("home_score") or 0))
+        visitor_arr.append(int(g.get("visitor_score") or 0))
+        g["box_score"] = {
+            "columns": columns,
+            "home": home_arr,
+            "visitor": visitor_arr,
+        }
 
 
 def _apply_tennis_contract(sport: str, games_dicts: list) -> None:
@@ -2388,6 +2472,8 @@ def _get_games_for_curl(
                     'visitor_wins': game.visitor_wins or 0,
                     'visitor_losses': game.visitor_losses or 0,
                     'visitor_otl': getattr(game, 'visitor_otl', 0) or 0,
+                    'home_period_scores': getattr(game, 'home_period_scores', None) or {},
+                    'visitor_period_scores': getattr(game, 'visitor_period_scores', None) or {},
                 }
                 if league == 'WNBA' and standings_records and wnba_collector:
                     home_record = standings_records.get(wnba_collector._normalize_abbrev(game.home_team_abbrev))
@@ -2507,6 +2593,8 @@ def _get_games_for_curl(
                         'visitor_sets_won': game_dict.get('visitor_sets_won'),
                         'tennis_summary': game_dict.get('tennis_summary'),
                         'tennis_winner': game_dict.get('tennis_winner'),
+                        'home_period_scores': game_dict.get('home_period_scores') or {},
+                        'visitor_period_scores': game_dict.get('visitor_period_scores') or {},
                     }
                     games.append(GameWrapper(game_data))
 
