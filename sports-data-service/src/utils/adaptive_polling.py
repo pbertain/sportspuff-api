@@ -95,17 +95,11 @@ class AdaptivePollingManager:
         ).all()
         
         if not active_games:
-            # NFL-specific: Check hourly if no games
-            if league == 'NFL':
-                return 3600  # 1 hour
             return None  # No active games, stop polling
         
         # Check if all games are final
         all_final = all(game.is_final for game in active_games)
         if all_final:
-            # NFL-specific: Check hourly if all games are final
-            if league == 'NFL':
-                return 3600  # 1 hour
             return None  # All games final, stop polling
         
         # Check for games in progress
