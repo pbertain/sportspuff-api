@@ -14,6 +14,7 @@ in eventsseason.php.
 from __future__ import annotations
 
 import logging
+import unicodedata
 from collections import defaultdict, deque
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -23,6 +24,66 @@ import pytz
 from .thesportsdb import TheSportsDBCollector
 
 logger = logging.getLogger(__name__)
+
+
+WC_TEAM_ABBREVS: Dict[str, str] = {
+    "Algeria": "ALG",
+    "Argentina": "ARG",
+    "Australia": "AUS",
+    "Austria": "AUT",
+    "Belgium": "BEL",
+    "Bosnia and Herzegovina": "BIH",
+    "Bosnia-Herzegovina": "BIH",
+    "Brazil": "BRA",
+    "Canada": "CAN",
+    "Cabo Verde": "CPV",
+    "Cape Verde": "CPV",
+    "Colombia": "COL",
+    "Congo DR": "COD",
+    "DR Congo": "COD",
+    "Curacao": "CUW",
+    "Czech Republic": "CZE",
+    "Czechia": "CZE",
+    "Cote d'Ivoire": "CIV",
+    "Ivory Coast": "CIV",
+    "Ecuador": "ECU",
+    "Egypt": "EGY",
+    "England": "ENG",
+    "France": "FRA",
+    "Germany": "GER",
+    "Ghana": "GHA",
+    "Haiti": "HAI",
+    "Iran": "IRN",
+    "Iraq": "IRQ",
+    "Japan": "JPN",
+    "Jordan": "JOR",
+    "Korea Republic": "KOR",
+    "South Korea": "KOR",
+    "Saudi Arabia": "KSA",
+    "Morocco": "MAR",
+    "Mexico": "MEX",
+    "Netherlands": "NED",
+    "Norway": "NOR",
+    "New Zealand": "NZL",
+    "Panama": "PAN",
+    "Paraguay": "PAR",
+    "Portugal": "POR",
+    "Qatar": "QAT",
+    "Scotland": "SCO",
+    "Senegal": "SEN",
+    "South Africa": "RSA",
+    "Spain": "ESP",
+    "Sweden": "SWE",
+    "Switzerland": "SUI",
+    "Tunisia": "TUN",
+    "Turkey": "TUR",
+    "Turkiye": "TUR",
+    "Uruguay": "URU",
+    "USA": "USA",
+    "United States": "USA",
+    "United States of America": "USA",
+    "Uzbekistan": "UZB",
+}
 
 
 class WorldCupTheSportsDBCollector(TheSportsDBCollector):
@@ -92,13 +153,13 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 "game_time": dt,
                 "game_type": game_type,
                 "home_team": home,
-                "home_team_abbrev": (raw.get("strHomeTeamShort") or home[:3] or "").upper(),
+                "home_team_abbrev": self._team_abbrev(home, raw.get("strHomeTeamShort")),
                 "home_team_id": str(raw.get("idHomeTeam") or ""),
                 "home_wins": 0,
                 "home_losses": 0,
                 "home_score_total": home_score,
                 "visitor_team": away,
-                "visitor_team_abbrev": (raw.get("strAwayTeamShort") or away[:3] or "").upper(),
+                "visitor_team_abbrev": self._team_abbrev(away, raw.get("strAwayTeamShort")),
                 "visitor_team_id": str(raw.get("idAwayTeam") or ""),
                 "visitor_wins": 0,
                 "visitor_losses": 0,
@@ -213,7 +274,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             gd = rec["goals_for"] - rec["goals_against"]
             grouped[group].append({
                 "team_name": team_name,
-                "abbreviation": (team_name[:3] or "").upper(),
+                "abbreviation": self._team_abbrev(team_name),
                 "group": group,
                 "matches": rec["matches"],
                 "wins": rec["wins"],
@@ -253,6 +314,22 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
 
         self._mark_best_third_place_advancers(groups)
         return groups
+
+    @staticmethod
+    def _team_abbrev(team_name: str, upstream_short: Optional[str] = None) -> str:
+        team_name = WorldCupTheSportsDBCollector._normalize_team_name(team_name)
+        if team_name in WC_TEAM_ABBREVS:
+            return WC_TEAM_ABBREVS[team_name]
+        upstream_short = (upstream_short or "").strip().upper()
+        if upstream_short:
+            return upstream_short
+        return (team_name[:3] or "").upper()
+
+    @staticmethod
+    def _normalize_team_name(team_name: str) -> str:
+        normalized = unicodedata.normalize("NFKD", team_name or "")
+        ascii_name = normalized.encode("ascii", "ignore").decode("ascii")
+        return " ".join(ascii_name.strip().split())
 
     @staticmethod
     def _mark_best_third_place_advancers(groups: List[Dict[str, Any]]) -> None:
