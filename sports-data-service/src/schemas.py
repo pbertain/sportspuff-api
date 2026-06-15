@@ -238,6 +238,9 @@ class StandingsTeamOut(BaseModel):
     goal_difference: Optional[int] = None
     group: Optional[str] = Field(default=None, description="World Cup group letter when applicable.")
     group_rank: Optional[int] = Field(default=None, description="Rank within World Cup group when applicable.")
+    currently_advancing: Optional[bool] = Field(default=None, description="True when the team is currently in a World Cup knockout-advancing position.")
+    advancement_path: Optional[str] = Field(default=None, description='"top_two" | "best_third_place" | "not_advancing" for World Cup group standings.')
+    third_place_rank: Optional[int] = Field(default=None, description="Rank among third-place World Cup teams when applicable.")
 
 
 class StandingsResponse(BaseModel):

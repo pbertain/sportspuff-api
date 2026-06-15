@@ -3018,6 +3018,9 @@ def get_standings_api_v1(
                 'record': rec['record'],
                 'group': rec.get('group'),
                 'group_rank': rec.get('group_rank'),
+                'currently_advancing': rec.get('currently_advancing'),
+                'advancement_path': rec.get('advancement_path'),
+                'third_place_rank': rec.get('third_place_rank'),
             })
         return {
             "sport": "wc",
@@ -3149,15 +3152,16 @@ def get_standings_curl_v1(
                     group_label = group.get('group') or '?'
                     teams = group.get('teams') or []
                     output += f"  Group {group_label}\n"
-                    output += f"    {'#':>1} {'Team':<5} {'GP':>2} {'W':>2} {'D':>2} {'L':>2} {'F':>2} {'A':>2} {'GD':>3} {'P':>3}\n"
+                    output += f"    {'#':>1} {'Team':<5} {'GP':>2} {'W':>2} {'D':>2} {'L':>2} {'F':>2} {'A':>2} {'GD':>3} {'P':>3} {'R32':>3}\n"
                     for rec in teams:
+                        r32 = "*" if rec.get('currently_advancing') else ""
                         output += (
                             f"    {rec.get('group_rank', rec.get('rank', 0)):>1} "
                             f"{rec.get('abbreviation', ''):<5} "
                             f"{rec.get('matches', 0):>2} {rec.get('wins', 0):>2} "
                             f"{rec.get('draws', 0):>2} {rec.get('losses', 0):>2} "
                             f"{rec.get('goals_for', 0):>2} {rec.get('goals_against', 0):>2} "
-                            f"{rec.get('goal_difference', 0):>3} {rec.get('points', 0):>3}\n"
+                            f"{rec.get('goal_difference', 0):>3} {rec.get('points', 0):>3} {r32:>3}\n"
                         )
                     output += "\n"
             else:

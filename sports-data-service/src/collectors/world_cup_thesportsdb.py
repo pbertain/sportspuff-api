@@ -233,6 +233,9 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             for rank, rec in enumerate(teams, 1):
                 rec["group_rank"] = rank
                 rec["rank"] = rank
+                rec["currently_advancing"] = rank <= 2
+                rec["advancement_path"] = "top_two" if rank <= 2 else "not_advancing"
+                rec["third_place_rank"] = None
             groups.append({"group": group, "teams": teams})
 
         # If upstream data is incomplete and a team could not be assigned, keep
@@ -243,9 +246,36 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             for rank, rec in enumerate(teams, 1):
                 rec["group_rank"] = rank
                 rec["rank"] = rank
+                rec["currently_advancing"] = False
+                rec["advancement_path"] = "not_advancing"
+                rec["third_place_rank"] = None
             groups.append({"group": "", "teams": teams})
 
+        self._mark_best_third_place_advancers(groups)
         return groups
+
+    @staticmethod
+    def _mark_best_third_place_advancers(groups: List[Dict[str, Any]]) -> None:
+        third_place_rows = []
+        for group in groups:
+            for rec in group.get("teams", []):
+                if rec.get("group_rank") == 3:
+                    third_place_rows.append(rec)
+
+        third_place_rows.sort(
+            key=lambda r: (
+                -r.get("points", 0),
+                -r.get("goal_difference", 0),
+                -r.get("goals_for", 0),
+                r.get("team_name", ""),
+            )
+        )
+
+        for index, rec in enumerate(third_place_rows, 1):
+            rec["third_place_rank"] = index
+            if index <= 8:
+                rec["currently_advancing"] = True
+                rec["advancement_path"] = "best_third_place"
 
     def get_knockout_bracket(self) -> Dict[str, Any]:
         """Return bracket data for the 32-team knockout stage.
