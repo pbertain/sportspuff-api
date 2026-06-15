@@ -2995,6 +2995,8 @@ def get_standings_api_v1(
         collector = get_collector('WC')
         try:
             standings = collector.get_standings() if collector else []
+            groups = collector.get_group_standings() if collector and hasattr(collector, 'get_group_standings') else []
+            knockout_bracket = collector.get_knockout_bracket() if collector and hasattr(collector, 'get_knockout_bracket') else None
             upstream_health.record_success(upstream_health.upstream_for('wc', 'standings'))
         except Exception as e:
             upstream_health.record_failure(upstream_health.upstream_for('wc', 'standings'), f"{type(e).__name__}: {e}")
@@ -3014,8 +3016,16 @@ def get_standings_api_v1(
                 'goal_difference': rec['goal_difference'],
                 'points': rec['points'],
                 'record': rec['record'],
+                'group': rec.get('group'),
+                'group_rank': rec.get('group_rank'),
             })
-        return {"sport": "wc", "teams": teams, "available": bool(teams)}
+        return {
+            "sport": "wc",
+            "teams": teams,
+            "groups": groups,
+            "knockout_bracket": knockout_bracket,
+            "available": bool(teams),
+        }
 
     if sport_lower in ('atp', 'wta'):
         # Tennis tours have no league standings (every tournament is single
@@ -3129,6 +3139,29 @@ def get_standings_curl_v1(
             else:
                 output += "  No standings data available\n"
             output += "\n"
+        elif sport_name == 'wc':
+            collector = get_collector('WC')
+            groups = collector.get_group_standings() if collector and hasattr(collector, 'get_group_standings') else []
+            output += "WC [Group Standings]\n"
+            output += "-" * 45 + "\n"
+            if groups:
+                for group in groups:
+                    group_label = group.get('group') or '?'
+                    teams = group.get('teams') or []
+                    output += f"  Group {group_label}\n"
+                    output += f"    {'#':>1} {'Team':<5} {'GP':>2} {'W':>2} {'D':>2} {'L':>2} {'F':>2} {'A':>2} {'GD':>3} {'P':>3}\n"
+                    for rec in teams:
+                        output += (
+                            f"    {rec.get('group_rank', rec.get('rank', 0)):>1} "
+                            f"{rec.get('abbreviation', ''):<5} "
+                            f"{rec.get('matches', 0):>2} {rec.get('wins', 0):>2} "
+                            f"{rec.get('draws', 0):>2} {rec.get('losses', 0):>2} "
+                            f"{rec.get('goals_for', 0):>2} {rec.get('goals_against', 0):>2} "
+                            f"{rec.get('goal_difference', 0):>3} {rec.get('points', 0):>3}\n"
+                        )
+                    output += "\n"
+            else:
+                output += "  No standings data available\n\n"
         else:
             output += f"{sport_name.upper()} standings endpoint - TODO\n\n"
 

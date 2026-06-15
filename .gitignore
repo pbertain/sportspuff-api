@@ -6,6 +6,7 @@ __pycache__/
 .Python
 env/
 venv/
+.venv/
 ENV/
 build/
 develop-eggs/
@@ -49,4 +50,3 @@ docker-compose.override.yml
 
 # Cached API responses
 sports-data-service/cache/
-

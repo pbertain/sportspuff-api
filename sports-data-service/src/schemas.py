@@ -236,12 +236,16 @@ class StandingsTeamOut(BaseModel):
     goals_for: Optional[int] = None
     goals_against: Optional[int] = None
     goal_difference: Optional[int] = None
+    group: Optional[str] = Field(default=None, description="World Cup group letter when applicable.")
+    group_rank: Optional[int] = Field(default=None, description="Rank within World Cup group when applicable.")
 
 
 class StandingsResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     sport: str
     teams: List[StandingsTeamOut]
+    groups: Optional[List[Dict[str, Any]]] = Field(default=None, description="Grouped standings for tournaments such as the World Cup.")
+    knockout_bracket: Optional[Dict[str, Any]] = Field(default=None, description="Knockout bracket slots and match data when applicable.")
     available: Optional[bool] = Field(default=None, description="False for sports with no league table (tennis, cycling).")
     message: Optional[str] = None
 
