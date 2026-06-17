@@ -550,7 +550,7 @@ def get_help_json(base_url: str = "https://api.sportspuff.net") -> Dict[str, Any
         },
         "examples": [
             f'curl -H "Accept: application/json" {base_url}/v1/schedule/nba/today',
-            f'curl -H "Accept: text/plain" {base_url}/v1/scores/mlb/today?tz=et',
+            f'curl -H "Accept: text/plain" "{base_url}/v1/scores/mlb/today?tz=et"',
             f'curl -H "Accept: application/json" {base_url}/v1/standings/nba',
             f"curl {base_url}/v1/season-info/mlb",
             f"curl {base_url}/curl/v1/schedule/ipl/today",
@@ -656,7 +656,7 @@ HELP:
 
 EXAMPLES:
   curl -H "Accept: application/json" __BASE_URL__/v1/schedule/nba/today
-  curl -H "Accept: text/plain" __BASE_URL__/v1/scores/mlb/today?tz=et
+  curl -H "Accept: text/plain" "__BASE_URL__/v1/scores/mlb/today?tz=et"
   curl -H "Accept: application/json" __BASE_URL__/v1/standings/nba
   curl __BASE_URL__/v1/season-info/mlb
   curl __BASE_URL__/curl/v1/schedule/ipl/today
@@ -925,7 +925,7 @@ def get_help_html(base_url: str) -> str:
 curl -H "Accept: application/json" __BASE_URL__/v1/schedule/nba/today
 
 # Get today's MLB scores (canonical plain text, Eastern Time)
-curl -H "Accept: text/plain" __BASE_URL__/v1/scores/mlb/today?tz=et
+curl -H "Accept: text/plain" "__BASE_URL__/v1/scores/mlb/today?tz=et"
 
 # Get NBA standings (canonical JSON)
 curl -H "Accept: application/json" __BASE_URL__/v1/standings/nba
