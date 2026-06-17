@@ -1,5 +1,9 @@
+import asyncio
+import json
 from types import SimpleNamespace
 
+from fastapi import HTTPException
+from fastapi.exceptions import RequestValidationError
 from starlette.requests import Request
 
 from src import api, schemas
@@ -65,3 +69,80 @@ def test_v1_scores_honors_text_plain_accept(monkeypatch):
 
     assert response.media_type == "text/plain"
     assert response.body.decode("utf-8") == "plain"
+
+
+def test_json_routes_return_structured_internal_errors(monkeypatch):
+    def boom(target_date, timezone):
+        raise RuntimeError("db password leaked")
+
+    monkeypatch.setattr(api, "_get_all_sport_games", boom)
+
+    response = api.get_scores_all_sports_api_v1("today", None)
+
+    assert response.status_code == 500
+    assert response.body.decode("utf-8") == (
+        '{"error":{"code":"internal_server_error","message":"Internal server error",'
+        '"route":"/api/v1/scores/{date}"}}'
+    )
+
+
+def test_help_json_marks_v1_canonical_and_legacy_routes():
+    help_json = api.get_help_json()
+
+    assert "GET /v1/scores/{date} with Accept: application/json or text/plain" in help_json["endpoints"]["scores"]["canonical"]
+    assert "/api/v1/scores/{date} - JSON compatibility route" in help_json["endpoints"]["scores"]["legacy_compatibility"]
+    assert "GET /v1/season-info/{league} - Season dates for a league" in help_json["endpoints"]["season_info"]["canonical"]
+
+
+def test_http_exception_handler_returns_structured_json():
+    request = _request_with_accept("application/json")
+    request.scope["path"] = "/v1/scores/bad-date"
+    request.scope["raw_path"] = b"/v1/scores/bad-date"
+
+    response = asyncio.run(
+        api.api_http_exception_handler(
+            request,
+            HTTPException(status_code=400, detail="Invalid date format"),
+        )
+    )
+
+    assert response.status_code == 400
+    assert json.loads(response.body) == {
+        "error": {
+            "code": "invalid_request",
+            "message": "Invalid date format",
+            "route": "/v1/scores/bad-date",
+        }
+    }
+
+
+def test_http_exception_handler_returns_plain_text_for_legacy_curl():
+    request = _request_with_accept(None)
+    request.scope["path"] = "/curl/v1/scores/bad-date"
+    request.scope["raw_path"] = b"/curl/v1/scores/bad-date"
+
+    response = asyncio.run(
+        api.api_http_exception_handler(
+            request,
+            HTTPException(status_code=404, detail="Not found"),
+        )
+    )
+
+    assert response.status_code == 404
+    assert response.body.decode("utf-8") == "not_found: Not found (/curl/v1/scores/bad-date)"
+
+
+def test_validation_exception_handler_returns_structured_json():
+    request = _request_with_accept("application/json")
+    request.scope["path"] = "/v1/scores/today"
+    request.scope["raw_path"] = b"/v1/scores/today"
+    exc = RequestValidationError([{"loc": ("query", "tz"), "msg": "Field required", "type": "missing"}])
+
+    response = asyncio.run(api.api_validation_exception_handler(request, exc))
+    payload = json.loads(response.body)
+
+    assert response.status_code == 422
+    assert payload["error"]["code"] == "validation_error"
+    assert payload["error"]["message"] == "Validation failed"
+    assert payload["error"]["route"] == "/v1/scores/today"
+    assert payload["error"]["details"][0]["type"] == "missing"

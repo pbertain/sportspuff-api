@@ -8,6 +8,7 @@ with both JSON and cURL-style text output.
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any, List
 from fastapi import FastAPI, Path, Query, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
 from fastapi.openapi.utils import get_openapi
 import pytz
@@ -204,13 +205,36 @@ app = FastAPI(
         "Scores, schedules, standings, and season info across 12 sports/leagues — "
         "MLB, NBA, NFL, NHL, WNBA, MLS, IPL, MLC, FIFA World Cup, ATP, WTA, and the "
         "UCI World Tour (Tour de France, Giro, classics). Responses available as "
-        "JSON or plain text. Health snapshot at /api/v1/status."
+        "JSON or plain text. Canonical routes live under /v1 with Accept-based "
+        "content negotiation. Health snapshot at /v1/status."
     ),
     version="1.0.0",
     # Disable the default docs routes so we can serve branded ones below.
     docs_url=None,
     redoc_url=None,
 )
+
+
+@app.exception_handler(HTTPException)
+async def api_http_exception_handler(request: Request, exc: HTTPException):
+    route = request.url.path
+    if _request_prefers_plain_text_errors(request):
+        return _plain_text_error_response(exc.status_code, route, exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content=_api_error_payload(exc.status_code, route, exc.detail),
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def api_validation_exception_handler(request: Request, exc: RequestValidationError):
+    route = request.url.path
+    if _request_prefers_plain_text_errors(request):
+        return _plain_text_error_response(422, route, "Validation failed")
+    return JSONResponse(
+        status_code=422,
+        content=_api_error_payload(422, route, "Validation failed", details=exc.errors()),
+    )
 
 # SportsPuff logo. Prefer a locally-bundled file (faster, works offline,
 # survives splitsp.lat outages) and fall back to the canonical remote URL.
@@ -327,6 +351,85 @@ def _client_prefers_plain_text(request: Request) -> bool:
         return True
     return text_q > max(json_q, wildcard_q)
 
+
+def _internal_error_payload(route: str) -> Dict[str, Any]:
+    return {
+        "error": {
+            "code": "internal_server_error",
+            "message": "Internal server error",
+            "route": route,
+        }
+    }
+
+
+def _internal_error_response(route: str, exc: Exception, plain_text: bool = False):
+    logger.exception("Unhandled error in %s: %s", route, exc)
+    if plain_text:
+        return PlainTextResponse(
+            f"internal_server_error: Internal server error ({route})",
+            status_code=500,
+        )
+    return JSONResponse(status_code=500, content=_internal_error_payload(route))
+
+
+def _api_error_code(status_code: int) -> str:
+    return {
+        400: "invalid_request",
+        401: "unauthorized",
+        403: "forbidden",
+        404: "not_found",
+        405: "method_not_allowed",
+        409: "conflict",
+        422: "validation_error",
+        429: "rate_limited",
+        503: "service_unavailable",
+    }.get(status_code, "http_error")
+
+
+def _api_error_message(status_code: int, detail: Any) -> str:
+    if isinstance(detail, str) and detail.strip():
+        return detail
+    return {
+        400: "Invalid request",
+        401: "Authentication required",
+        403: "Forbidden",
+        404: "Not found",
+        405: "Method not allowed",
+        409: "Conflict",
+        422: "Validation failed",
+        429: "Rate limit exceeded",
+        503: "Service unavailable",
+    }.get(status_code, "Request failed")
+
+
+def _api_error_payload(status_code: int, route: str, detail: Any, details: Any = None) -> Dict[str, Any]:
+    payload = {
+        "error": {
+            "code": _api_error_code(status_code),
+            "message": _api_error_message(status_code, detail),
+            "route": route,
+        }
+    }
+    if details is not None:
+        payload["error"]["details"] = details
+    return payload
+
+
+def _plain_text_error_response(status_code: int, route: str, detail: Any) -> PlainTextResponse:
+    return PlainTextResponse(
+        f"{_api_error_code(status_code)}: {_api_error_message(status_code, detail)} ({route})",
+        status_code=status_code,
+    )
+
+
+def _request_prefers_plain_text_errors(request: Request) -> bool:
+    path = request.url.path
+    if path.startswith("/curl/"):
+        return True
+    if path.startswith("/v1/"):
+        return _client_prefers_plain_text(request)
+    return False
+
 def get_help_json() -> Dict[str, Any]:
     """Generate JSON formatted help content."""
     return {
@@ -335,13 +438,15 @@ def get_help_json() -> Dict[str, Any]:
         "endpoints": {
             "schedules": {
                 "description": "Get game schedules",
-                "json": [
-                    "/api/v1/schedules/{date} - All sports schedules",
-                    "/api/v1/schedule/{sport}/{date} - Single sport schedule"
+                "canonical": [
+                    "GET /v1/schedules/{date} with Accept: application/json or text/plain",
+                    "GET /v1/schedule/{sport}/{date} with Accept: application/json or text/plain"
                 ],
-                "curl": [
-                    "/curl/v1/schedules/{date} - All sports schedules",
-                    "/curl/v1/schedule/{sport}/{date} - Single sport schedule"
+                "legacy_compatibility": [
+                    "/api/v1/schedules/{date} - JSON compatibility route",
+                    "/api/v1/schedule/{sport}/{date} - JSON compatibility route",
+                    "/curl/v1/schedules/{date} - Plain-text compatibility route",
+                    "/curl/v1/schedule/{sport}/{date} - Plain-text compatibility route"
                 ],
                 "sports": ["nba", "mlb", "mls", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
                 "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
@@ -349,13 +454,15 @@ def get_help_json() -> Dict[str, Any]:
             },
             "scores": {
                 "description": "Get game scores",
-                "json": [
-                    "/api/v1/scores/{date} - All sports scores",
-                    "/api/v1/scores/{sport}/{date} - Single sport scores"
+                "canonical": [
+                    "GET /v1/scores/{date} with Accept: application/json or text/plain",
+                    "GET /v1/scores/{sport}/{date} with Accept: application/json or text/plain"
                 ],
-                "curl": [
-                    "/curl/v1/scores/{date} - All sports scores",
-                    "/curl/v1/scores/{sport}/{date} - Single sport scores"
+                "legacy_compatibility": [
+                    "/api/v1/scores/{date} - JSON compatibility route",
+                    "/api/v1/scores/{sport}/{date} - JSON compatibility route",
+                    "/curl/v1/scores/{date} - Plain-text compatibility route",
+                    "/curl/v1/scores/{sport}/{date} - Plain-text compatibility route"
                 ],
                 "sports": ["nba", "mlb", "mls", "nfl", "nhl", "wnba", "ipl", "mlc", "all"],
                 "date_formats": ["today", "tomorrow", "yesterday", "YYYY-MM-DD", "YYYYMMDD", "M/D/YYYY", "MM/DD/YYYY"],
@@ -363,19 +470,23 @@ def get_help_json() -> Dict[str, Any]:
             },
             "standings": {
                 "description": "Get team standings",
-                "json": [
-                    "/api/v1/standings/{sport} - Single sport standings"
+                "canonical": [
+                    "GET /v1/standings/{sport} with Accept: application/json or text/plain"
                 ],
-                "curl": [
-                    "/curl/v1/standings/{sport} - Single sport standings"
+                "legacy_compatibility": [
+                    "/api/v1/standings/{sport} - JSON compatibility route",
+                    "/curl/v1/standings/{sport} - Plain-text compatibility route"
                 ],
                 "sports": ["nba", "mlb", "mls", "nfl", "nhl", "wnba"],
                 "note": "Standings endpoint is currently under development"
             },
             "season_info": {
                 "description": "Get season phase dates (preseason, regular season, playoffs, etc.)",
-                "json": [
-                    "/api/v1/season-info/{league} - Season dates for a league"
+                "canonical": [
+                    "GET /v1/season-info/{league} - Season dates for a league"
+                ],
+                "legacy_compatibility": [
+                    "/api/v1/season-info/{league} - JSON compatibility route"
                 ],
                 "leagues": ["mlb", "nba", "nfl", "nhl", "wnba", "ipl", "mlc"],
                 "note": "Returns year, current_phase, and season_types with start/end dates. Cached for 24 hours."
@@ -420,40 +531,51 @@ Version: 1.0.0
 
 CANONICAL V1 ROUTES:
   Use /v1/... with Accept: application/json or Accept: text/plain
-  Legacy /api/v1 and /curl/v1 routes remain available.
+
+LEGACY COMPATIBILITY ROUTES:
+  /api/v1/... serves JSON compatibility responses
+  /curl/v1/... serves plain-text compatibility responses
 
 ENDPOINTS:
 
 Schedules:
-  JSON Format:
-    /api/v1/schedules/{date}              - All sports schedules
-    /api/v1/schedule/{sport}/{date}        - Single sport schedule
+  Canonical:
+    /v1/schedules/{date}                   - All sports schedules
+    /v1/schedule/{sport}/{date}            - Single sport schedule
 
-  cURL Format:
-    /curl/v1/schedules/{date}              - All sports schedules
-    /curl/v1/schedule/{sport}/{date}       - Single sport schedule
+  Legacy Compatibility:
+    /api/v1/schedules/{date}               - JSON compatibility route
+    /api/v1/schedule/{sport}/{date}        - JSON compatibility route
+    /curl/v1/schedules/{date}              - Plain-text compatibility route
+    /curl/v1/schedule/{sport}/{date}       - Plain-text compatibility route
 
 Scores:
-  JSON Format:
-    /api/v1/scores/{date}                  - All sports scores
-    /api/v1/scores/{sport}/{date}          - Single sport scores
+  Canonical:
+    /v1/scores/{date}                      - All sports scores
+    /v1/scores/{sport}/{date}              - Single sport scores
 
-  cURL Format:
-    /curl/v1/scores/{date}                 - All sports scores
-    /curl/v1/scores/{sport}/{date}         - Single sport scores
+  Legacy Compatibility:
+    /api/v1/scores/{date}                  - JSON compatibility route
+    /api/v1/scores/{sport}/{date}          - JSON compatibility route
+    /curl/v1/scores/{date}                 - Plain-text compatibility route
+    /curl/v1/scores/{sport}/{date}         - Plain-text compatibility route
 
 Standings:
-  JSON Format:
-    /api/v1/standings/{sport}               - Single sport standings
+  Canonical:
+    /v1/standings/{sport}                  - Single sport standings
 
-  cURL Format:
-    /curl/v1/standings/{sport}              - Single sport standings
+  Legacy Compatibility:
+    /api/v1/standings/{sport}              - JSON compatibility route
+    /curl/v1/standings/{sport}             - Plain-text compatibility route
 
   Note: Standings endpoint is currently under development
 
 Season Info:
-  JSON Format:
-    /api/v1/season-info/{league}           - Season phase dates
+  Canonical:
+    /v1/season-info/{league}               - Season phase dates
+
+  Legacy Compatibility:
+    /api/v1/season-info/{league}           - JSON compatibility route
 
   Returns year, current_phase, and season_types with start/end dates.
   Cached for 24 hours.
@@ -608,36 +730,41 @@ def get_help_html() -> str:
         
         <h3>Schedules</h3>
         <div class="endpoint">
-            <strong>JSON Format:</strong><br>
-            <code>/api/v1/schedules/{date}</code> - All sports schedules<br>
-            <code>/api/v1/schedule/{sport}/{date}</code> - Single sport schedule
+            <strong>Canonical:</strong><br>
+            <code>/v1/schedules/{date}</code> - All sports schedules<br>
+            <code>/v1/schedule/{sport}/{date}</code> - Single sport schedule
         </div>
         <div class="endpoint">
-            <strong>cURL Format:</strong><br>
-            <code>/curl/v1/schedules/{date}</code> - All sports schedules<br>
-            <code>/curl/v1/schedule/{sport}/{date}</code> - Single sport schedule
+            <strong>Legacy compatibility:</strong><br>
+            <code>/api/v1/schedules/{date}</code> - JSON compatibility route<br>
+            <code>/api/v1/schedule/{sport}/{date}</code> - JSON compatibility route<br>
+            <code>/curl/v1/schedules/{date}</code> - Plain-text compatibility route<br>
+            <code>/curl/v1/schedule/{sport}/{date}</code> - Plain-text compatibility route
         </div>
         
         <h3>Scores</h3>
         <div class="endpoint">
-            <strong>JSON Format:</strong><br>
-            <code>/api/v1/scores/{date}</code> - All sports scores<br>
-            <code>/api/v1/scores/{sport}/{date}</code> - Single sport scores
+            <strong>Canonical:</strong><br>
+            <code>/v1/scores/{date}</code> - All sports scores<br>
+            <code>/v1/scores/{sport}/{date}</code> - Single sport scores
         </div>
         <div class="endpoint">
-            <strong>cURL Format:</strong><br>
-            <code>/curl/v1/scores/{date}</code> - All sports scores<br>
-            <code>/curl/v1/scores/{sport}/{date}</code> - Single sport scores
+            <strong>Legacy compatibility:</strong><br>
+            <code>/api/v1/scores/{date}</code> - JSON compatibility route<br>
+            <code>/api/v1/scores/{sport}/{date}</code> - JSON compatibility route<br>
+            <code>/curl/v1/scores/{date}</code> - Plain-text compatibility route<br>
+            <code>/curl/v1/scores/{sport}/{date}</code> - Plain-text compatibility route
         </div>
         
         <h3>Standings</h3>
         <div class="endpoint">
-            <strong>JSON Format:</strong><br>
-            <code>/api/v1/standings/{sport}</code> - Single sport standings
+            <strong>Canonical:</strong><br>
+            <code>/v1/standings/{sport}</code> - Single sport standings
         </div>
         <div class="endpoint">
-            <strong>cURL Format:</strong><br>
-            <code>/curl/v1/standings/{sport}</code> - Single sport standings
+            <strong>Legacy compatibility:</strong><br>
+            <code>/api/v1/standings/{sport}</code> - JSON compatibility route<br>
+            <code>/curl/v1/standings/{sport}</code> - Plain-text compatibility route
         </div>
         <div class="note">
             <strong>Note:</strong> Standings endpoint is currently under development
@@ -645,8 +772,12 @@ def get_help_html() -> str:
 
         <h3>Season Info</h3>
         <div class="endpoint">
-            <strong>JSON Format:</strong><br>
-            <code>/api/v1/season-info/{league}</code> - Season phase dates for a league
+            <strong>Canonical:</strong><br>
+            <code>/v1/season-info/{league}</code> - Season phase dates for a league
+        </div>
+        <div class="endpoint">
+            <strong>Legacy compatibility:</strong><br>
+            <code>/api/v1/season-info/{league}</code> - JSON compatibility route
         </div>
         <div class="note">
             Returns year, current_phase, and season_types with start/end dates. Cached for 24 hours.<br>
@@ -757,19 +888,19 @@ def get_help_html() -> str:
         </ul>
         
         <h2>Examples</h2>
-        <pre># Get today's NBA schedule (JSON)
-curl http://localhost:34180/api/v1/schedule/nba/today
+        <pre># Get today's NBA schedule (canonical JSON)
+curl -H "Accept: application/json" http://localhost:34180/v1/schedule/nba/today
 
-# Get today's MLB scores (cURL format, Eastern Time)
-curl http://localhost:34180/curl/v1/scores/mlb/today?tz=et
+# Get today's MLB scores (canonical plain text, Eastern Time)
+curl -H "Accept: text/plain" http://localhost:34180/v1/scores/mlb/today?tz=et
 
-# Get NBA standings (JSON)
-curl http://localhost:34180/api/v1/standings/nba
+# Get NBA standings (canonical JSON)
+curl -H "Accept: application/json" http://localhost:34180/v1/standings/nba
 
 # Get MLB season info
-curl http://localhost:34180/api/v1/season-info/mlb
+curl http://localhost:34180/v1/season-info/mlb
 
-# Get IPL schedule (cricket)
+# Legacy compatibility route example
 curl http://localhost:34180/curl/v1/schedule/ipl/today</pre>
     </div>
 </body>
@@ -1592,7 +1723,9 @@ footer{
       It serves live scores, schedules, standings, and season info across
       <strong>12 sports/leagues</strong>:
       MLB, NBA, NFL, NHL, WNBA, MLS, IPL, MLC, FIFA World Cup, ATP, WTA, and the UCI World Tour (Tour de France, Giro, Vuelta, classics).
-      Responses are available as JSON (for apps) or plain text (for curl/terminal use).
+      Canonical API routes live under <strong>/v1</strong> and negotiate JSON vs plain text with the
+      <code>Accept</code> header. Legacy <code>/api/v1</code> and <code>/curl/v1</code> routes remain
+      available as compatibility shims.
       Interactive API docs at <a href="/docs">/docs</a> and <a href="/redoc">/redoc</a>.
     </p>
   </div>
@@ -1636,68 +1769,96 @@ footer{
     <h3>Scores</h3>
     <table>
       <tr>
+        <td><a href="/v1/scores/today">/v1/scores/today</a> <span class="tag tag-json">CANONICAL</span></td>
+        <td>All sports; use <code>Accept</code> to choose JSON or text</td>
+      </tr>
+      <tr>
+        <td><a href="/v1/scores/nba/today">/v1/scores/{sport}/today</a> <span class="tag tag-json">CANONICAL</span></td>
+        <td>Single sport; use <code>Accept</code> to choose JSON or text</td>
+      </tr>
+      <tr>
         <td><a href="/api/v1/scores/today">/api/v1/scores/today</a> <span class="tag tag-json">JSON</span></td>
-        <td>All sports</td>
+        <td>Legacy JSON compatibility route</td>
       </tr>
       <tr>
         <td><a href="/api/v1/scores/nba/today">/api/v1/scores/{sport}/today</a> <span class="tag tag-json">JSON</span></td>
-        <td>Single sport</td>
+        <td>Legacy JSON compatibility route</td>
       </tr>
       <tr>
         <td><a href="/curl/v1/scores/today">/curl/v1/scores/today</a> <span class="tag tag-text">TEXT</span></td>
-        <td>All sports</td>
+        <td>Legacy plain-text compatibility route</td>
       </tr>
       <tr>
         <td><a href="/curl/v1/scores/nba/today">/curl/v1/scores/{sport}/today</a> <span class="tag tag-text">TEXT</span></td>
-        <td>Single sport</td>
+        <td>Legacy plain-text compatibility route</td>
       </tr>
     </table>
 
     <h3>Schedules</h3>
     <table>
       <tr>
+        <td><a href="/v1/schedules/today">/v1/schedules/today</a> <span class="tag tag-json">CANONICAL</span></td>
+        <td>All sports; use <code>Accept</code> to choose JSON or text</td>
+      </tr>
+      <tr>
+        <td><a href="/v1/schedule/nba/today">/v1/schedule/{sport}/today</a> <span class="tag tag-json">CANONICAL</span></td>
+        <td>Single sport; use <code>Accept</code> to choose JSON or text</td>
+      </tr>
+      <tr>
         <td><a href="/api/v1/schedules/today">/api/v1/schedules/today</a> <span class="tag tag-json">JSON</span></td>
-        <td>All sports</td>
+        <td>Legacy JSON compatibility route</td>
       </tr>
       <tr>
         <td><a href="/api/v1/schedule/nba/today">/api/v1/schedule/{sport}/today</a> <span class="tag tag-json">JSON</span></td>
-        <td>Single sport</td>
+        <td>Legacy JSON compatibility route</td>
       </tr>
       <tr>
         <td><a href="/curl/v1/schedules/today">/curl/v1/schedules/today</a> <span class="tag tag-text">TEXT</span></td>
-        <td>All sports</td>
+        <td>Legacy plain-text compatibility route</td>
       </tr>
       <tr>
         <td><a href="/curl/v1/schedule/nba/today">/curl/v1/schedule/{sport}/today</a> <span class="tag tag-text">TEXT</span></td>
-        <td>Single sport</td>
+        <td>Legacy plain-text compatibility route</td>
       </tr>
     </table>
 
     <h3>Standings</h3>
     <table>
       <tr>
+        <td><a href="/v1/standings/nba">/v1/standings/{sport}</a> <span class="tag tag-json">CANONICAL</span></td>
+        <td>Use <code>Accept</code> to choose JSON or text</td>
+      </tr>
+      <tr>
         <td><a href="/api/v1/standings/nba">/api/v1/standings/{sport}</a> <span class="tag tag-json">JSON</span></td>
-        <td>JSON</td>
+        <td>Legacy JSON compatibility route</td>
       </tr>
       <tr>
         <td><a href="/curl/v1/standings/nba">/curl/v1/standings/{sport}</a> <span class="tag tag-text">TEXT</span></td>
-        <td>Plain text</td>
+        <td>Legacy plain-text compatibility route</td>
       </tr>
     </table>
 
     <h3>Season Info</h3>
     <table>
       <tr>
-        <td><a href="/api/v1/season-info/mlb">/api/v1/season-info/{league}</a> <span class="tag tag-json">JSON</span></td>
+        <td><a href="/v1/season-info/mlb">/v1/season-info/{league}</a> <span class="tag tag-json">CANONICAL</span></td>
         <td>Season phase dates, current phase, last champion (when known)</td>
+      </tr>
+      <tr>
+        <td><a href="/api/v1/season-info/mlb">/api/v1/season-info/{league}</a> <span class="tag tag-json">JSON</span></td>
+        <td>Legacy JSON compatibility route</td>
       </tr>
     </table>
 
     <h3>Status &amp; docs</h3>
     <table>
       <tr>
+        <td><a href="/v1/status">/v1/status</a> <span class="tag tag-json">CANONICAL</span></td>
+        <td>Upstream + endpoint health snapshot; use <code>Accept</code> to choose JSON or text</td>
+      </tr>
+      <tr>
         <td><a href="/api/v1/status">/api/v1/status</a> <span class="tag tag-json">JSON</span></td>
-        <td>Upstream + endpoint health snapshot</td>
+        <td>Legacy JSON compatibility route</td>
       </tr>
       <tr>
         <td><a href="/status">/status</a></td>
@@ -1705,7 +1866,7 @@ footer{
       </tr>
       <tr>
         <td><a href="/curl/v1/status">/curl/v1/status</a> <span class="tag tag-text">TEXT</span></td>
-        <td>Plain-text status (oncall-friendly; supports <code>?only=errors|warnings</code>)</td>
+        <td>Legacy plain-text compatibility route</td>
       </tr>
       <tr>
         <td><a href="/docs">/docs</a></td>
@@ -1744,7 +1905,7 @@ footer{
       Canonical endpoints live under <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">/v1</code>
       and negotiate format via the <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">Accept</code> header.
       Legacy <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">/api/v1</code> and
-      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">/curl/v1</code> routes remain available.
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">/curl/v1</code> routes remain available as compatibility shims.
     </p>
     <p class="blurb">
       Replace <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">today</code>
@@ -1852,7 +2013,7 @@ def get_schedules_all_sports_api_v1(
             "sports": result
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/api/v1/schedules/{date}", e)
 
 
 @app.get("/curl/v1/schedules/{date}", response_class=PlainTextResponse)
@@ -1873,7 +2034,7 @@ def get_schedules_all_sports_curl_v1(
         return format_schedule_curl(all_games, target_date, timezone)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/curl/v1/schedules/{date}", e, plain_text=True)
 
 
 @app.get("/api/v1/scores/{date}", response_model=schemas.AllSportsScoresResponse)
@@ -1896,7 +2057,7 @@ def get_scores_all_sports_api_v1(
             "sports": result
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/api/v1/scores/{date}", e)
 
 
 @app.get("/curl/v1/scores/{date}", response_class=PlainTextResponse)
@@ -1917,7 +2078,7 @@ def get_scores_all_sports_curl_v1(
         return format_scores_curl(all_games, target_date, timezone)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/curl/v1/scores/{date}", e, plain_text=True)
 
 
 @app.get("/api/v1/schedule/{sport}/{date}", response_model=schemas.ScheduleResponse)
@@ -1960,7 +2121,7 @@ def get_schedule_api_v1(
             "games": games_out,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/api/v1/schedule/{sport}/{date}", e)
 
 def _get_schedule_for_league(league: str, target_date: date, timezone: pytz.BaseTzInfo) -> List[Dict[str, Any]]:
     """Helper function to get schedule for a specific league."""
@@ -2790,7 +2951,7 @@ def get_schedule_curl_v1(
         return format_schedule_curl(unique_games, target_date, timezone)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/curl/v1/schedule/{sport}/{date}", e, plain_text=True)
 
 
 @app.get("/v1/schedule/{sport}/{date}")
@@ -2845,7 +3006,7 @@ def get_scores_api_v1(
             "scores": scores,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/api/v1/scores/{sport}/{date}", e)
 
 def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any]]:
     """Helper function to get scores for a specific league."""
@@ -3012,7 +3173,7 @@ def get_scores_curl_v1(
         return format_scores_curl(unique_games, target_date, timezone)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/curl/v1/scores/{sport}/{date}", e, plain_text=True)
 
 
 @app.get("/v1/scores/{sport}/{date}")
@@ -3302,6 +3463,14 @@ def get_standings_v1(
     if _client_prefers_plain_text(request):
         return PlainTextResponse(get_standings_curl_v1(sport))
     return get_standings_api_v1(sport)
+
+
+@app.get("/v1/season-info/{league}", response_model=schemas.SeasonInfoResponse)
+def get_season_info_v1(
+    league: str = Path(..., description="League (mlb, nba, nfl, nhl, wnba)"),
+):
+    """Canonical season-info endpoint."""
+    return get_season_info(league)
 
 
 # Season info cache: {league: {'data': ..., 'timestamp': float}}
@@ -3783,7 +3952,7 @@ def debug_schedule_data(
         
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        return _internal_error_response("/api/v1/debug/{sport}/{date}", e)
 
 
 @app.get("/api/{path:path}")

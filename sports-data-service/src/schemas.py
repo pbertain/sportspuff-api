@@ -188,14 +188,14 @@ class ScheduleResponse(BaseModel):
 
 
 class AllSportsScheduleResponse(BaseModel):
-    """Response from GET /api/v1/schedules/{date} (all sports)."""
+    """Response from GET /v1/schedules/{date} (canonical all-sports route)."""
     model_config = ConfigDict(extra="allow")
     date: str
     sports: Dict[str, List[GameOut]] = Field(description="Per-sport game lists keyed by sport slug (mlb, nba, ...).")
 
 
 class AllSportsScoresResponse(BaseModel):
-    """Response from GET /api/v1/scores/{date} (all sports)."""
+    """Response from GET /v1/scores/{date} (canonical all-sports route)."""
     model_config = ConfigDict(extra="allow")
     date: str
     sports: Dict[str, List[GameOut]] = Field(description="Per-sport game lists keyed by sport slug (mlb, nba, ...).")
