@@ -279,6 +279,54 @@ SPORT_MAPPINGS = {
     'cycling': 'CYCLING',
 }
 
+
+def _parse_accept_header(accept_header: Optional[str]) -> List[tuple[str, float]]:
+    """Parse Accept into ordered (media_type, q) pairs."""
+    if not accept_header:
+        return []
+
+    parsed: List[tuple[str, float]] = []
+    for raw_part in accept_header.split(','):
+        part = raw_part.strip()
+        if not part:
+            continue
+        media_type = part
+        quality = 1.0
+        if ';' in part:
+            media_type, *params = [p.strip() for p in part.split(';')]
+            for param in params:
+                if param.startswith('q='):
+                    try:
+                        quality = float(param[2:])
+                    except ValueError:
+                        quality = 0.0
+        parsed.append((media_type.lower(), quality))
+    return parsed
+
+
+def _client_prefers_plain_text(request: Request) -> bool:
+    """Return True when Accept explicitly prefers text/plain over JSON."""
+    accepts = _parse_accept_header(request.headers.get("accept"))
+    if not accepts:
+        return False
+
+    def _best_q(*media_types: str) -> float:
+        best = 0.0
+        for media_type, quality in accepts:
+            if media_type in media_types:
+                best = max(best, quality)
+        return best
+
+    text_q = _best_q("text/plain", "text/*")
+    json_q = _best_q("application/json")
+    wildcard_q = _best_q("*/*")
+
+    if text_q <= 0:
+        return False
+    if json_q <= 0 and wildcard_q <= 0:
+        return True
+    return text_q > max(json_q, wildcard_q)
+
 def get_help_json() -> Dict[str, Any]:
     """Generate JSON formatted help content."""
     return {
@@ -355,6 +403,10 @@ def get_help_json() -> Dict[str, Any]:
             "default": "US/Pacific (Pacific Time)"
         },
         "help": {
+            "canonical": {
+                "json": "GET /v1/... with Accept: application/json",
+                "text": "GET /v1/... with Accept: text/plain"
+            },
             "json": "/api/help or /api/v1/help",
             "text": "/curl/help or /curl/v1/help",
             "html": "/help"
@@ -365,6 +417,10 @@ def get_help_text() -> str:
     """Generate plain text formatted help content."""
     help_text = """Sports Data Service API Help
 Version: 1.0.0
+
+CANONICAL V1 ROUTES:
+  Use /v1/... with Accept: application/json or Accept: text/plain
+  Legacy /api/v1 and /curl/v1 routes remain available.
 
 ENDPOINTS:
 
@@ -1685,6 +1741,12 @@ footer{
   <div class="section">
     <h2>Usage</h2>
     <p class="blurb">
+      Canonical endpoints live under <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">/v1</code>
+      and negotiate format via the <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">Accept</code> header.
+      Legacy <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">/api/v1</code> and
+      <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">/curl/v1</code> routes remain available.
+    </p>
+    <p class="blurb">
       Replace <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">today</code>
       with <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">yesterday</code>,
       <code style="background:rgba(255,255,255,0.08);padding:0.1rem 0.4rem;border-radius:4px">tomorrow</code>,
@@ -1736,6 +1798,38 @@ def help_curl():
 def help_curl_v1():
     """Plain text formatted help."""
     return get_help_text()
+
+
+@app.get("/v1/help")
+def help_v1(request: Request):
+    """Canonical help endpoint negotiated via Accept."""
+    if _client_prefers_plain_text(request):
+        return PlainTextResponse(get_help_text())
+    return get_help_json()
+
+
+@app.get("/v1/schedules/{date}")
+def get_schedules_all_sports_v1(
+    request: Request,
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+):
+    """Canonical all-sports schedule endpoint negotiated via Accept."""
+    if _client_prefers_plain_text(request):
+        return PlainTextResponse(get_schedules_all_sports_curl_v1(date, tz))
+    return get_schedules_all_sports_api_v1(date, tz)
+
+
+@app.get("/v1/scores/{date}")
+def get_scores_all_sports_v1(
+    request: Request,
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+):
+    """Canonical all-sports scores endpoint negotiated via Accept."""
+    if _client_prefers_plain_text(request):
+        return PlainTextResponse(get_scores_all_sports_curl_v1(date, tz))
+    return get_scores_all_sports_api_v1(date, tz)
 
 
 @app.get("/api/v1/schedules/{date}", response_model=schemas.AllSportsScheduleResponse)
@@ -2699,6 +2793,19 @@ def get_schedule_curl_v1(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/v1/schedule/{sport}/{date}")
+def get_schedule_v1(
+    request: Request,
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+):
+    """Canonical single-sport schedule endpoint negotiated via Accept."""
+    if _client_prefers_plain_text(request):
+        return PlainTextResponse(get_schedule_curl_v1(sport, date, tz))
+    return get_schedule_api_v1(sport, date, tz)
+
+
 @app.get("/api/v1/scores/{sport}/{date}", response_model=schemas.ScoresResponse)
 def get_scores_api_v1(
     sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
@@ -2906,6 +3013,19 @@ def get_scores_curl_v1(
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/v1/scores/{sport}/{date}")
+def get_scores_v1(
+    request: Request,
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, all)"),
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+):
+    """Canonical single-sport scores endpoint negotiated via Accept."""
+    if _client_prefers_plain_text(request):
+        return PlainTextResponse(get_scores_curl_v1(sport, date, tz))
+    return get_scores_api_v1(sport, date, tz)
 
 
 @app.get("/api/v1/standings/{sport}", response_model=schemas.StandingsResponse)
@@ -3173,6 +3293,17 @@ def get_standings_curl_v1(
     return output
 
 
+@app.get("/v1/standings/{sport}")
+def get_standings_v1(
+    request: Request,
+    sport: str = Path(..., description="Sport (nba, mlb, nfl, nhl, wnba, mls, ipl, mlc, all)"),
+):
+    """Canonical standings endpoint negotiated via Accept."""
+    if _client_prefers_plain_text(request):
+        return PlainTextResponse(get_standings_curl_v1(sport))
+    return get_standings_api_v1(sport)
+
+
 # Season info cache: {league: {'data': ..., 'timestamp': float}}
 _season_info_cache: Dict[str, Any] = {}
 _SEASON_INFO_TTL = 86400  # 24 hours
@@ -3384,6 +3515,17 @@ def api_status_curl(
         *res_lines,
         "",
     ])
+
+
+@app.get("/v1/status")
+def api_status_v1(
+    request: Request,
+    only: Optional[str] = Query(None, description="Filter rows: errors, warnings, all (default all)"),
+):
+    """Canonical status endpoint negotiated via Accept."""
+    if _client_prefers_plain_text(request):
+        return PlainTextResponse(api_status_curl(request, only))
+    return api_status_json(request)
 
 
 @app.get("/status", response_class=HTMLResponse)

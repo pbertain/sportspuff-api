@@ -195,11 +195,10 @@ class AllSportsScheduleResponse(BaseModel):
 
 
 class AllSportsScoresResponse(BaseModel):
-    """Response from GET /api/v1/scores/all/{date} (sport=all)."""
+    """Response from GET /api/v1/scores/{date} (all sports)."""
     model_config = ConfigDict(extra="allow")
-    sport: str = "all"
     date: str
-    scores: List[GameOut] = Field(description="Flat list of games across all sports; each entry has a `sport` field.")
+    sports: Dict[str, List[GameOut]] = Field(description="Per-sport game lists keyed by sport slug (mlb, nba, ...).")
 
 
 # ---------------------------------------------------------------------------
