@@ -2024,6 +2024,18 @@ def get_schedules_all_sports_v1(
     return get_schedules_all_sports_api_v1(date, tz)
 
 
+@app.get("/v1/schedules/all/{date}")
+def get_schedules_all_sports_v1_compat(
+    request: Request,
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+    *,
+    response: Response = None,
+):
+    """Legacy alias for clients that send /v1/schedules/all/{date}."""
+    return get_schedules_all_sports_v1(request, date, tz, response=response)
+
+
 @app.get("/v1/scores/{date}")
 def get_scores_all_sports_v1(
     request: Request,
@@ -2038,6 +2050,18 @@ def get_scores_all_sports_v1(
     if response is not None:
         _add_vary_accept(response)
     return get_scores_all_sports_api_v1(date, tz)
+
+
+@app.get("/v1/scores/all/{date}")
+def get_scores_all_sports_v1_compat(
+    request: Request,
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+    *,
+    response: Response = None,
+):
+    """Legacy alias for clients that send /v1/scores/all/{date}."""
+    return get_scores_all_sports_v1(request, date, tz, response=response)
 
 
 @app.get("/api/v1/schedules/{date}", response_model=schemas.AllSportsScheduleResponse)
@@ -2063,6 +2087,15 @@ def get_schedules_all_sports_api_v1(
         return _internal_error_response("/api/v1/schedules/{date}", e)
 
 
+@app.get("/api/v1/schedules/all/{date}", response_model=schemas.AllSportsScheduleResponse)
+def get_schedules_all_sports_api_v1_compat(
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+):
+    """Legacy alias for clients that send /api/v1/schedules/all/{date}."""
+    return get_schedules_all_sports_api_v1(date, tz)
+
+
 @app.get("/curl/v1/schedules/{date}", response_class=PlainTextResponse)
 def get_schedules_all_sports_curl_v1(
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
@@ -2082,6 +2115,15 @@ def get_schedules_all_sports_curl_v1(
 
     except Exception as e:
         return _internal_error_response("/curl/v1/schedules/{date}", e, plain_text=True)
+
+
+@app.get("/curl/v1/schedules/all/{date}", response_class=PlainTextResponse)
+def get_schedules_all_sports_curl_v1_compat(
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific (default: Pacific)"),
+):
+    """Legacy alias for clients that send /curl/v1/schedules/all/{date}."""
+    return get_schedules_all_sports_curl_v1(date, tz)
 
 
 @app.get("/api/v1/scores/{date}", response_model=schemas.AllSportsScoresResponse)
@@ -2107,6 +2149,15 @@ def get_scores_all_sports_api_v1(
         return _internal_error_response("/api/v1/scores/{date}", e)
 
 
+@app.get("/api/v1/scores/all/{date}", response_model=schemas.AllSportsScoresResponse)
+def get_scores_all_sports_api_v1_compat(
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone for relative dates (default: Pacific)"),
+):
+    """Legacy alias for clients that send /api/v1/scores/all/{date}."""
+    return get_scores_all_sports_api_v1(date, tz)
+
+
 @app.get("/curl/v1/scores/{date}", response_class=PlainTextResponse)
 def get_scores_all_sports_curl_v1(
     date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
@@ -2126,6 +2177,15 @@ def get_scores_all_sports_curl_v1(
 
     except Exception as e:
         return _internal_error_response("/curl/v1/scores/{date}", e, plain_text=True)
+
+
+@app.get("/curl/v1/scores/all/{date}", response_class=PlainTextResponse)
+def get_scores_all_sports_curl_v1_compat(
+    date: str = Path(..., description="Date: today/tomorrow/yesterday, YYYY-MM-DD, YYYYMMDD, M/D/YYYY, MM/DD/YYYY, or other formats"),
+    tz: Optional[str] = Query(None, description="Timezone: et/est/eastern, pt/pst/pdt/pacific (default: Pacific)"),
+):
+    """Legacy alias for clients that send /curl/v1/scores/all/{date}."""
+    return get_scores_all_sports_curl_v1(date, tz)
 
 
 @app.get("/api/v1/schedule/{sport}/{date}", response_model=schemas.ScheduleResponse)
@@ -4025,9 +4085,9 @@ def api_catch_all(path: str):
 
 
 @app.get("/curl/{path:path}", response_class=PlainTextResponse)
-def curl_catch_all(path: str):
+def curl_catch_all(path: str, request: Request):
     """Catch-all for unknown /curl/ paths - returns plain text help."""
-    return get_help_text()
+    return get_help_text(_request_base_url(request))
 
 
 if __name__ == "__main__":
