@@ -43,15 +43,11 @@ _INFLIGHT_WAIT_TIMEOUT = 30  # seconds
 
 def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""):
     """Fetch games with 5-minute caching."""
-    # For cricket leagues, drop the per-timezone component from the cache key.
-    # CricAPI is shared/quota-capped and the upstream serves a single global
-    # match calendar, so different ?tz= variants for the same league/date
-    # should share one slot (prevents thundering-herd fan-out under load).
-    # The only field that differs per timezone is cricket_start_time.local;
-    # cricket_start_time.{pt,utc,ist} are absolute. Frontends that need an
-    # exact local time should compute it from the utc field.
-    if league.upper() in ("IPL", "MLC"):
-        cache_context = "cricket-shared"
+    # Keep the timezone in the cache key. Cricket collectors filter games by
+    # the request timezone's local date, so sharing one cache slot across
+    # ?tz= variants can hide valid "today" games for another timezone.
+    # Upstream fan-out is already bounded lower in the stack by the
+    # collector-level season caches.
     cache_key = f"{league}:{target_date.isoformat()}:{cache_context}"
     cached = _collector_cache.get(cache_key)
     if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):

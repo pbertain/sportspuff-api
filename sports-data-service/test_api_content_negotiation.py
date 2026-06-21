@@ -1,9 +1,11 @@
 import asyncio
 import json
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 
 from fastapi import HTTPException
 from fastapi.exceptions import RequestValidationError
+import pytz
 from starlette.requests import Request
 
 from src import api, schemas
@@ -146,3 +148,74 @@ def test_validation_exception_handler_returns_structured_json():
     assert payload["error"]["message"] == "Validation failed"
     assert payload["error"]["route"] == "/v1/scores/today"
     assert payload["error"]["details"][0]["type"] == "missing"
+
+
+def test_cricket_cache_keeps_timezone_day_views_separate(monkeypatch):
+    class _EmptyQuery:
+        def filter(self, *args, **kwargs):
+            return self
+
+        def order_by(self, *args, **kwargs):
+            return self
+
+        def all(self):
+            return []
+
+        def first(self):
+            return None
+
+    class _EmptyDb:
+        def query(self, *args, **kwargs):
+            return _EmptyQuery()
+
+    class _EmptySession:
+        def __enter__(self):
+            return _EmptyDb()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _FakeCricketCollector:
+        def __init__(self):
+            self.timezone = pytz.timezone("US/Pacific")
+
+        def set_timezone(self, timezone):
+            self.timezone = timezone
+
+        def get_live_scores(self, target_date):
+            if self.timezone.zone != "US/Eastern":
+                return []
+            return [{
+                "game_id": "mlc-1",
+                "game_date": target_date.isoformat(),
+                "game_time": datetime(2026, 6, 21, 0, 30, tzinfo=timezone.utc),
+                "home_team": "Mi New York",
+                "home_team_abbrev": "MINY",
+                "visitor_team": "Texas Super Kings",
+                "visitor_team_abbrev": "TSK",
+                "home_score_total": 0,
+                "visitor_score_total": 0,
+                "game_status": "in_progress",
+                "is_final": False,
+                "current_period": "",
+                "time_remaining": "",
+                "cricket_home_score": "145/3",
+                "cricket_away_score": "144/7",
+                "cricket_status": "Mi New York need 1 run",
+            }]
+
+        def get_schedule(self, target_date):
+            return self.get_live_scores(target_date)
+
+    api._collector_cache.clear()
+    api._inflight_fetches.clear()
+    monkeypatch.setattr(api, "get_collector", lambda league: _FakeCricketCollector())
+    monkeypatch.setattr(api, "get_db_session", lambda: _EmptySession())
+
+    target_date = date(2026, 6, 20)
+    pt_games = api._get_games_for_curl("MLC", target_date, pytz.timezone("US/Pacific"))
+    et_games = api._get_games_for_curl("MLC", target_date, pytz.timezone("US/Eastern"))
+
+    assert pt_games == []
+    assert len(et_games) == 1
+    assert api._game_wrapper_to_dict(et_games[0], "MLC")["home_score"] == "145/3"
