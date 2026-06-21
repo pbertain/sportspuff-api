@@ -219,3 +219,34 @@ def test_cricket_cache_keeps_timezone_day_views_separate(monkeypatch):
     assert pt_games == []
     assert len(et_games) == 1
     assert api._game_wrapper_to_dict(et_games[0], "MLC")["home_score"] == "145/3"
+
+
+def test_format_scores_curl_keeps_scheduled_cricket_games():
+    game = SimpleNamespace(
+        league="MLC",
+        game_id="mlc-1",
+        game_date="2026-06-20",
+        game_time=None,
+        home_team="Texas Super Kings",
+        home_team_abbrev="TSK",
+        visitor_team="San Francisco Unicorns",
+        visitor_team_abbrev="SFU",
+        game_status="scheduled",
+        game_type="regular",
+        home_score_total=0,
+        visitor_score_total=0,
+        is_final=False,
+        current_period="",
+        time_remaining="",
+        cricket_home_score="",
+        cricket_away_score="",
+        cricket_status="scheduled",
+        cricket_away_outcome="",
+        cricket_start_time={"pt": "1:30PM PDT", "ist": "02:00 IST", "local": "1:30PM PDT"},
+    )
+
+    rendered = api.format_scores_curl([game], date(2026, 6, 20))
+
+    assert "MLC [Regular Season]" in rendered
+    assert "SFU  @ TSK" in rendered
+    assert "1:30PM PDT/02:00 IST" in rendered

@@ -1543,6 +1543,10 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
             game_id = getattr(g, 'game_id', None) or getattr(g, 'gameId', None)
             if game_id and game_id in seen_game_ids:
                 continue  # Skip duplicates
+            if sport in ('ipl', 'mlc'):
+                seen_game_ids.add(game_id or 'no_id')
+                scored_games.append(g)
+                continue
             # Only include games that have scores (final, in progress, or have non-zero scores)
             # Skip games that are just scheduled (score 0-0 and status is scheduled)
             has_score = (g.visitor_score_total and g.visitor_score_total > 0) or (g.home_score_total and g.home_score_total > 0)
