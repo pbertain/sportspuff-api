@@ -166,6 +166,25 @@ class TheSportsDBCollector(BaseCollector):
         except Exception as e:
             logger.debug("Could not write TheSportsDB disk cache %s: %s", slug, e)
 
+    def get_source_updated_at(self, context: Optional[str] = None) -> Optional[str]:
+        """Best-effort timestamp for when our current upstream season snapshot
+        was fetched from TheSportsDB. This is more useful than the route-layer
+        cache time because multiple endpoint responses can be derived from the
+        same bulk season feed."""
+        season = self.current_season()
+        slug = f"season_{self.LEAGUE_ID}_{season}"
+        with _season_memory_lock:
+            mem = _season_memory_cache.get(slug)
+            if mem and mem.get("ts"):
+                return datetime.fromtimestamp(mem["ts"], tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        path = self._disk_path(slug)
+        try:
+            if os.path.exists(path):
+                return datetime.fromtimestamp(os.path.getmtime(path), tz=timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        except Exception as e:
+            logger.debug("Could not read TheSportsDB cache mtime %s: %s", slug, e)
+        return None
+
     # --- bulk season fetch ----------------------------------------------------
     def _season_events(self, season: str) -> List[Dict[str, Any]]:
         """Fetch (or serve from cache) the full season's events for this league."""

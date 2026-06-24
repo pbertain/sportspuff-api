@@ -173,11 +173,21 @@ class GameOut(BaseModel):
     wc_round_label: Optional[str] = Field(default=None, description='group_matchday_{1,2,3} | round_of_16 | quarterfinal | semifinal | third_place | final')
 
 
+class EndpointMeta(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    as_of: str = Field(description="ISO-8601 UTC timestamp the payload should be considered current for.")
+    fetched_at: str = Field(description="ISO-8601 UTC timestamp when the API fetched or assembled this payload.")
+    cache_age_seconds: int = Field(description="Age of the cached payload at response time.")
+    stale: bool = Field(description="True when the payload is older than the normal freshness target for this endpoint.")
+    source_updated_at: Optional[str] = Field(default=None, description="Upstream/source update timestamp when available.")
+
+
 class ScoresResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     sport: str
     date: str
     scores: List[GameOut]
+    meta: Optional[EndpointMeta] = None
 
 
 class ScheduleResponse(BaseModel):
@@ -185,6 +195,7 @@ class ScheduleResponse(BaseModel):
     sport: str
     date: str
     games: List[GameOut]
+    meta: Optional[EndpointMeta] = None
 
 
 class AllSportsScheduleResponse(BaseModel):
@@ -250,6 +261,7 @@ class StandingsResponse(BaseModel):
     knockout_bracket: Optional[Dict[str, Any]] = Field(default=None, description="Knockout bracket slots and match data when applicable.")
     available: Optional[bool] = Field(default=None, description="False for sports with no league table (tennis, cycling).")
     message: Optional[str] = None
+    meta: Optional[EndpointMeta] = None
 
 
 # ---------------------------------------------------------------------------
@@ -276,6 +288,7 @@ class SeasonInfoResponse(BaseModel):
     current_phase: str = Field(description='Current phase name, e.g. "Regular Season" / "Postseason" / "Off Season" / "Wimbledon" (tennis) / "Tour de France" (cycling).')
     season_types: List[SeasonTypeOut]
     last_champion: Optional[LastChampion] = Field(default=None, description="Most recent champion when known.")
+    meta: Optional[EndpointMeta] = None
 
 
 # ---------------------------------------------------------------------------

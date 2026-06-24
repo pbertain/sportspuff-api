@@ -6,7 +6,7 @@ with both JSON and cURL-style text output.
 """
 
 from datetime import datetime, date, timedelta
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 from fastapi import FastAPI, Path, Query, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, PlainTextResponse, HTMLResponse
@@ -30,6 +30,8 @@ logger = logging.getLogger(__name__)
 # Cache for collector responses: {cache_key: {'data': [...], 'timestamp': float}}
 _collector_cache: Dict[str, Any] = {}
 _COLLECTOR_CACHE_TTL = 300  # 5 minutes
+_standings_cache: Dict[str, Any] = {}
+_STANDINGS_CACHE_TTL = 1800  # 30 minutes
 
 # In-flight fetch coalescing: when N concurrent requests miss the same cache
 # key, only the first runs the fetcher; the rest wait on its result. Prevents
@@ -41,16 +43,177 @@ _inflight_lock = _threading.Lock()
 _INFLIGHT_WAIT_TIMEOUT = 30  # seconds
 
 
-def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""):
+def _collector_cache_key(league: str, target_date: date, cache_context: str = "") -> str:
+    return f"{league}:{target_date.isoformat()}:{cache_context}"
+
+
+def _cache_snapshot(timestamp: Optional[float] = None, *, cache_hit: bool = False) -> Dict[str, Any]:
+    return {
+        "timestamp": timestamp if timestamp is not None else _time.time(),
+        "cache_hit": cache_hit,
+    }
+
+
+def _iso_utc_from_timestamp(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp, tz=pytz.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _normalize_iso_timestamp(value: Any) -> Optional[str]:
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        dt = value
+        if dt.tzinfo is None:
+            dt = pytz.UTC.localize(dt)
+        return dt.astimezone(pytz.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    if isinstance(value, (int, float)):
+        return _iso_utc_from_timestamp(float(value))
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        for candidate in (raw, raw.replace("Z", "+00:00")):
+            try:
+                dt = datetime.fromisoformat(candidate)
+                if dt.tzinfo is None:
+                    dt = pytz.UTC.localize(dt)
+                return dt.astimezone(pytz.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+            except Exception:
+                continue
+    return None
+
+
+def _extract_source_updated_at(payload: Any) -> Optional[str]:
+    keys = (
+        "source_updated_at",
+        "upstream_updated_at",
+        "updated_at",
+        "updatedAt",
+        "last_updated",
+        "lastUpdate",
+        "lastModified",
+        "dateModified",
+    )
+
+    def _scan(value: Any, depth: int = 0) -> List[str]:
+        if depth > 3 or value is None:
+            return []
+        found: List[str] = []
+        if isinstance(value, dict):
+            for key in keys:
+                normalized = _normalize_iso_timestamp(value.get(key))
+                if normalized:
+                    found.append(normalized)
+            for child in value.values():
+                if isinstance(child, (dict, list)):
+                    found.extend(_scan(child, depth + 1))
+        elif isinstance(value, list):
+            for child in value:
+                if isinstance(child, (dict, list)):
+                    found.extend(_scan(child, depth + 1))
+        return found
+
+    candidates = _scan(payload)
+    return max(candidates) if candidates else None
+
+
+def _collector_source_updated_at(collector: Any, context: Optional[str] = None) -> Optional[str]:
+    getter = getattr(collector, "get_source_updated_at", None)
+    if callable(getter):
+        try:
+            return _normalize_iso_timestamp(getter(context))
+        except Exception as exc:
+            logger.debug("Could not read collector source_updated_at: %s", exc)
+    cache_time = getattr(collector, "_standings_cache_time", None)
+    normalized = _normalize_iso_timestamp(cache_time)
+    if normalized:
+        return normalized
+    return None
+
+
+def _build_endpoint_meta(
+    snapshot: Dict[str, Any],
+    freshness_seconds: int,
+    *,
+    source_updated_at: Optional[str] = None,
+) -> Dict[str, Any]:
+    timestamp = snapshot.get("timestamp", _time.time())
+    cache_age_seconds = max(0, int(_time.time() - timestamp))
+    fetched_at = _iso_utc_from_timestamp(timestamp)
+    normalized_source_updated_at = _normalize_iso_timestamp(source_updated_at or snapshot.get("source_updated_at"))
+    return {
+        "as_of": fetched_at,
+        "fetched_at": fetched_at,
+        "cache_age_seconds": cache_age_seconds,
+        "stale": cache_age_seconds > freshness_seconds,
+        "source_updated_at": normalized_source_updated_at,
+    }
+
+
+def _scores_freshness_seconds(target_date: date, timezone: pytz.BaseTzInfo) -> int:
+    today = datetime.now(timezone).date()
+    if target_date == today:
+        return 120
+    if target_date < today:
+        return 1800
+    return 3600
+
+
+def _schedule_freshness_seconds(target_date: date, timezone: pytz.BaseTzInfo) -> int:
+    today = datetime.now(timezone).date()
+    if target_date <= today + timedelta(days=1):
+        return 900
+    return 21600
+
+
+def _standings_freshness_seconds(sport_lower: str) -> int:
+    if sport_lower == "nfl":
+        return 3600
+    if sport_lower in ("atp", "wta", "cycling"):
+        return 21600
+    return 900
+
+
+def _get_cached_payload(cache: Dict[str, Any], cache_key: str, ttl_seconds: int, fetcher) -> Tuple[Any, Dict[str, Any]]:
+    cached = cache.get(cache_key)
+    if cached and (_time.time() - cached["timestamp"] < ttl_seconds):
+        return cached["data"], {
+            **_cache_snapshot(cached["timestamp"], cache_hit=True),
+            "source_updated_at": cached.get("source_updated_at"),
+        }
+
+    data = fetcher()
+    timestamp = _time.time()
+    source_updated_at = _extract_source_updated_at(data)
+    cache[cache_key] = {"data": data, "timestamp": timestamp, "source_updated_at": source_updated_at}
+    return data, {
+        **_cache_snapshot(timestamp, cache_hit=False),
+        "source_updated_at": source_updated_at,
+    }
+
+
+def _get_cached_games(
+    league: str,
+    target_date,
+    fetcher,
+    cache_context: str = "",
+    *,
+    include_metadata: bool = False,
+):
     """Fetch games with 5-minute caching."""
     # Keep the timezone in the cache key. Cricket collectors filter games by
     # the request timezone's local date, so sharing one cache slot across
     # ?tz= variants can hide valid "today" games for another timezone.
     # Upstream fan-out is already bounded lower in the stack by the
     # collector-level season caches.
-    cache_key = f"{league}:{target_date.isoformat()}:{cache_context}"
+    cache_key = _collector_cache_key(league, target_date, cache_context)
     cached = _collector_cache.get(cache_key)
     if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):
+        if include_metadata:
+            return cached['data'], {
+                **_cache_snapshot(cached['timestamp'], cache_hit=True),
+                "source_updated_at": cached.get("source_updated_at"),
+            }
         return cached['data']
 
     # In-flight coalescing: if another request is already fetching this key,
@@ -69,6 +232,11 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
         event.wait(timeout=_INFLIGHT_WAIT_TIMEOUT)
         cached = _collector_cache.get(cache_key)
         if cached and (_time.time() - cached['timestamp'] < _COLLECTOR_CACHE_TTL):
+            if include_metadata:
+                return cached['data'], {
+                    **_cache_snapshot(cached['timestamp'], cache_hit=True),
+                    "source_updated_at": cached.get("source_updated_at"),
+                }
             return cached['data']
         # In-flight leader failed or timed out; fall through and try ourselves.
 
@@ -85,6 +253,8 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
             upstream = upstream_health.upstream_for(league, cache_context or "scores")
             if upstream:
                 upstream_health.record_failure(upstream, "budget gate: rate/budget limit reached")
+            if include_metadata:
+                return [], _cache_snapshot()
             return []
 
         started_at = _time.time()
@@ -122,7 +292,14 @@ def _get_cached_games(league: str, target_date, fetcher, cache_context: str = ""
                         )
                 except Exception as exc:
                     logger.warning("Could not persist API usage for %s: %s", league, exc)
-        _collector_cache[cache_key] = {'data': result, 'timestamp': _time.time()}
+        timestamp = _time.time()
+        source_updated_at = _extract_source_updated_at(result)
+        _collector_cache[cache_key] = {'data': result, 'timestamp': timestamp, 'source_updated_at': source_updated_at}
+        if include_metadata:
+            return result, {
+                **_cache_snapshot(timestamp, cache_hit=False),
+                "source_updated_at": source_updated_at,
+            }
         return result
     finally:
         if we_lead:
@@ -2219,13 +2396,17 @@ def get_schedule_api_v1(
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
 
-        games = _get_games_for_curl(league, target_date, timezone)
+        games, cache_snapshot = _get_games_for_curl(league, target_date, timezone, include_metadata=True)
         games_out = [_game_wrapper_to_dict(g, league) for g in games]
         _apply_dict_enrichers(sport_lower, target_date, games_out)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
             "games": games_out,
+            "meta": _build_endpoint_meta(
+                cache_snapshot,
+                _schedule_freshness_seconds(target_date, timezone),
+            ),
         }
     except Exception as e:
         return _internal_error_response("/api/v1/schedule/{sport}/{date}", e)
@@ -2797,9 +2978,11 @@ def _get_games_for_curl(
     timezone: pytz.BaseTzInfo,
     prefer_db: bool = False,
     allow_collector_fallback: bool = True,
-) -> List[Any]:
+    include_metadata: bool = False,
+):
     """Helper function to get games for curl formatting (returns GameWrapper objects)."""
     games = []
+    db_source_updated_at: Optional[str] = None
 
     class GameWrapper:
         def __init__(self, data):
@@ -2807,6 +2990,7 @@ def _get_games_for_curl(
                 setattr(self, k, v)
 
     def _append_db_games() -> None:
+        nonlocal db_source_updated_at
         standings_records = {}
         wnba_collector = None
         if league == 'WNBA':
@@ -2863,15 +3047,29 @@ def _get_games_for_curl(
                     if visitor_record:
                         game_data['visitor_wins'] = visitor_record['wins']
                         game_data['visitor_losses'] = visitor_record['losses']
+                updated_at = getattr(game, 'updated_at', None)
+                normalized_updated_at = _normalize_iso_timestamp(updated_at)
+                if normalized_updated_at:
+                    db_source_updated_at = max(db_source_updated_at, normalized_updated_at) if db_source_updated_at else normalized_updated_at
                 games.append(GameWrapper(game_data))
 
     if prefer_db:
         _append_db_games()
         if games or not allow_collector_fallback:
+            if include_metadata:
+                return games, {
+                    **_cache_snapshot(),
+                    "source_updated_at": db_source_updated_at,
+                }
             return games
 
     collector = get_collector(league)
     if not collector:
+        if include_metadata:
+            return games, {
+                **_cache_snapshot(),
+                "source_updated_at": db_source_updated_at,
+            }
         return games
     set_collector_timezone(collector, timezone)
 
@@ -2892,7 +3090,22 @@ def _get_games_for_curl(
                 return []
         return raw
 
-    raw_games = _get_cached_games(league, target_date, _fetch, getattr(timezone, 'zone', str(timezone)))
+    if include_metadata:
+        raw_games, cache_snapshot = _get_cached_games(
+            league,
+            target_date,
+            _fetch,
+            getattr(timezone, 'zone', str(timezone)),
+            include_metadata=True,
+        )
+    else:
+        raw_games = _get_cached_games(
+            league,
+            target_date,
+            _fetch,
+            getattr(timezone, 'zone', str(timezone)),
+        )
+        cache_snapshot = None
 
     if raw_games:
         seen_game_ids = set()
@@ -2980,7 +3193,16 @@ def _get_games_for_curl(
     # Fallback to database ONLY if no collector games were found
     if not games:
         _append_db_games()
-    
+
+    if include_metadata:
+        if games and raw_games:
+            if not cache_snapshot.get("source_updated_at"):
+                cache_snapshot["source_updated_at"] = _collector_source_updated_at(collector, "games")
+            return games, cache_snapshot
+        return games, {
+            **_cache_snapshot(),
+            "source_updated_at": db_source_updated_at,
+        }
     return games
 
 
@@ -3108,13 +3330,17 @@ def get_scores_api_v1(
         if not league:
             raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
 
-        games = _get_games_for_curl(league, target_date, timezone)
+        games, cache_snapshot = _get_games_for_curl(league, target_date, timezone, include_metadata=True)
         scores = [_game_wrapper_to_dict(g, league) for g in games]
         _apply_dict_enrichers(sport_lower, target_date, scores)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
             "scores": scores,
+            "meta": _build_endpoint_meta(
+                cache_snapshot,
+                _scores_freshness_seconds(target_date, timezone),
+            ),
         }
     except Exception as e:
         return _internal_error_response("/api/v1/scores/{sport}/{date}", e)
@@ -3314,140 +3540,168 @@ def get_standings_api_v1(
     if sport_lower not in SPORT_MAPPINGS and sport_lower != 'all':
         raise HTTPException(status_code=400, detail=f"Invalid sport: {sport}")
 
-    if sport_lower == 'mls':
-        collector = get_collector('MLS')
-        if collector:
+    def _build_standings_payload() -> Dict[str, Any]:
+        if sport_lower == 'mls':
+            collector = get_collector('MLS')
+            if collector:
+                try:
+                    standings = collector._fetch_standings()
+                    upstream_health.record_success(upstream_health.upstream_for('mls', 'standings'))
+                except Exception as e:
+                    upstream_health.record_failure(upstream_health.upstream_for('mls', 'standings'), f"{type(e).__name__}: {e}")
+                    raise
+                teams = []
+                for abbrev, rec in sorted(standings.items(), key=lambda x: -(x[1]['wins'] * 3 + x[1]['draws'])):
+                    pts = rec['wins'] * 3 + rec['draws']
+                    teams.append({
+                        'abbreviation': abbrev,
+                        'wins': rec['wins'],
+                        'draws': rec['draws'],
+                        'losses': rec['losses'],
+                        'points': pts,
+                        'record': f"{rec['wins']}-{rec['draws']}-{rec['losses']}",
+                    })
+                return {
+                    "sport": "mls",
+                    "teams": teams,
+                    "source_updated_at": _collector_source_updated_at(collector, "standings"),
+                }
+
+        if sport_lower in ('ipl', 'mlc'):
+            collector = get_collector(SPORT_MAPPINGS[sport_lower])
             try:
-                standings = collector._fetch_standings()
-                upstream_health.record_success(upstream_health.upstream_for('mls', 'standings'))
+                standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+                upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
             except Exception as e:
-                upstream_health.record_failure(upstream_health.upstream_for('mls', 'standings'), f"{type(e).__name__}: {e}")
+                upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
                 raise
             teams = []
-            for abbrev, rec in sorted(standings.items(), key=lambda x: -(x[1]['wins'] * 3 + x[1]['draws'])):
-                pts = rec['wins'] * 3 + rec['draws']
+            for rec in standings:
                 teams.append({
-                    'abbreviation': abbrev,
+                    'rank': rec['rank'],
+                    'team_name': rec['team_name'],
+                    'abbreviation': rec['abbreviation'],
+                    'matches': rec['matches'],
+                    'wins': rec['wins'],
+                    'losses': rec['losses'],
+                    'no_result': rec['no_result'],
+                    'points': rec['points'],
+                    'nrr': rec['nrr'],
+                    'record': rec['record'],
+                })
+            return {
+                "sport": sport_lower,
+                "teams": teams,
+                "available": bool(teams),
+                "source_updated_at": _collector_source_updated_at(collector, "standings"),
+            }
+
+        if sport_lower in ('nba', 'mlb', 'nfl', 'nhl', 'wnba'):
+            collector = get_collector(SPORT_MAPPINGS[sport_lower])
+            try:
+                standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+                upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
+            except Exception as e:
+                upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
+                raise
+            teams = []
+            for rec in standings:
+                team = {
+                    'rank': rec['rank'],
+                    'team_name': rec['team_name'],
+                    'abbreviation': rec['abbreviation'],
+                    'wins': rec['wins'],
+                    'losses': rec['losses'],
+                    'win_pct': rec['win_pct'],
+                    'games_back': rec['games_back'],
+                    'streak': rec['streak'],
+                    'record': rec['record'],
+                }
+                for optional_key in ('conference', 'division', 'ties', 'ot', 'points'):
+                    if optional_key in rec:
+                        team[optional_key] = rec[optional_key]
+                teams.append(team)
+            return {
+                "sport": sport_lower,
+                "teams": teams,
+                "source_updated_at": _collector_source_updated_at(collector, "standings"),
+            }
+
+        if sport_lower == 'wc':
+            collector = get_collector('WC')
+            try:
+                standings = collector.get_standings() if collector else []
+                groups = collector.get_group_standings() if collector and hasattr(collector, 'get_group_standings') else []
+                knockout_bracket = collector.get_knockout_bracket() if collector and hasattr(collector, 'get_knockout_bracket') else None
+                upstream_health.record_success(upstream_health.upstream_for('wc', 'standings'))
+            except Exception as e:
+                upstream_health.record_failure(upstream_health.upstream_for('wc', 'standings'), f"{type(e).__name__}: {e}")
+                raise
+            teams = []
+            for rec in standings:
+                teams.append({
+                    'rank': rec['rank'],
+                    'team_name': rec['team_name'],
+                    'abbreviation': rec['abbreviation'],
+                    'matches': rec['matches'],
                     'wins': rec['wins'],
                     'draws': rec['draws'],
                     'losses': rec['losses'],
-                    'points': pts,
-                    'record': f"{rec['wins']}-{rec['draws']}-{rec['losses']}",
+                    'goals_for': rec['goals_for'],
+                    'goals_against': rec['goals_against'],
+                    'goal_difference': rec['goal_difference'],
+                    'points': rec['points'],
+                    'record': rec['record'],
+                    'group': rec.get('group'),
+                    'group_rank': rec.get('group_rank'),
+                    'currently_advancing': rec.get('currently_advancing'),
+                    'advancement_path': rec.get('advancement_path'),
+                    'third_place_rank': rec.get('third_place_rank'),
                 })
-            return {"sport": "mls", "teams": teams}
-
-    if sport_lower in ('ipl', 'mlc'):
-        collector = get_collector(SPORT_MAPPINGS[sport_lower])
-        try:
-            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
-            upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
-        except Exception as e:
-            upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
-            raise
-        teams = []
-        for rec in standings:
-            teams.append({
-                'rank': rec['rank'],
-                'team_name': rec['team_name'],
-                'abbreviation': rec['abbreviation'],
-                'matches': rec['matches'],
-                'wins': rec['wins'],
-                'losses': rec['losses'],
-                'no_result': rec['no_result'],
-                'points': rec['points'],
-                'nrr': rec['nrr'],
-                'record': rec['record'],
-            })
-        return {"sport": sport_lower, "teams": teams, "available": bool(teams)}
-
-    if sport_lower in ('nba', 'mlb', 'nfl', 'nhl', 'wnba'):
-        collector = get_collector(SPORT_MAPPINGS[sport_lower])
-        try:
-            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
-            upstream_health.record_success(upstream_health.upstream_for(sport_lower, 'standings'))
-        except Exception as e:
-            upstream_health.record_failure(upstream_health.upstream_for(sport_lower, 'standings'), f"{type(e).__name__}: {e}")
-            raise
-        teams = []
-        for rec in standings:
-            team = {
-                'rank': rec['rank'],
-                'team_name': rec['team_name'],
-                'abbreviation': rec['abbreviation'],
-                'wins': rec['wins'],
-                'losses': rec['losses'],
-                'win_pct': rec['win_pct'],
-                'games_back': rec['games_back'],
-                'streak': rec['streak'],
-                'record': rec['record'],
+            return {
+                "sport": "wc",
+                "teams": teams,
+                "groups": groups,
+                "knockout_bracket": knockout_bracket,
+                "available": bool(teams),
+                "source_updated_at": _collector_source_updated_at(collector, "standings"),
             }
-            for optional_key in ('conference', 'division', 'ties', 'ot', 'points'):
-                if optional_key in rec:
-                    team[optional_key] = rec[optional_key]
-            teams.append(team)
-        return {"sport": sport_lower, "teams": teams}
 
-    if sport_lower == 'wc':
-        collector = get_collector('WC')
-        try:
-            standings = collector.get_standings() if collector else []
-            groups = collector.get_group_standings() if collector and hasattr(collector, 'get_group_standings') else []
-            knockout_bracket = collector.get_knockout_bracket() if collector and hasattr(collector, 'get_knockout_bracket') else None
-            upstream_health.record_success(upstream_health.upstream_for('wc', 'standings'))
-        except Exception as e:
-            upstream_health.record_failure(upstream_health.upstream_for('wc', 'standings'), f"{type(e).__name__}: {e}")
-            raise
-        teams = []
-        for rec in standings:
-            teams.append({
-                'rank': rec['rank'],
-                'team_name': rec['team_name'],
-                'abbreviation': rec['abbreviation'],
-                'matches': rec['matches'],
-                'wins': rec['wins'],
-                'draws': rec['draws'],
-                'losses': rec['losses'],
-                'goals_for': rec['goals_for'],
-                'goals_against': rec['goals_against'],
-                'goal_difference': rec['goal_difference'],
-                'points': rec['points'],
-                'record': rec['record'],
-                'group': rec.get('group'),
-                'group_rank': rec.get('group_rank'),
-                'currently_advancing': rec.get('currently_advancing'),
-                'advancement_path': rec.get('advancement_path'),
-                'third_place_rank': rec.get('third_place_rank'),
-            })
-        return {
-            "sport": "wc",
-            "teams": teams,
-            "groups": groups,
-            "knockout_bracket": knockout_bracket,
-            "available": bool(teams),
-        }
+        if sport_lower in ('atp', 'wta'):
+            collector = get_collector(SPORT_MAPPINGS[sport_lower])
+            return {
+                "sport": sport_lower,
+                "teams": [],
+                "available": False,
+                "message": "Tennis has no league table; see /api/v1/season-info/{atp,wta} for the tour calendar.",
+                "source_updated_at": _collector_source_updated_at(collector, "standings"),
+            }
 
-    if sport_lower in ('atp', 'wta'):
-        # Tennis tours have no league standings (every tournament is single
-        # elimination); a meaningful response is "not applicable" plus a
-        # hint pointing the frontend at the tour calendar instead.
-        return {
-            "sport": sport_lower,
-            "teams": [],
-            "available": False,
-            "message": "Tennis has no league table; see /api/v1/season-info/{atp,wta} for the tour calendar.",
-        }
+        if sport_lower == 'cycling':
+            collector = get_collector('CYCLING')
+            return {
+                "sport": "cycling",
+                "teams": [],
+                "available": False,
+                "message": "Cycling has no league table; see /api/v1/season-info/cycling for the UCI World Tour calendar.",
+                "source_updated_at": _collector_source_updated_at(collector, "standings"),
+            }
 
-    if sport_lower == 'cycling':
-        # Cycling general-classification standings are per-race and not
-        # exposed via TheSportsDB. Return empty with a hint.
-        return {
-            "sport": "cycling",
-            "teams": [],
-            "available": False,
-            "message": "Cycling has no league table; see /api/v1/season-info/cycling for the UCI World Tour calendar.",
-        }
+        return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
 
-    return {"sport": sport, "message": "Standings endpoint - TODO for this sport"}
+    payload, cache_snapshot = _get_cached_payload(
+        _standings_cache,
+        sport_lower,
+        _STANDINGS_CACHE_TTL,
+        _build_standings_payload,
+    )
+    return {
+        **payload,
+        "meta": _build_endpoint_meta(
+            cache_snapshot,
+            _standings_freshness_seconds(sport_lower),
+        ),
+    }
 
 
 @app.get("/curl/v1/standings/{sport}", response_class=PlainTextResponse)
@@ -3609,6 +3863,9 @@ def _get_season_info_from_db(league: str) -> Optional[Dict[str, Any]]:
             ).filter(
                 Game.league == league,
             ).group_by(Game.game_type).all()
+            source_updated_at = db.query(func.max(Game.updated_at)).filter(
+                Game.league == league,
+            ).scalar()
 
             if not rows:
                 return None
@@ -3652,6 +3909,7 @@ def _get_season_info_from_db(league: str) -> Optional[Dict[str, Any]]:
                 'year': latest_year or datetime.now().year,
                 'current_phase': current_phase,
                 'season_types': season_types,
+                'source_updated_at': _normalize_iso_timestamp(source_updated_at),
             }
     except Exception as e:
         logger.error(f"Error deriving season info from DB for {league}: {e}")
@@ -3669,10 +3927,18 @@ def get_season_info(
     if league_upper not in valid_leagues:
         raise HTTPException(status_code=400, detail=f"Invalid league: {league}")
 
-    import time as _time
     cached = _season_info_cache.get(league_upper)
     if cached and (_time.time() - cached['timestamp'] < _SEASON_INFO_TTL):
-        return cached['data']
+        return {
+            **cached['data'],
+            "meta": _build_endpoint_meta(
+                {
+                    **cached,
+                    "source_updated_at": cached.get("source_updated_at") or cached["data"].get("source_updated_at"),
+                },
+                _SEASON_INFO_TTL,
+            ),
+        }
 
     collector = get_collector(league_upper)
     result = None
@@ -3680,6 +3946,8 @@ def get_season_info(
     if collector:
         try:
             result = collector.get_season_info()
+            if result is not None and not result.get("source_updated_at"):
+                result["source_updated_at"] = _collector_source_updated_at(collector, "season-info")
             upstream_health.record_success(upstream_health.upstream_for(league_upper.lower(), 'season-info'))
         except Exception as e:
             upstream_health.record_failure(
@@ -3704,8 +3972,16 @@ def get_season_info(
     except Exception as e:
         logger.debug("champion lookup failed for %s: %s", league_upper, e)
 
-    _season_info_cache[league_upper] = {'data': result, 'timestamp': _time.time()}
-    return result
+    timestamp = _time.time()
+    _season_info_cache[league_upper] = {
+        'data': result,
+        'timestamp': timestamp,
+        'source_updated_at': result.get('source_updated_at'),
+    }
+    return {
+        **result,
+        "meta": _build_endpoint_meta({"timestamp": timestamp}, _SEASON_INFO_TTL),
+    }
 
 
 @app.get("/api/v1/cricket/{league}/season", response_model=schemas.CricketSeasonResponse)
