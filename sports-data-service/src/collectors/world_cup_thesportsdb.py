@@ -3,8 +3,8 @@ FIFA World Cup collector backed by TheSportsDB (league_id 4429).
 
 Soccer / football scoring (3 points for a win, 1 for a draw). Group-stage
 standings derived from completed matches. TheSportsDB does not expose group
-letters, so we infer the 12 four-team groups from the group-stage fixture
-graph and order them by their first scheduled match.
+letters, so we keep an explicit official group map for 2026 and fall back to
+fixture-graph inference for other seasons.
 
 Knockout-round events (round of 32, 16, etc.) are added by TheSportsDB
 once group standings are decided; until then only group matches appear
@@ -83,6 +83,34 @@ WC_TEAM_ABBREVS: Dict[str, str] = {
     "United States": "USA",
     "United States of America": "USA",
     "Uzbekistan": "UZB",
+}
+
+WC_2026_GROUPS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
+    ("A", ("Mexico", "South Korea", "Czech Republic", "South Africa")),
+    ("B", ("Canada", "Switzerland", "Bosnia-Herzegovina", "Qatar")),
+    ("C", ("Brazil", "Morocco", "Scotland", "Haiti")),
+    ("D", ("United States", "Australia", "Paraguay", "Turkey")),
+    ("E", ("Germany", "Ivory Coast", "Ecuador", "Curacao")),
+    ("F", ("Netherlands", "Japan", "Sweden", "Tunisia")),
+    ("G", ("Egypt", "Iran", "Belgium", "New Zealand")),
+    ("H", ("Spain", "Uruguay", "Cape Verde", "Saudi Arabia")),
+    ("I", ("France", "Norway", "Senegal", "Iraq")),
+    ("J", ("Argentina", "Austria", "Algeria", "Jordan")),
+    ("K", ("Portugal", "DR Congo", "Uzbekistan", "Colombia")),
+    ("L", ("England", "Croatia", "Ghana", "Panama")),
+)
+
+WC_2026_GROUP_ALIASES: Dict[str, str] = {
+    "Bosnia and Herzegovina": "Bosnia-Herzegovina",
+    "Cabo Verde": "Cape Verde",
+    "Congo DR": "DR Congo",
+    "Cote d'Ivoire": "Ivory Coast",
+    "Curaçao": "Curacao",
+    "Czechia": "Czech Republic",
+    "Korea Republic": "South Korea",
+    "Turkiye": "Turkey",
+    "United States of America": "United States",
+    "USA": "United States",
 }
 
 
@@ -220,7 +248,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         return flat
 
     def get_group_standings(self) -> List[Dict[str, Any]]:
-        """Return group-stage standings split into inferred Groups A-L."""
+        """Return group-stage standings split into World Cup groups."""
         season = self.current_season()
         try:
             events = self._season_events(season)
@@ -234,8 +262,25 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                      "goals_for": 0, "goals_against": 0}
         )
 
-        for team, group in group_lookup.items():
-            records[team]["group"] = group
+        seeded_teams = set()
+        for raw in events:
+            try:
+                r = int(raw.get("intRound") or 0)
+            except Exception:
+                r = 0
+            if r not in (1, 2, 3):
+                continue
+            home = raw.get("strHomeTeam") or ""
+            away = raw.get("strAwayTeam") or ""
+            if home:
+                seeded_teams.add(home)
+            if away:
+                seeded_teams.add(away)
+
+        for team in seeded_teams:
+            group = self._group_for_team(team, group_lookup)
+            if group:
+                records[team]["group"] = group
 
         for raw in events:
             if self._normalize_status(raw) != "final":
@@ -255,8 +300,8 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             if not home or not away or hs < 0 or as_ < 0:
                 continue
             r_h = records[home]; r_a = records[away]
-            r_h["group"] = group_lookup.get(home, r_h.get("group", ""))
-            r_a["group"] = group_lookup.get(away, r_a.get("group", ""))
+            r_h["group"] = self._group_for_team(home, group_lookup) or r_h.get("group", "")
+            r_a["group"] = self._group_for_team(away, group_lookup) or r_a.get("group", "")
             r_h["matches"] += 1; r_a["matches"] += 1
             r_h["goals_for"] += hs; r_h["goals_against"] += as_
             r_a["goals_for"] += as_; r_a["goals_against"] += hs
@@ -269,7 +314,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
 
         grouped: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         for team_name, rec in records.items():
-            group = rec.get("group") or group_lookup.get(team_name) or ""
+            group = rec.get("group") or self._group_for_team(team_name, group_lookup) or ""
             points = rec["wins"] * 3 + rec["draws"]
             gd = rec["goals_for"] - rec["goals_against"]
             grouped[group].append({
@@ -420,6 +465,10 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         }
 
     def _infer_groups(self, events: List[Dict[str, Any]]) -> Tuple[Dict[str, str], List[str]]:
+        official_lookup, official_order = self._official_groups_for_current_season()
+        if official_lookup:
+            return official_lookup, official_order
+
         graph: Dict[str, set] = defaultdict(set)
         first_seen: Dict[str, Tuple[str, int]] = {}
 
@@ -467,6 +516,36 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             for team in teams:
                 lookup[team] = label
         return lookup, order
+
+    def _official_groups_for_current_season(self) -> Tuple[Dict[str, str], List[str]]:
+        if self.current_season() != "2026":
+            return {}, []
+
+        lookup: Dict[str, str] = {}
+        order: List[str] = []
+        for group, teams in WC_2026_GROUPS:
+            order.append(group)
+            for team in teams:
+                lookup[self._normalize_team_name(team)] = group
+        for alias, canonical in WC_2026_GROUP_ALIASES.items():
+            group = lookup.get(self._normalize_team_name(canonical))
+            if group:
+                lookup[self._normalize_team_name(alias)] = group
+        return lookup, order
+
+    def _group_for_team(self, team_name: str, group_lookup: Dict[str, str]) -> str:
+        if not team_name:
+            return ""
+        exact = group_lookup.get(team_name)
+        if exact:
+            return exact
+        normalized = self._normalize_team_name(team_name)
+        if normalized in group_lookup:
+            return group_lookup[normalized]
+        alias = WC_2026_GROUP_ALIASES.get(normalized)
+        if alias:
+            return group_lookup.get(self._normalize_team_name(alias), "")
+        return ""
 
     @staticmethod
     def _winner_from_game(game: Optional[Dict[str, Any]]) -> Optional[str]:
