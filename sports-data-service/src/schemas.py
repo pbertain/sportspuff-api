@@ -363,7 +363,10 @@ class CricketSeasonResponse(BaseModel):
     league: str
     series_id: str
     series_name: str
-    live: bool = Field(description="True when the response contains fresh upstream data; false when serving stale cache after upstream failure.")
+    live: bool = Field(description="True when the response contains a loaded season payload; false only for explicit off-season success responses.")
     matches: List[GameOut]
     standings: List[StandingsTeamOut]
     api_stats: CricketSeasonApiStats
+    status: Optional[str] = Field(default=None, description='"ok" | "off_season"')
+    stale: Optional[bool] = None
+    reason: Optional[str] = None

@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional
 
 import pytz
 
-from .cricket import LEAGUE_CONFIGS
+from .cricket import LEAGUE_CONFIGS, is_expected_cricket_season_window
 from .thesportsdb import TheSportsDBCollector
 
 logger = logging.getLogger(__name__)
@@ -237,16 +237,74 @@ class CricketTheSportsDBCollector(TheSportsDBCollector):
         """Bulk feed CricketPuff consumes. Mirrors the cricket.py shape but
         sourced from TheSportsDB events."""
         season = self.current_season()
+        target = datetime.now(timezone.utc).date()
         try:
             events = self._season_events(season)
-            live = True
         except Exception as e:
             logger.error("%s: season feed: %s", self.SPORTSPUFF_CODE, e)
-            events = []
-            live = False
+            return {
+                "league": self.SPORTSPUFF_CODE,
+                "series_id": str(self.LEAGUE_ID),
+                "series_name": self.config.get("name_match", "").title() or self.SPORTSPUFF_CODE,
+                "live": True,
+                "matches": [],
+                "standings": [],
+                "api_stats": {
+                    "hits_today": 0,
+                    "hits_used": 0,
+                    "hits_limit": 0,
+                    "date": datetime.now(timezone.utc).date().isoformat(),
+                    "provider": "thesportsdb",
+                },
+                "status": "error",
+                "stale": True,
+                "reason": "upstream_refresh_failed",
+            }
+
+        if not events:
+            status = "error" if is_expected_cricket_season_window(self.SPORTSPUFF_CODE, target) else "off_season"
+            reason = "season_events_unavailable" if status == "error" else "off_season"
+            return {
+                "league": self.SPORTSPUFF_CODE,
+                "series_id": str(self.LEAGUE_ID),
+                "series_name": self.config.get("name_match", "").title() or self.SPORTSPUFF_CODE,
+                "live": status == "ok",
+                "matches": [],
+                "standings": [],
+                "api_stats": {
+                    "hits_today": 0,
+                    "hits_used": 0,
+                    "hits_limit": 0,
+                    "date": datetime.now(timezone.utc).date().isoformat(),
+                    "provider": "thesportsdb",
+                },
+                "status": status,
+                "stale": status == "error",
+                "reason": reason,
+            }
 
         matches = [m for m in (self._parse_event(e) for e in events) if m]
         matches.sort(key=lambda m: m.get("game_date", "") or "")
+
+        if not matches:
+            return {
+                "league": self.SPORTSPUFF_CODE,
+                "series_id": str(self.LEAGUE_ID),
+                "series_name": self.config.get("name_match", "").title() or self.SPORTSPUFF_CODE,
+                "live": True,
+                "matches": [],
+                "standings": [],
+                "api_stats": {
+                    "hits_today": 0,
+                    "hits_used": 0,
+                    "hits_limit": 0,
+                    "date": datetime.now(timezone.utc).date().isoformat(),
+                    "provider": "thesportsdb",
+                },
+                "status": "error",
+                "stale": True,
+                "reason": "season_events_unparseable",
+            }
 
         # Enrich any in-progress matches with CricAPI's per-inning detail
         # (overs, wickets, formatted score). No-op when disabled or when no
@@ -260,7 +318,7 @@ class CricketTheSportsDBCollector(TheSportsDBCollector):
             "league": self.SPORTSPUFF_CODE,
             "series_id": str(self.LEAGUE_ID),
             "series_name": self.config.get("name_match", "").title() or self.SPORTSPUFF_CODE,
-            "live": live,
+            "live": True,
             "matches": matches,
             "standings": standings,
             "api_stats": {
@@ -270,6 +328,9 @@ class CricketTheSportsDBCollector(TheSportsDBCollector):
                 "date": datetime.now(timezone.utc).date().isoformat(),
                 "provider": "thesportsdb",
             },
+            "status": "ok",
+            "stale": False,
+            "reason": None,
         }
 
 

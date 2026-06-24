@@ -30,6 +30,7 @@ LEAGUE_CONFIGS = {
         "search": "indian premier league",
         "name_match": "indian premier league",
         "tbc_start": 71,
+        "season_window": {"start_month": 2, "end_month": 7},
         "teams": {
             "Chennai Super Kings": "CSK",
             "Delhi Capitals": "DC",
@@ -62,6 +63,7 @@ LEAGUE_CONFIGS = {
         "search": "major league cricket",
         "name_match": "major league cricket",
         "tbc_start": 31,
+        "season_window": {"start_month": 5, "end_month": 9},
         "teams": {
             "Los Angeles Knight Riders": "LAKR",
             "Mi New York": "MINY",
@@ -106,6 +108,17 @@ class CricAPIBudgetExceeded(Exception):
     """Raised when the shared CricAPI daily quota is (near) exhausted."""
 
 
+def is_expected_cricket_season_window(league_code: str, target_date: Optional[date] = None) -> bool:
+    league_upper = league_code.upper()
+    target = target_date or datetime.now(timezone.utc).date()
+    window = (LEAGUE_CONFIGS.get(league_upper) or {}).get("season_window") or {}
+    start_month = int(window.get("start_month") or 1)
+    end_month = int(window.get("end_month") or 12)
+    if start_month <= end_month:
+        return start_month <= target.month <= end_month
+    return target.month >= start_month or target.month <= end_month
+
+
 class CricketCollector(BaseCollector):
     """Cricket data collector using CricAPI with CricketPuff fallback."""
 
@@ -118,6 +131,46 @@ class CricketCollector(BaseCollector):
 
     def set_timezone(self, timezone: pytz.BaseTzInfo) -> None:
         self.timezone = timezone or pytz.timezone('US/Pacific')
+
+    def _season_base_payload(self) -> Dict[str, Any]:
+        hits_today = _cricapi_usage["hits_today"]
+        return {
+            "league": self.league,
+            "series_id": "",
+            "series_name": "",
+            "live": True,
+            "matches": [],
+            "standings": [],
+            "api_stats": {
+                "hits_today": hits_today,
+                "hits_used": hits_today,
+                "hits_limit": _cricapi_usage["hits_limit"] or self._usage_limit(),
+                "date": _cricapi_usage["date"],
+            },
+            "status": "ok",
+            "stale": False,
+            "reason": None,
+        }
+
+    def _season_off_season_payload(self) -> Dict[str, Any]:
+        payload = self._season_base_payload()
+        payload.update({
+            "live": False,
+            "status": "off_season",
+            "reason": "off_season",
+        })
+        return payload
+
+    def _season_error_payload(self, reason: str, series: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        payload = self._season_base_payload()
+        payload.update({
+            "series_id": str(series.get("id", "")) if series else "",
+            "series_name": series.get("name", "") if series else "",
+            "status": "error",
+            "stale": True,
+            "reason": reason,
+        })
+        return payload
 
     def get_schedule(self, date: Optional[date] = None) -> List[Dict[str, Any]]:
         self._check_rate_limit()
@@ -241,28 +294,40 @@ class CricketCollector(BaseCollector):
         scores, plus derived standings and current CricAPI usage. This is the
         single-source feed CricketPuff consumes so it no longer hits CricAPI.
 
-        Never raises: on quota exhaustion or upstream error it serves whatever
-        is cached and flags the payload with live=False so consumers can choose
-        to keep their existing snapshot instead of overwriting with stale/empty
-        data. Results are briefly cached to bound CricAPI spend under load."""
+        Contract:
+        - `status="ok"` with populated matches when season data is available
+        - `status="off_season"` for genuine empty off-season states
+        - `status="error"` for refresh/load failures or ambiguous empty in-season states
+        Results are briefly cached to bound CricAPI spend under load."""
         cache_key = f"{self.league}:season"
         cached = _season_response_cache.get(cache_key)
-        if cached and time.time() - cached["timestamp"] < settings.cricapi_season_cache_ttl:
+        if cached and cached["data"].get("status") != "error" and time.time() - cached["timestamp"] < settings.cricapi_season_cache_ttl:
             return cached["data"]
 
+        target = datetime.now(self.timezone).date()
         series = None
         matches = []
-        live = True
         try:
             series = self._find_series()
+            if not series:
+                payload = (
+                    self._season_error_payload("series_not_found")
+                    if is_expected_cricket_season_window(self.league, target)
+                    else self._season_off_season_payload()
+                )
+                _season_response_cache[cache_key] = {"data": payload, "timestamp": time.time()}
+                return payload
             if self.cricapi_key:
                 matches = self._get_cricapi_matches()
         except CricAPIBudgetExceeded:
-            live = False
             logger.warning("CricAPI budget exceeded building %s season; serving cached data", self.league)
+            return self._season_error_payload("upstream_refresh_failed", series)
         except Exception as e:
-            live = False
             logger.error("Error building %s season: %s", self.league, e)
+            return self._season_error_payload("upstream_refresh_failed", series)
+
+        if not matches:
+            return self._season_error_payload("season_matches_unavailable", series)
 
         standings = self._calculate_standings(matches) if matches else {}
         ordered = sorted(
@@ -273,21 +338,17 @@ class CricketCollector(BaseCollector):
         for rank, rec in enumerate(ordered, 1):
             rec["rank"] = rank
 
-        hits_today = _cricapi_usage["hits_today"]
-        payload = {
-            "league": self.league,
-            "series_id": series.get("id", "") if series else "",
+        payload = self._season_base_payload()
+        payload.update({
+            "series_id": str(series.get("id", "")) if series else "",
             "series_name": series.get("name", "") if series else "",
-            "live": live,
+            "live": True,
             "matches": matches,
             "standings": ordered,
-            "api_stats": {
-                "hits_today": hits_today,
-                "hits_used": hits_today,
-                "hits_limit": _cricapi_usage["hits_limit"] or self._usage_limit(),
-                "date": _cricapi_usage["date"],
-            },
-        }
+            "status": "ok",
+            "stale": False,
+            "reason": None,
+        })
         _season_response_cache[cache_key] = {"data": payload, "timestamp": time.time()}
         return payload
 

@@ -3994,11 +3994,30 @@ def get_cricket_season(
     league_lower = league.lower()
     if league_lower not in ('ipl', 'mlc'):
         raise HTTPException(status_code=400, detail=f"Invalid cricket league: {league}")
+    league_upper = league_lower.upper()
 
     collector = get_collector(SPORT_MAPPINGS[league_lower])
     if not collector:
         raise HTTPException(status_code=503, detail="Cricket collector unavailable")
-    return collector.get_season()
+    payload = collector.get_season()
+    if payload.get("status") == "error":
+        return JSONResponse(
+            status_code=503,
+            content=_api_error_payload(
+                503,
+                "/api/v1/cricket/{league}/season",
+                f"{league_upper} season feed unavailable",
+                details={
+                    "league": league_upper,
+                    "reason": payload.get("reason") or "upstream_refresh_failed",
+                },
+            ),
+        )
+    if not payload.get("status"):
+        payload["status"] = "ok" if payload.get("matches") else "off_season"
+        payload["stale"] = False
+        payload["reason"] = None if payload["status"] == "ok" else "off_season"
+    return payload
 
 
 @app.get("/health", response_model=schemas.HealthOut)
