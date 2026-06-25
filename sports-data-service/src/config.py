@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     nba_provider: str = Field(default="thesportsdb", description="NBA data source: thesportsdb | nba_api")
     cricket_provider: str = Field(default="thesportsdb", description="Cricket (IPL/MLC) data source: thesportsdb | cricapi")
     cricket_live_enrichment: str = Field(default="cricapi", description="Augment in-progress cricket matches with rich CricAPI detail (overs, wickets, per-inning). 'cricapi' uses match_info on live games only; 'none' disables.")
+    cycling_provider: str = Field(default="thesportsdb", description="Cycling data source: thesportsdb | file")
+    cycling_data_dir: str = Field(default="", description="Directory containing cycling CSV inputs (cycling_stages.csv, cycling_gc.csv, cycling_team_classification.csv, cycling_jerseys.csv)")
     nba_api_timeout: int = Field(default=10)
     mlb_api_timeout: int = Field(default=10)
     nhl_api_timeout: int = Field(default=10)

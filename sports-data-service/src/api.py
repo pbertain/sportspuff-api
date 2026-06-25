@@ -424,7 +424,10 @@ def get_collector(league: str):
         wta = TennisTheSportsDBCollector('WTA')
 
     cycling = None
-    if league == 'CYCLING':
+    if league == 'CYCLING' and settings.cycling_provider == 'file' and settings.cycling_data_dir:
+        from .collectors.cycling_file import CyclingFileCollector
+        cycling = CyclingFileCollector(settings.cycling_data_dir)
+    elif league == 'CYCLING':
         from .collectors.cycling_thesportsdb import CyclingTheSportsDBCollector
         cycling = CyclingTheSportsDBCollector()
 
@@ -464,6 +467,18 @@ app = FastAPI(
 )
 
 
+@app.on_event("startup")
+def _log_runtime_config() -> None:
+    logger.info(
+        "runtime config: cricket_provider=%s cricket_live_enrichment=%s cricapi_key_present=%s cycling_provider=%s cycling_data_dir_present=%s",
+        settings.cricket_provider,
+        settings.cricket_live_enrichment,
+        bool((settings.cricapi_key or "").strip()),
+        settings.cycling_provider,
+        bool((settings.cycling_data_dir or "").strip()),
+    )
+
+
 @app.exception_handler(HTTPException)
 async def api_http_exception_handler(request: Request, exc: HTTPException):
     route = request.url.path
@@ -484,6 +499,18 @@ async def api_validation_exception_handler(request: Request, exc: RequestValidat
         status_code=422,
         content=_api_error_payload(422, route, "Validation failed", details=exc.errors()),
     )
+
+
+@app.get("/api/v1/debug/runtime")
+def debug_runtime_config():
+    return {
+        "cricket_provider": settings.cricket_provider,
+        "cricket_live_enrichment": settings.cricket_live_enrichment,
+        "cricapi_key_present": bool((settings.cricapi_key or "").strip()),
+        "cricapi_live_refresh": settings.cricapi_live_refresh,
+        "cycling_provider": settings.cycling_provider,
+        "cycling_data_dir_present": bool((settings.cycling_data_dir or "").strip()),
+    }
 
 # SportsPuff logo. Prefer a locally-bundled file (faster, works offline,
 # survives splitsp.lat outages) and fall back to the canonical remote URL.
@@ -2867,9 +2894,11 @@ def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> l
     box_score) on a list of game dicts. Each enricher is a no-op for sports
     it doesn't handle, so this can be called for any sport."""
     from .services.playoff_series import enrich_games as _enrich_playoff
+    from .services.cricket_live_enricher import enrich_with_cricapi_live as _enrich_cricket
     from .services.tennis_scores import enrich_games as _enrich_tennis
     from .services.box_score import enrich_games as _enrich_box
     _enrich_playoff(sport, target_date, games_dicts)
+    _enrich_cricket(sport, games_dicts, target_date)
     _enrich_tennis(sport, target_date, games_dicts)
     # Fill period dicts from ESPN before _apply_box_score derives the contract.
     _enrich_box(sport, target_date, games_dicts)

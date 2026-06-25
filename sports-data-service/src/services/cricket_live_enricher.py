@@ -1,13 +1,13 @@
 """
-Cricket live-match enrichment via CricAPI.
+Cricket enrichment via CricAPI.
 
-When TheSportsDB-sourced cricket games (IPL/MLC) are in progress, augment
+When TheSportsDB-sourced cricket games (IPL/MLC) are available, augment
 them with CricAPI's per-inning detail — overs, wickets, formatted scores
 like "161/3 (19.5 ov)", venue, ball-by-ball status — that TheSportsDB
 doesn't expose.
 
 Quota math:
-- Only fires for games whose game_status == 'in_progress'
+- Only fires when CricAPI enrichment is enabled and a CricAPI key exists
 - Reuses CricAPI cache + budget gates from collectors/cricket.py
 - 1-2 concurrent IPL/MLC matches × 1-min poll cadence × ~4h match window
   = ~240 hits per match. Per league per day during a match-day: well
@@ -38,32 +38,24 @@ def _is_enabled() -> bool:
         and bool((settings.cricapi_key or "").strip())
     )
 
-
-def _has_live_games(games: List[Dict[str, Any]]) -> bool:
-    return any(g.get("game_status") == "in_progress" for g in games)
-
-
 def enrich_with_cricapi_live(
     league_code: str,
     games: List[Dict[str, Any]],
     target_date: Optional[_date] = None,
 ) -> List[Dict[str, Any]]:
-    """Mutate games[] in place: for any game with status 'in_progress', look
-    up the corresponding CricAPI match and overlay rich cricket detail
-    (per-inning scores, overs, wickets, formatted score string) onto our
-    cricket_* fields. Returns the same list (for chaining).
+    """Mutate games[] in place: look up the corresponding CricAPI match and
+    overlay rich cricket detail (per-inning scores, overs, wickets,
+    formatted score string) onto our cricket_* fields. Returns the same
+    list (for chaining).
 
     No-op (returns unchanged) when:
       - cricket_live_enrichment != 'cricapi'
       - CRICAPI_KEY is empty
-      - games[] has no in-progress matches
       - CricAPI is unreachable / over budget
     """
     if not games:
         return games
     if not _is_enabled():
-        return games
-    if not _has_live_games(games):
         return games
 
     league_code = league_code.upper()
@@ -107,8 +99,15 @@ def enrich_with_cricapi_live(
         index[(b, a)] = m
 
     enriched_count = 0
+    focus_date = target_date or datetime.now(timezone.utc).date()
     for g in games:
-        if g.get("game_status") != "in_progress":
+        game_date = g.get("game_date")
+        if game_date:
+            try:
+                game_date = datetime.fromisoformat(str(game_date)).date()
+            except Exception:
+                game_date = None
+        if game_date and game_date > focus_date:
             continue
         h = legacy._canonical(g.get("home_team") or "")
         a = legacy._canonical(g.get("visitor_team") or "")
