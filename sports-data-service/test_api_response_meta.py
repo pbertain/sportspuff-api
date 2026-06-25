@@ -155,6 +155,32 @@ class _FakeSeasonInfoCollector:
         }
 
 
+class _FakeGoodThenEmptySeasonInfoCollector:
+    def __init__(self):
+        self.calls = 0
+
+    def get_source_updated_at(self, context=None):
+        return "2026-06-24T05:45:00Z"
+
+    def get_season_info(self):
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "year": 2026,
+                "current_phase": "Regular Season",
+                "season_types": [{
+                    "name": "Regular Season",
+                    "start_date": "2026-04-01",
+                    "end_date": "2026-09-30",
+                }],
+            }
+        return {
+            "year": 2026,
+            "current_phase": "Regular Season",
+            "season_types": [],
+        }
+
+
 def _collector_cache_key(league: str, target_date: date, timezone_name: str) -> str:
     return f"{league}:{target_date.isoformat()}:{timezone_name}"
 
@@ -239,3 +265,23 @@ def test_season_info_response_meta_reflects_cache_age(monkeypatch):
     assert validated.meta.cache_age_seconds >= 42
     assert validated.meta.stale is False
     assert validated.meta.source_updated_at == "2026-06-24T05:45:00Z"
+
+
+def test_season_info_suspect_empty_uses_stale_cache(monkeypatch):
+    from src.services import champions
+
+    api._season_info_cache.clear()
+    collector = _FakeGoodThenEmptySeasonInfoCollector()
+    monkeypatch.setattr(api, "get_collector", lambda league: collector)
+    monkeypatch.setattr(champions, "get_last_champion", lambda league: None)
+
+    first_payload = api.get_season_info("nba")
+    assert first_payload["meta"]["empty_state"] is None
+
+    api._season_info_cache["NBA"]["timestamp"] = api._time.time() - 86410
+    second_payload = api.get_season_info("nba")
+    validated = schemas.SeasonInfoResponse.model_validate(second_payload)
+
+    assert validated.current_phase == "Regular Season"
+    assert validated.meta is not None
+    assert validated.meta.empty_state == "suspect_empty"

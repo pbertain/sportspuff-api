@@ -136,6 +136,7 @@ def _build_endpoint_meta(
     freshness_seconds: int,
     *,
     source_updated_at: Optional[str] = None,
+    empty_state: Optional[str] = None,
 ) -> Dict[str, Any]:
     timestamp = snapshot.get("timestamp", _time.time())
     cache_age_seconds = max(0, int(_time.time() - timestamp))
@@ -146,8 +147,41 @@ def _build_endpoint_meta(
         "fetched_at": fetched_at,
         "cache_age_seconds": cache_age_seconds,
         "stale": cache_age_seconds > freshness_seconds,
+        "empty_state": empty_state,
         "source_updated_at": normalized_source_updated_at,
     }
+
+
+def _is_real_empty(payload: Any) -> bool:
+    """Classify intentional empty payloads using explicit upstream hints first."""
+    if isinstance(payload, dict):
+        if payload.get("empty_state") == "real_empty":
+            return True
+        if payload.get("status") in ("off_season", "no_games", "empty"):
+            return True
+        if payload.get("available") is False:
+            return True
+        if payload.get("season_types") == [] and payload.get("current_phase") == "Off Season":
+            return True
+        if payload.get("matches") == [] and payload.get("live") is False:
+            return True
+    return False
+
+
+def _is_suspect_empty(payload: Any) -> bool:
+    """Return True when a payload is empty in a way we should distrust.
+
+    This catches ambiguous dict-shaped payloads that look "empty" even though
+    they did not explicitly say they were an intentional off-season/empty state.
+    """
+    if payload in (None, [], {}):
+        return True
+    if isinstance(payload, dict):
+        if payload.get("season_types") == []:
+            return payload.get("current_phase") != "Off Season"
+        if payload.get("matches") == []:
+            return payload.get("status") != "off_season"
+    return False
 
 
 def _scores_freshness_seconds(target_date: date, timezone: pytz.BaseTzInfo) -> int:
@@ -174,21 +208,42 @@ def _standings_freshness_seconds(sport_lower: str) -> int:
     return 900
 
 
-def _get_cached_payload(cache: Dict[str, Any], cache_key: str, ttl_seconds: int, fetcher) -> Tuple[Any, Dict[str, Any]]:
+def _get_cached_payload(
+    cache: Dict[str, Any],
+    cache_key: str,
+    ttl_seconds: int,
+    fetcher,
+    *,
+    prefer_stale_on_suspect_empty: bool = True,
+) -> Tuple[Any, Dict[str, Any]]:
     cached = cache.get(cache_key)
     if cached and (_time.time() - cached["timestamp"] < ttl_seconds):
         return cached["data"], {
             **_cache_snapshot(cached["timestamp"], cache_hit=True),
             "source_updated_at": cached.get("source_updated_at"),
+            "empty_state": cached.get("empty_state"),
         }
 
     data = fetcher()
     timestamp = _time.time()
     source_updated_at = _extract_source_updated_at(data)
-    cache[cache_key] = {"data": data, "timestamp": timestamp, "source_updated_at": source_updated_at}
+    empty_state = "real_empty" if _is_real_empty(data) else ("suspect_empty" if _is_suspect_empty(data) else None)
+    if prefer_stale_on_suspect_empty and empty_state == "suspect_empty" and cached and cached.get("data") is not None:
+        return cached["data"], {
+            **_cache_snapshot(cached["timestamp"], cache_hit=True),
+            "source_updated_at": cached.get("source_updated_at"),
+            "empty_state": "suspect_empty",
+        }
+    cache[cache_key] = {
+        "data": data,
+        "timestamp": timestamp,
+        "source_updated_at": source_updated_at,
+        "empty_state": empty_state,
+    }
     return data, {
         **_cache_snapshot(timestamp, cache_hit=False),
         "source_updated_at": source_updated_at,
+        "empty_state": empty_state,
     }
 
 
@@ -199,6 +254,7 @@ def _get_cached_games(
     cache_context: str = "",
     *,
     include_metadata: bool = False,
+    prefer_stale_on_suspect_empty: bool = True,
 ):
     """Fetch games with 5-minute caching."""
     # Keep the timezone in the cache key. Cricket collectors filter games by
@@ -213,6 +269,7 @@ def _get_cached_games(
             return cached['data'], {
                 **_cache_snapshot(cached['timestamp'], cache_hit=True),
                 "source_updated_at": cached.get("source_updated_at"),
+                "empty_state": cached.get("empty_state"),
             }
         return cached['data']
 
@@ -236,6 +293,7 @@ def _get_cached_games(
                 return cached['data'], {
                     **_cache_snapshot(cached['timestamp'], cache_hit=True),
                     "source_updated_at": cached.get("source_updated_at"),
+                    "empty_state": cached.get("empty_state"),
                 }
             return cached['data']
         # In-flight leader failed or timed out; fall through and try ourselves.
@@ -254,7 +312,10 @@ def _get_cached_games(
             if upstream:
                 upstream_health.record_failure(upstream, "budget gate: rate/budget limit reached")
             if include_metadata:
-                return [], _cache_snapshot()
+                return [], {
+                    **_cache_snapshot(),
+                    "empty_state": "suspect_empty",
+                }
             return []
 
         started_at = _time.time()
@@ -294,11 +355,26 @@ def _get_cached_games(
                     logger.warning("Could not persist API usage for %s: %s", league, exc)
         timestamp = _time.time()
         source_updated_at = _extract_source_updated_at(result)
-        _collector_cache[cache_key] = {'data': result, 'timestamp': timestamp, 'source_updated_at': source_updated_at}
+        empty_state = "real_empty" if _is_real_empty(result) else ("suspect_empty" if _is_suspect_empty(result) else None)
+        if prefer_stale_on_suspect_empty and empty_state == "suspect_empty" and cached and cached.get("data") is not None:
+            if include_metadata:
+                return cached['data'], {
+                    **_cache_snapshot(cached['timestamp'], cache_hit=True),
+                    "source_updated_at": cached.get("source_updated_at"),
+                    "empty_state": "suspect_empty",
+                }
+            return cached['data']
+        _collector_cache[cache_key] = {
+            'data': result,
+            'timestamp': timestamp,
+            'source_updated_at': source_updated_at,
+            'empty_state': empty_state,
+        }
         if include_metadata:
             return result, {
                 **_cache_snapshot(timestamp, cache_hit=False),
                 "source_updated_at": source_updated_at,
+                "empty_state": empty_state,
             }
         return result
     finally:
@@ -2406,6 +2482,7 @@ def get_schedule_api_v1(
             "meta": _build_endpoint_meta(
                 cache_snapshot,
                 _schedule_freshness_seconds(target_date, timezone),
+                empty_state=cache_snapshot.get("empty_state"),
             ),
         }
     except Exception as e:
@@ -3340,6 +3417,7 @@ def get_scores_api_v1(
             "meta": _build_endpoint_meta(
                 cache_snapshot,
                 _scores_freshness_seconds(target_date, timezone),
+                empty_state=cache_snapshot.get("empty_state"),
             ),
         }
     except Exception as e:
@@ -3700,6 +3778,7 @@ def get_standings_api_v1(
         "meta": _build_endpoint_meta(
             cache_snapshot,
             _standings_freshness_seconds(sport_lower),
+            empty_state=cache_snapshot.get("empty_state"),
         ),
     }
 
@@ -3927,60 +4006,53 @@ def get_season_info(
     if league_upper not in valid_leagues:
         raise HTTPException(status_code=400, detail=f"Invalid league: {league}")
 
-    cached = _season_info_cache.get(league_upper)
-    if cached and (_time.time() - cached['timestamp'] < _SEASON_INFO_TTL):
-        return {
-            **cached['data'],
-            "meta": _build_endpoint_meta(
-                {
-                    **cached,
-                    "source_updated_at": cached.get("source_updated_at") or cached["data"].get("source_updated_at"),
-                },
-                _SEASON_INFO_TTL,
-            ),
-        }
+    def _fetch_season_info() -> Dict[str, Any]:
+        collector = get_collector(league_upper)
+        result = None
 
-    collector = get_collector(league_upper)
-    result = None
+        if collector:
+            try:
+                result = collector.get_season_info()
+                if result is not None and not result.get("source_updated_at"):
+                    result["source_updated_at"] = _collector_source_updated_at(collector, "season-info")
+                upstream_health.record_success(upstream_health.upstream_for(league_upper.lower(), 'season-info'))
+            except Exception as e:
+                upstream_health.record_failure(
+                    upstream_health.upstream_for(league_upper.lower(), 'season-info'),
+                    f"{type(e).__name__}: {e}",
+                )
+                result = None
 
-    if collector:
+        if not result:
+            result = _get_season_info_from_db(league_upper)
+
+        if not result:
+            result = {"year": datetime.now().year, "current_phase": "Off Season", "season_types": []}
+
         try:
-            result = collector.get_season_info()
-            if result is not None and not result.get("source_updated_at"):
-                result["source_updated_at"] = _collector_source_updated_at(collector, "season-info")
-            upstream_health.record_success(upstream_health.upstream_for(league_upper.lower(), 'season-info'))
+            from .services.champions import get_last_champion
+            champion = get_last_champion(league_upper)
+            if champion:
+                result['last_champion'] = champion
         except Exception as e:
-            upstream_health.record_failure(
-                upstream_health.upstream_for(league_upper.lower(), 'season-info'),
-                f"{type(e).__name__}: {e}",
-            )
-            result = None
+            logger.debug("champion lookup failed for %s: %s", league_upper, e)
 
-    if not result:
-        result = _get_season_info_from_db(league_upper)
+        return result
 
-    if not result:
-        result = {"year": datetime.now().year, "current_phase": "Off Season", "season_types": []}
-
-    # Augment with last_champion when known (PR #18). Cheap: cached internally
-    # for 1h memory / 24h disk in services/champions.
-    try:
-        from .services.champions import get_last_champion
-        champion = get_last_champion(league_upper)
-        if champion:
-            result['last_champion'] = champion
-    except Exception as e:
-        logger.debug("champion lookup failed for %s: %s", league_upper, e)
-
-    timestamp = _time.time()
-    _season_info_cache[league_upper] = {
-        'data': result,
-        'timestamp': timestamp,
-        'source_updated_at': result.get('source_updated_at'),
-    }
+    payload, cache_snapshot = _get_cached_payload(
+        _season_info_cache,
+        league_upper,
+        _SEASON_INFO_TTL,
+        _fetch_season_info,
+    )
     return {
-        **result,
-        "meta": _build_endpoint_meta({"timestamp": timestamp}, _SEASON_INFO_TTL),
+        **payload,
+        "meta": _build_endpoint_meta(
+            cache_snapshot,
+            _SEASON_INFO_TTL,
+            source_updated_at=cache_snapshot.get("source_updated_at"),
+            empty_state=cache_snapshot.get("empty_state"),
+        ),
     }
 
 

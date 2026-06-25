@@ -179,6 +179,10 @@ class EndpointMeta(BaseModel):
     fetched_at: str = Field(description="ISO-8601 UTC timestamp when the API fetched or assembled this payload.")
     cache_age_seconds: int = Field(description="Age of the cached payload at response time.")
     stale: bool = Field(description="True when the payload is older than the normal freshness target for this endpoint.")
+    empty_state: Optional[str] = Field(
+        default=None,
+        description='"real_empty" when an empty payload is intentional, "suspect_empty" when upstream returned empty unexpectedly.',
+    )
     source_updated_at: Optional[str] = Field(default=None, description="Upstream/source update timestamp when available.")
 
 
