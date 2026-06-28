@@ -3045,7 +3045,7 @@ def _apply_tennis_contract(sport: str, games_dicts: list) -> None:
 
 
 def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list:
-    """Apply dict-based enrichers (playoff series, tennis scores) to
+    """Apply dict-based enrichers (playoff series, cricket, tennis scores) to
     GameWrapper instances by round-tripping through dict proxies. Mirrors
     the JSON path so curl/text routes get the same series-record + tennis
     set-score data."""
@@ -3065,6 +3065,11 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         "series_total", "series_completed",
         "home_series_wins", "home_series_losses",
         "visitor_series_wins", "visitor_series_losses",
+        # cricket live enrichment
+        "cricket_status", "cricket_venue", "cricket_start_time",
+        "cricket_home_nr", "cricket_away_nr",
+        "cricket_home_score", "cricket_away_score",
+        "cricket_winner", "cricket_result", "cricket_away_outcome",
         # tennis_scores
         "tennis_set_scores", "home_sets_won", "visitor_sets_won",
         "tennis_summary", "tennis_winner",

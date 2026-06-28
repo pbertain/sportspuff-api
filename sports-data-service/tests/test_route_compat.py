@@ -44,3 +44,35 @@ def test_api_schedules_all_compat_alias(monkeypatch):
     response = api.get_schedules_all_sports_api_v1_compat("today", "et")
 
     assert response == {"date": "2026-06-20", "sports": {"nba": []}}
+
+
+def test_curl_cricket_enrichment_round_trips_fields(monkeypatch):
+    class Wrapper:
+        def __init__(self):
+            self.home_team = "Texas Super Kings"
+            self.visitor_team = "MI New York"
+            self.cricket_home_score = ""
+            self.cricket_away_score = ""
+            self.cricket_status = ""
+
+    def fake_enricher(sport, games_dicts, target_date):
+        assert sport == "ipl"
+        games_dicts[0].update(
+            {
+                "cricket_home_score": "158/6[20]",
+                "cricket_away_score": "162/4[19.3]",
+                "cricket_status": "MI New York won by 6 wickets",
+                "cricket_winner": "MINY",
+            }
+        )
+        return games_dicts
+
+    monkeypatch.setattr(api, "_apply_dict_enrichers", fake_enricher)
+
+    wrappers = [Wrapper()]
+    api._enrich_curl_wrappers("ipl", api.date(2026, 6, 21), wrappers)
+
+    assert wrappers[0].cricket_home_score == "158/6[20]"
+    assert wrappers[0].cricket_away_score == "162/4[19.3]"
+    assert wrappers[0].cricket_status == "MI New York won by 6 wickets"
+    assert wrappers[0].cricket_winner == "MINY"
