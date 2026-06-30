@@ -14,7 +14,8 @@ Per-league key conventions match what _apply_box_score in api.py expects:
 - NBA / WNBA / NFL: q1..q4, then ot, ot2, ...
 - NHL: period_1..period_3, then ot, so
 - MLB: inning_1..inning_N (extras as inning_10+)
-- MLS / WC: h1, h2 (and h3/h4 if extra time appears)
+- MLS / WC: h1, h2 (and h3/h4 if extra time appears); PK shootout scores
+  are surfaced separately so knockout matches can display penalty results.
 """
 
 from __future__ import annotations
@@ -76,8 +77,8 @@ def _normalize(name: Optional[str]) -> str:
     return (name or "").strip().lower()
 
 
-def _fetch_espn_box(sport: str, target_date: _date) -> Optional[Dict[str, Dict[str, int]]]:
-    """Returns {normalized_team_name: {period_key: int_score}} for the given
+def _fetch_espn_box(sport: str, target_date: _date) -> Optional[Dict[str, Dict[str, Any]]]:
+    """Returns per-team period scores and shootout scores for the given
     sport and date, or None if ESPN isn't supported / fails."""
     cfg = _ESPN_BOX_CONFIG.get(sport.lower())
     if not cfg:
@@ -109,7 +110,7 @@ def _fetch_espn_box(sport: str, target_date: _date) -> Optional[Dict[str, Dict[s
         return None
 
     fmt: Callable[[int], str] = cfg["fmt"]
-    by_team: Dict[str, Dict[str, int]] = {}
+    by_team: Dict[str, Dict[str, Any]] = {}
     for ev in data.get("events") or []:
         for comp in ev.get("competitions") or []:
             for c in comp.get("competitors") or []:
@@ -125,8 +126,16 @@ def _fetch_espn_box(sport: str, target_date: _date) -> Optional[Dict[str, Dict[s
                     except (TypeError, ValueError):
                         v = 0
                     periods[fmt(i + 1)] = v
-                if periods:
-                    by_team[_normalize(tname)] = periods
+                shootout_score = c.get("shootoutScore")
+                try:
+                    shootout_score = int(shootout_score) if shootout_score not in (None, "") else None
+                except (TypeError, ValueError):
+                    shootout_score = None
+                if periods or shootout_score is not None:
+                    by_team[_normalize(tname)] = {
+                        "periods": periods,
+                        "shootout_score": shootout_score,
+                    }
 
     with _cache_lock:
         _cache[cache_key] = {"data": by_team, "ts": now_ts}
@@ -155,10 +164,19 @@ def enrich_games(
             continue
         ht = _normalize(g.get("home_team"))
         vt = _normalize(g.get("visitor_team"))
-        h_periods = by_team.get(ht)
-        v_periods = by_team.get(vt)
+        h_entry = by_team.get(ht) or {}
+        v_entry = by_team.get(vt) or {}
+        h_periods = h_entry.get("periods") or {}
+        v_periods = v_entry.get("periods") or {}
         if h_periods and not g.get("home_period_scores"):
             g["home_period_scores"] = h_periods
         if v_periods and not g.get("visitor_period_scores"):
             g["visitor_period_scores"] = v_periods
+        if sport.lower() in ("mls", "wc"):
+            h_so = h_entry.get("shootout_score")
+            v_so = v_entry.get("shootout_score")
+            if h_so is not None and g.get("home_shootout_score") is None:
+                g["home_shootout_score"] = h_so
+            if v_so is not None and g.get("visitor_shootout_score") is None:
+                g["visitor_shootout_score"] = v_so
     return games

@@ -1473,6 +1473,13 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
                 status = "F"
         elif sport.lower() == 'mls':
             status = "FT"
+        elif sport.lower() == 'wc':
+            home_so = getattr(game, 'home_shootout_score', None)
+            visitor_so = getattr(game, 'visitor_shootout_score', None)
+            if home_so is not None or visitor_so is not None:
+                status = f"FT-PK {visitor_so or 0}-{home_so or 0}"
+            else:
+                status = "FT"
         else:
             status = "F"
 
@@ -2859,6 +2866,8 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         "visitor_otl": getattr(g, 'visitor_otl', None) if league == 'NHL' else None,
         "home_period_scores": getattr(g, 'home_period_scores', None) or {},
         "visitor_period_scores": getattr(g, 'visitor_period_scores', None) or {},
+        "home_shootout_score": getattr(g, 'home_shootout_score', None),
+        "visitor_shootout_score": getattr(g, 'visitor_shootout_score', None),
     }
     if league in ('IPL', 'MLC'):
         d["home_score"] = getattr(g, 'cricket_home_score', '') or ''
@@ -2934,8 +2943,9 @@ def _apply_box_score(sport: str, games_dicts: list) -> None:
       }
 
     Periods that don't fit the per-league prefix (e.g. 'ot', 'so') are
-    appended verbatim with their key uppercased. No box_score added when
-    both sides have empty period dicts."""
+    appended verbatim with their key uppercased. World Cup / MLS penalty
+    shootouts are surfaced as a PK column when available. No box_score is
+    added when both sides have empty period dicts."""
     cfg = _BOX_SCORE_CONFIG.get(sport.lower())
     if not cfg:
         return
@@ -2954,8 +2964,13 @@ def _apply_box_score(sport: str, games_dicts: list) -> None:
     for g in games_dicts:
         if not isinstance(g, dict):
             continue
-        home_p = g.get("home_period_scores") or {}
-        visitor_p = g.get("visitor_period_scores") or {}
+        home_p = dict(g.get("home_period_scores") or {})
+        visitor_p = dict(g.get("visitor_period_scores") or {})
+        home_so = g.get("home_shootout_score")
+        visitor_so = g.get("visitor_shootout_score")
+        if sport.lower() in ("mls", "wc") and (home_so is not None or visitor_so is not None):
+            home_p.setdefault("pk", int(home_so or 0))
+            visitor_p.setdefault("pk", int(visitor_so or 0))
         if not home_p and not visitor_p:
             g.setdefault("box_score", None)
             continue
@@ -3148,6 +3163,8 @@ def _get_games_for_curl(
                     'visitor_otl': getattr(game, 'visitor_otl', 0) or 0,
                     'home_period_scores': getattr(game, 'home_period_scores', None) or {},
                     'visitor_period_scores': getattr(game, 'visitor_period_scores', None) or {},
+                    'home_shootout_score': getattr(game, 'home_shootout_score', None),
+                    'visitor_shootout_score': getattr(game, 'visitor_shootout_score', None),
                 }
                 if league == 'WNBA' and standings_records and wnba_collector:
                     home_record = standings_records.get(wnba_collector._normalize_abbrev(game.home_team_abbrev))
@@ -3298,6 +3315,8 @@ def _get_games_for_curl(
                         'tennis_winner': game_dict.get('tennis_winner'),
                         'home_period_scores': game_dict.get('home_period_scores') or {},
                         'visitor_period_scores': game_dict.get('visitor_period_scores') or {},
+                        'home_shootout_score': game_dict.get('home_shootout_score'),
+                        'visitor_shootout_score': game_dict.get('visitor_shootout_score'),
                     }
                     games.append(GameWrapper(game_data))
 
