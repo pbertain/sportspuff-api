@@ -85,6 +85,15 @@ class APITracker:
                     settings.nfl_max_requests_per_day,
                 )
                 return False
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            requests_this_month = self._count_requests_since(db, league, month_start)
+            if requests_this_month >= settings.nfl_max_requests_per_month:
+                logger.warning(
+                    "NFL monthly API budget reached: %s/%s",
+                    requests_this_month,
+                    settings.nfl_max_requests_per_month,
+                )
+                return False
 
         if league == 'WNBA':
             requests_last_hour = self._count_requests_since(db, league, hour_start)
@@ -273,7 +282,10 @@ class APITracker:
         # the DB-backed path for accurate hourly enforcement. The in-memory
         # path is just a fallback when DB is unavailable.
         if league == 'NFL':
-            return self.daily_usage[league] < settings.nfl_max_requests_per_day
+            return (
+                self.daily_usage[league] < settings.nfl_max_requests_per_day
+                and self.monthly_usage[league] < settings.nfl_max_requests_per_month
+            )
         if league == 'WNBA':
             if self.daily_usage[league] >= settings.wnba_max_requests_per_day:
                 return False

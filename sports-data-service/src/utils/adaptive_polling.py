@@ -104,24 +104,28 @@ class AdaptivePollingManager:
         
         # Check for games in progress
         in_progress_games = [g for g in active_games if g.game_status == 'in_progress']
-        
+
         # NFL-specific polling logic
-        # Strategy: 23:00-06:00: 1x/hour, 07:00-22:59: 60x/hour (968 requests/day)
+        # Strategy:
+        # - scheduled-only games: poll every 5 minutes during the day
+        # - in-progress games: poll every minute
+        # - overnight / quiet periods: back off to hourly polling
         if league == 'NFL':
             now = datetime.now()
             current_hour = now.hour
-            
-            # Determine if we're in the low-frequency window (23:00-06:59)
-            # This is 23:00 (11pm) to 06:59 (6:59am) = 8 hours
-            is_low_frequency_window = current_hour >= 23 or current_hour < 7
-            
-            if is_low_frequency_window:
-                # Low frequency window: 1 request per hour
+
+            if in_progress_games:
+                # Once a game is actually live, keep polling at the normal
+                # live cadence so score changes arrive promptly.
+                return settings.close_game_poll_interval
+
+            # Scheduled-but-not-started games do not need minute-level polling.
+            # That cadence was the main Tank01 bill multiplier.
+            if current_hour >= 23 or current_hour < 7:
                 return 3600  # 1 hour
-            else:
-                # High frequency window (07:00-22:59): 60 requests per hour = 1 per minute
-                return 60  # 1 minute
-        
+
+            return settings.scheduled_game_poll_interval
+
         # Check for close games (for other leagues)
         close_games = []
         for game in active_games:
