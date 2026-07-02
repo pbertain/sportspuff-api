@@ -257,18 +257,48 @@
         chdir: "{{ deployment_dir }}/sports-data-service"
       ignore_errors: true
     
-    - name: Build and start containers
+    - name: Prune stale Docker build state
       shell: |
-        export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
-        export API_PORT="{{ api_port }}"
-        export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build --no-cache
-        cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" up -d
-      environment:
-        POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
-        API_PORT: "{{ api_port }}"
+        sudo docker builder prune -af || true
+        sudo docker image prune -af || true
       args:
         chdir: "{{ deployment_dir }}/sports-data-service"
+      ignore_errors: true
+
+    - name: Build and start containers
+      block:
+        - name: Build and start containers
+          shell: |
+            export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
+            export API_PORT="{{ api_port }}"
+            export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
+            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build --no-cache
+            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" up -d
+          environment:
+            POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
+            API_PORT: "{{ api_port }}"
+          args:
+            chdir: "{{ deployment_dir }}/sports-data-service"
+      rescue:
+        - name: Clear Docker system state after a build-layer collision
+          shell: |
+            sudo docker system prune -af || true
+          args:
+            chdir: "{{ deployment_dir }}/sports-data-service"
+          ignore_errors: true
+
+        - name: Retry build and start containers
+          shell: |
+            export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
+            export API_PORT="{{ api_port }}"
+            export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
+            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build --no-cache
+            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" up -d
+          environment:
+            POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
+            API_PORT: "{{ api_port }}"
+          args:
+            chdir: "{{ deployment_dir }}/sports-data-service"
     
     - name: Verify containers are running
       shell: |
@@ -362,4 +392,3 @@
           - "Deployment directory: {{ deployment_dir }}"
           - "Backup location: {{ backup_dir }}/backup-{{ timestamp }}"
           - "Commit: {{ github_sha }}"
-
