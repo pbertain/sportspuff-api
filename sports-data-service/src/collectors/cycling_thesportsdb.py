@@ -134,6 +134,8 @@ class CyclingTheSportsDBCollector(TheSportsDBCollector):
                 "cycling_event_label": parsed["raw"],
                 "cycling_country": raw.get("strCountry") or "",
                 "cycling_video": raw.get("strVideo") or "",
+                "cycling_winner": None,
+                "cycling_rank": None,
                 "league_badge": raw.get("strLeagueBadge") or "",
             }
         except Exception as e:
@@ -169,11 +171,17 @@ class CyclingTheSportsDBCollector(TheSportsDBCollector):
             if d > slot["end"]:
                 slot["end"] = d
 
+        starts = [slot["start"] for slot in by_race.values() if slot.get("start")]
+        ends = [slot["end"] for slot in by_race.values() if slot.get("end")]
         current = "Off Season"
         for race, slot in by_race.items():
             if slot["start"] <= today <= slot["end"]:
                 current = race
                 break
+        if current == "Off Season" and starts and today < min(starts):
+            current = "Upcoming"
+        elif current == "Off Season" and ends and today > max(ends):
+            current = "Off Season"
 
         ordered = sorted(by_race.items(), key=lambda kv: kv[1]["start"])
         season_types = [

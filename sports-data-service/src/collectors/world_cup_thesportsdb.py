@@ -205,6 +205,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 # World Cup-specific
                 "wc_round": raw.get("intRound") or "",
                 "wc_round_label": game_type,
+                "wc_winner": self._winner_from_scores(home, away, home_score, away_score, is_final),
             }
         except Exception as e:
             logger.error("WorldCup parse error: %s", e)
@@ -556,6 +557,20 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         if home_score is None or away_score is None or home_score == away_score:
             return None
         return game.get("home_team") if home_score > away_score else game.get("visitor_team")
+
+    @staticmethod
+    def _winner_from_scores(
+        home_team: str,
+        away_team: str,
+        home_score: int,
+        away_score: int,
+        is_final: bool,
+    ) -> Optional[str]:
+        if not is_final:
+            return None
+        if home_score == away_score:
+            return None
+        return home_team if home_score > away_score else away_team
 
     def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
         """Build season_types from the bulk events (start = first match,

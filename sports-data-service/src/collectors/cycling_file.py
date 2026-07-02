@@ -50,6 +50,15 @@ class CyclingFileCollector:
     def _clean(value: Any) -> str:
         return "" if value is None else str(value).strip()
 
+    @staticmethod
+    def _safe_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+        try:
+            if value in (None, ""):
+                return default
+            return int(float(value))
+        except Exception:
+            return default
+
     def _stage_rows(self) -> List[Dict[str, Any]]:
         rows = []
         for raw in self._read_csv("cycling_stages.csv"):
@@ -99,6 +108,7 @@ class CyclingFileCollector:
                 "cycling_video": self._clean(raw.get("cycling_video")),
                 "cycling_distance_km": self._clean(raw.get("distance_km")),
                 "cycling_winner": self._clean(raw.get("winner")),
+                "cycling_rank": self._safe_int(raw.get("rank")),
             })
         return rows
 
@@ -127,6 +137,7 @@ class CyclingFileCollector:
             }
             if team["team_name"]:
                 teams.append(team)
+        teams.sort(key=lambda rec: (rec["rank"] or 999999, rec["team_name"]))
         return teams
 
     def get_team_classification(self) -> List[Dict[str, Any]]:
@@ -184,6 +195,12 @@ class CyclingFileCollector:
             if slot["start"] <= today <= slot["end"]:
                 current = race
                 break
+        starts = [slot["start"] for slot in by_race.values() if slot.get("start")]
+        ends = [slot["end"] for slot in by_race.values() if slot.get("end")]
+        if current == "Off Season" and starts and today < min(starts):
+            current = "Upcoming"
+        elif current == "Off Season" and ends and today > max(ends):
+            current = "Off Season"
         return {
             "year": int(today[:4]),
             "current_phase": current,

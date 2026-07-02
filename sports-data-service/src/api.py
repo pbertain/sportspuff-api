@@ -32,6 +32,8 @@ _collector_cache: Dict[str, Any] = {}
 _COLLECTOR_CACHE_TTL = 300  # 5 minutes
 _standings_cache: Dict[str, Any] = {}
 _STANDINGS_CACHE_TTL = 1800  # 30 minutes
+_wc_bracket_cache: Dict[str, Any] = {}
+_WC_BRACKET_TTL = 1800  # 30 minutes
 
 # In-flight fetch coalescing: when N concurrent requests miss the same cache
 # key, only the first runs the fetcher; the rest wait on its result. Prevents
@@ -2075,11 +2077,11 @@ footer{
         <tr><td>FIFA World Cup</td><td><code>wc</code></td><td>✓</td><td>✓</td><td>✓ (group stage)</td><td>✓</td></tr>
         <tr><td>ATP tennis</td><td><code>atp</code></td><td>fixture only</td><td>✓</td><td>n/a</td><td>tour calendar</td></tr>
         <tr><td>WTA tennis</td><td><code>wta</code></td><td>fixture only</td><td>✓</td><td>n/a</td><td>tour calendar</td></tr>
-        <tr><td>UCI World Tour (cycling)</td><td><code>cycling</code></td><td>calendar only</td><td>✓</td><td>n/a</td><td>race calendar</td></tr>
+        <tr><td>UCI World Tour (cycling)</td><td><code>cycling</code></td><td>calendar + results fields</td><td>✓</td><td>GC when configured</td><td>race calendar</td></tr>
       </tbody>
     </table>
     <p class="blurb" style="margin-top:1rem;font-size:0.85rem">
-      Tennis and cycling have limited data coverage upstream — tennis has no set scores, cycling has no rider/GC standings. Standings rows for those sports return an empty list with an explanatory message.
+      Tennis still has fixture-only coverage upstream. Cycling now surfaces stage winner and GC rank fields when the configured collector provides them; standings are available when the source exposes GC data.
     </p>
   </div>
 
@@ -2869,6 +2871,19 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         "home_shootout_score": getattr(g, 'home_shootout_score', None),
         "visitor_shootout_score": getattr(g, 'visitor_shootout_score', None),
     }
+    if league == 'CYCLING':
+        d["cycling_race"] = getattr(g, 'cycling_race', '') or ''
+        d["cycling_stage_label"] = getattr(g, 'cycling_stage_label', '') or ''
+        d["cycling_stage_number"] = getattr(g, 'cycling_stage_number', None)
+        d["cycling_event_label"] = getattr(g, 'cycling_event_label', '') or ''
+        d["cycling_country"] = getattr(g, 'cycling_country', '') or ''
+        d["cycling_video"] = getattr(g, 'cycling_video', '') or ''
+        d["cycling_winner"] = getattr(g, 'cycling_winner', '') or ''
+        d["cycling_rank"] = getattr(g, 'cycling_rank', None)
+    if league == 'WC':
+        d["wc_round"] = getattr(g, 'wc_round', '')
+        d["wc_round_label"] = getattr(g, 'wc_round_label', '')
+        d["wc_winner"] = getattr(g, 'wc_winner', '') or ''
     if league in ('IPL', 'MLC'):
         d["home_score"] = getattr(g, 'cricket_home_score', '') or ''
         d["visitor_score"] = getattr(g, 'cricket_away_score', '') or ''
@@ -2913,7 +2928,35 @@ def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> l
     _enrich_box(sport, target_date, games_dicts)
     _apply_tennis_contract(sport, games_dicts)
     _apply_box_score(sport, games_dicts)
+    _apply_world_cup_winner(sport, games_dicts)
     return games_dicts
+
+
+def _apply_world_cup_winner(sport: str, games_dicts: list) -> None:
+    """Derive a winner label for World Cup knockout matches.
+
+    Prefer shootout scores when ESPN exposed them; otherwise fall back to
+    the regulation-time scoreline.
+    """
+    if sport.lower() != "wc":
+        return
+    for g in games_dicts:
+        if not isinstance(g, dict):
+            continue
+        if g.get("wc_winner"):
+            continue
+        if not g.get("is_final"):
+            continue
+        home = g.get("home_team") or ""
+        visitor = g.get("visitor_team") or ""
+        home_score = g.get("home_score_total")
+        visitor_score = g.get("visitor_score_total")
+        home_so = g.get("home_shootout_score")
+        visitor_so = g.get("visitor_shootout_score")
+        if home_so is not None and visitor_so is not None and home_so != visitor_so:
+            g["wc_winner"] = home if int(home_so or 0) > int(visitor_so or 0) else visitor
+        elif home_score is not None and visitor_score is not None and home_score != visitor_score:
+            g["wc_winner"] = home if int(home_score or 0) > int(visitor_score or 0) else visitor
 
 
 # Per-league period-score conventions for the box_score block.
@@ -3070,6 +3113,14 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         {
             "home_team": getattr(w, "home_team", "") or "",
             "visitor_team": getattr(w, "visitor_team", "") or "",
+            "home_score_total": getattr(w, "home_score_total", 0) or 0,
+            "visitor_score_total": getattr(w, "visitor_score_total", 0) or 0,
+            "home_period_scores": getattr(w, "home_period_scores", None) or {},
+            "visitor_period_scores": getattr(w, "visitor_period_scores", None) or {},
+            "home_shootout_score": getattr(w, "home_shootout_score", None),
+            "visitor_shootout_score": getattr(w, "visitor_shootout_score", None),
+            "is_final": getattr(w, "is_final", False),
+            "wc_winner": getattr(w, "wc_winner", "") or "",
         }
         for w in wrappers
     ]
@@ -3090,6 +3141,8 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         "tennis_summary", "tennis_winner",
         # tennis_scores may also override these:
         "is_final", "game_status",
+        # world cup / cycling extras
+        "wc_winner",
     )
     for w, p in zip(wrappers, proxies):
         for k in keys:
@@ -3165,6 +3218,17 @@ def _get_games_for_curl(
                     'visitor_period_scores': getattr(game, 'visitor_period_scores', None) or {},
                     'home_shootout_score': getattr(game, 'home_shootout_score', None),
                     'visitor_shootout_score': getattr(game, 'visitor_shootout_score', None),
+                    'cycling_race': getattr(game, 'cycling_race', '') or '',
+                    'cycling_stage_label': getattr(game, 'cycling_stage_label', '') or '',
+                    'cycling_stage_number': getattr(game, 'cycling_stage_number', None),
+                    'cycling_event_label': getattr(game, 'cycling_event_label', '') or '',
+                    'cycling_country': getattr(game, 'cycling_country', '') or '',
+                    'cycling_video': getattr(game, 'cycling_video', '') or '',
+                    'cycling_winner': getattr(game, 'cycling_winner', '') or '',
+                    'cycling_rank': getattr(game, 'cycling_rank', None),
+                    'wc_round': getattr(game, 'wc_round', ''),
+                    'wc_round_label': getattr(game, 'wc_round_label', ''),
+                    'wc_winner': getattr(game, 'wc_winner', '') or '',
                 }
                 if league == 'WNBA' and standings_records and wnba_collector:
                     home_record = standings_records.get(wnba_collector._normalize_abbrev(game.home_team_abbrev))
@@ -3317,6 +3381,17 @@ def _get_games_for_curl(
                         'visitor_period_scores': game_dict.get('visitor_period_scores') or {},
                         'home_shootout_score': game_dict.get('home_shootout_score'),
                         'visitor_shootout_score': game_dict.get('visitor_shootout_score'),
+                        'cycling_race': game_dict.get('cycling_race', ''),
+                        'cycling_stage_label': game_dict.get('cycling_stage_label', ''),
+                        'cycling_stage_number': game_dict.get('cycling_stage_number', None),
+                        'cycling_event_label': game_dict.get('cycling_event_label', ''),
+                        'cycling_country': game_dict.get('cycling_country', ''),
+                        'cycling_video': game_dict.get('cycling_video', ''),
+                        'cycling_winner': game_dict.get('cycling_winner', ''),
+                        'cycling_rank': game_dict.get('cycling_rank', None),
+                        'wc_round': game_dict.get('wc_round', ''),
+                        'wc_round_label': game_dict.get('wc_round_label', ''),
+                        'wc_winner': game_dict.get('wc_winner', ''),
                     }
                     games.append(GameWrapper(game_data))
 
@@ -3810,11 +3885,35 @@ def get_standings_api_v1(
 
         if sport_lower == 'cycling':
             collector = get_collector('CYCLING')
+            try:
+                standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+                upstream_health.record_success(upstream_health.upstream_for('cycling', 'standings'))
+            except Exception as e:
+                upstream_health.record_failure(upstream_health.upstream_for('cycling', 'standings'), f"{type(e).__name__}: {e}")
+                raise
+            teams = []
+            for rec in standings:
+                team = {
+                    'rank': rec.get('rank'),
+                    'team_name': rec.get('team_name'),
+                    'abbreviation': rec.get('abbreviation'),
+                    'record': rec.get('record'),
+                    'wins': rec.get('wins', 0),
+                    'losses': rec.get('losses', 0),
+                    'win_pct': rec.get('win_pct'),
+                    'games_back': rec.get('games_back'),
+                    'streak': rec.get('streak'),
+                    'points': rec.get('points', 0),
+                    'matches': rec.get('matches'),
+                }
+                if rec.get('cycling_rank') is not None:
+                    team['cycling_rank'] = rec.get('cycling_rank')
+                teams.append(team)
             return {
                 "sport": "cycling",
-                "teams": [],
-                "available": False,
-                "message": "Cycling has no league table; see /api/v1/season-info/cycling for the UCI World Tour calendar.",
+                "teams": teams,
+                "available": bool(teams),
+                "message": "Cycling standings are available when the configured collector provides GC data.",
                 "source_updated_at": _collector_source_updated_at(collector, "standings"),
             }
 
@@ -3883,6 +3982,22 @@ def get_standings_curl_v1(
                 for abbrev, rec in ordered:
                     pts = rec['wins'] * 3 + rec['draws']
                     output += f"  {abbrev:<5} {rec['wins']:>2} {rec['draws']:>2} {rec['losses']:>2} {pts:>3}\n"
+            else:
+                output += "  No standings data available\n"
+            output += "\n"
+        elif sport_name == 'cycling':
+            collector = get_collector('CYCLING')
+            standings = collector.get_standings() if collector and hasattr(collector, 'get_standings') else []
+            output += "CYCLING [Standings]\n"
+            output += "-" * 45 + "\n"
+            if standings:
+                output += f"  {'#':>2} {'Team':<20} {'Pts':>4} {'GB':>6}\n"
+                output += f"  {'-' * 40}\n"
+                for rec in standings:
+                    output += (
+                        f"  {str(rec.get('rank') or ''):>2} {rec.get('team_name', ''):<20} "
+                        f"{str(rec.get('points', 0) or 0):>4} {str(rec.get('games_back', '') or ''):>6}\n"
+                    )
             else:
                 output += "  No standings data available\n"
             output += "\n"
@@ -4048,6 +4163,43 @@ def _get_season_info_from_db(league: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def _get_wc_knockout_bracket_payload() -> Dict[str, Any]:
+    """Build the World Cup knockout bracket payload once and reuse it.
+
+    The collector already emits a structured lattice (`sides`, `rounds`,
+    and match metadata); this helper exposes that shape directly to callers
+    that do not want to reconstruct the bracket from the match feed.
+    """
+    collector = get_collector("WC")
+    bracket: Dict[str, Any] = {}
+
+    if collector:
+        try:
+            if hasattr(collector, "get_knockout_bracket"):
+                bracket = collector.get_knockout_bracket() or {}
+            upstream_health.record_success(upstream_health.upstream_for("wc", "season-info"))
+        except Exception as e:
+            upstream_health.record_failure(
+                upstream_health.upstream_for("wc", "season-info"),
+                f"{type(e).__name__}: {e}",
+            )
+            raise
+
+    if not bracket:
+        bracket = {
+            "format": "round_of_32",
+            "sides": {"left": [], "right": []},
+            "rounds": [],
+        }
+
+    return {
+        "sport": "wc",
+        "knockout_bracket": bracket,
+        "available": bool((bracket.get("rounds") or []) or (bracket.get("sides") or {}).get("left") or (bracket.get("sides") or {}).get("right")),
+        "source_updated_at": _collector_source_updated_at(collector, "season-info"),
+    }
+
+
 @app.get("/api/v1/season-info/{league}", response_model=schemas.SeasonInfoResponse)
 def get_season_info(
     league: str = Path(..., description="League (mlb, nba, nfl, nhl, wnba)"),
@@ -4082,6 +4234,20 @@ def get_season_info(
         if not result:
             result = {"year": datetime.now().year, "current_phase": "Off Season", "season_types": []}
 
+        if league_upper == "WC":
+            try:
+                bracket_payload, bracket_meta = _get_cached_payload(
+                    _wc_bracket_cache,
+                    "wc",
+                    _WC_BRACKET_TTL,
+                    _get_wc_knockout_bracket_payload,
+                )
+                result["knockout_bracket"] = bracket_payload.get("knockout_bracket")
+                if not result.get("source_updated_at"):
+                    result["source_updated_at"] = bracket_meta.get("source_updated_at")
+            except Exception as e:
+                logger.debug("WC knockout bracket lookup failed: %s", e)
+
         try:
             from .services.champions import get_last_champion
             champion = get_last_champion(league_upper)
@@ -4103,6 +4269,26 @@ def get_season_info(
         "meta": _build_endpoint_meta(
             cache_snapshot,
             _SEASON_INFO_TTL,
+            source_updated_at=cache_snapshot.get("source_updated_at"),
+            empty_state=cache_snapshot.get("empty_state"),
+        ),
+    }
+
+
+@app.get("/api/v1/world-cup/bracket", response_model=schemas.WorldCupBracketResponse)
+def get_world_cup_bracket_api_v1():
+    """Get the World Cup knockout lattice in a frontend-friendly shape."""
+    payload, cache_snapshot = _get_cached_payload(
+        _wc_bracket_cache,
+        "wc",
+        _WC_BRACKET_TTL,
+        _get_wc_knockout_bracket_payload,
+    )
+    return {
+        **payload,
+        "meta": _build_endpoint_meta(
+            cache_snapshot,
+            _WC_BRACKET_TTL,
             source_updated_at=cache_snapshot.get("source_updated_at"),
             empty_state=cache_snapshot.get("empty_state"),
         ),

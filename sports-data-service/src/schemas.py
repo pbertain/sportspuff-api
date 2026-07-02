@@ -169,10 +169,13 @@ class GameOut(BaseModel):
     cycling_event_label: Optional[str] = None
     cycling_country: Optional[str] = None
     cycling_video: Optional[str] = None
+    cycling_winner: Optional[str] = Field(default=None, description="Stage winner or race winner when available.")
+    cycling_rank: Optional[int] = Field(default=None, description="General-classification or ranking position when available.")
 
     # ---- World Cup ----
     wc_round: Optional[Union[int, str]] = None
     wc_round_label: Optional[str] = Field(default=None, description='group_matchday_{1,2,3} | round_of_16 | quarterfinal | semifinal | third_place | final')
+    wc_winner: Optional[str] = Field(default=None, description='Winner team name for final World Cup matches when available.')
 
 
 class EndpointMeta(BaseModel):
@@ -293,7 +296,17 @@ class SeasonInfoResponse(BaseModel):
     year: Union[int, str]
     current_phase: str = Field(description='Current phase name, e.g. "Regular Season" / "Postseason" / "Off Season" / "Wimbledon" (tennis) / "Tour de France" (cycling).')
     season_types: List[SeasonTypeOut]
+    knockout_bracket: Optional[Dict[str, Any]] = Field(default=None, description="World Cup knockout bracket lattice when available.")
     last_champion: Optional[LastChampion] = Field(default=None, description="Most recent champion when known.")
+    meta: Optional[EndpointMeta] = None
+
+
+class WorldCupBracketResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    sport: str = Field(default="wc")
+    knockout_bracket: Dict[str, Any]
+    available: Optional[bool] = Field(default=None, description="True when the bracket contains populated knockout slots or matches.")
+    source_updated_at: Optional[str] = None
     meta: Optional[EndpointMeta] = None
 
 

@@ -76,3 +76,84 @@ def test_curl_cricket_enrichment_round_trips_fields(monkeypatch):
     assert wrappers[0].cricket_away_score == "162/4[19.3]"
     assert wrappers[0].cricket_status == "MI New York won by 6 wickets"
     assert wrappers[0].cricket_winner == "MINY"
+
+
+def test_world_cup_bracket_endpoint_returns_structured_lattice(monkeypatch):
+    class FakeWCCollector:
+        def get_knockout_bracket(self):
+            return {
+                "format": "round_of_32",
+                "sides": {"left": [{"match_number": 73}], "right": [{"match_number": 84}]},
+                "rounds": [{"name": "Round of 32", "matches": [{"match_number": 73}, {"match_number": 84}]}],
+            }
+
+    api._wc_bracket_cache.clear()
+    monkeypatch.setattr(api, "get_collector", lambda league: FakeWCCollector() if league == "WC" else None)
+
+    payload = api.get_world_cup_bracket_api_v1()
+
+    assert payload["sport"] == "wc"
+    assert payload["knockout_bracket"]["format"] == "round_of_32"
+    assert payload["knockout_bracket"]["sides"]["left"][0]["match_number"] == 73
+    assert payload["knockout_bracket"]["rounds"][0]["name"] == "Round of 32"
+
+
+def test_world_cup_season_info_includes_knockout_bracket(monkeypatch):
+    class FakeWCCollector:
+        def get_season_info(self):
+            return {
+                "year": 2026,
+                "current_phase": "Knockout Stage",
+                "season_types": [{"name": "FIFA World Cup", "start_date": "2026-06-11", "end_date": "2026-07-19"}],
+            }
+
+        def get_knockout_bracket(self):
+            return {
+                "format": "round_of_32",
+                "sides": {"left": [], "right": []},
+                "rounds": [],
+            }
+
+    api._season_info_cache.clear()
+    api._wc_bracket_cache.clear()
+    monkeypatch.setattr(api, "get_collector", lambda league: FakeWCCollector() if league == "WC" else None)
+    monkeypatch.setattr("src.services.champions.get_last_champion", lambda league: None)
+
+    payload = api.get_season_info("wc")
+
+    assert payload["year"] == 2026
+    assert payload["current_phase"] == "Knockout Stage"
+    assert payload["knockout_bracket"]["format"] == "round_of_32"
+
+
+def test_wnba_season_info_accepts_string_year(monkeypatch):
+    from src.collectors.wnba import WNBACollector
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "seasons": [
+                    {
+                        "year": "2026",
+                        "types": [
+                            {
+                                "name": "Regular Season",
+                                "startDate": "2026-05-01T00:00:00Z",
+                                "endDate": "2026-10-01T00:00:00Z",
+                            }
+                        ],
+                    }
+                ]
+            }
+
+    monkeypatch.setattr(WNBACollector, "_check_rate_limit", lambda self: None)
+    monkeypatch.setattr(WNBACollector, "_tracked_get", lambda self, *args, **kwargs: FakeResponse())
+
+    collector = WNBACollector()
+    payload = collector.get_season_info(2026)
+
+    assert payload is not None
+    assert payload["season_types"]
+    assert payload["current_phase"] == "Regular Season"

@@ -266,6 +266,7 @@ class WNBACollector(BaseCollector):
     def get_season_info(self, year: int = None) -> Optional[Dict[str, Any]]:
         if year is None:
             year = datetime.now().year
+        year_str = str(year)
         try:
             self._check_rate_limit()
             url = f"{self.base_url}/wnbastandings"
@@ -279,7 +280,7 @@ class WNBACollector(BaseCollector):
 
             if 'seasons' in data and isinstance(data['seasons'], list):
                 for s in data['seasons']:
-                    if s.get('year') == year and 'types' in s:
+                    if str(s.get('year')) == year_str and 'types' in s:
                         for t in s['types']:
                             start = t.get('startDate', '')
                             end = t.get('endDate', '')
@@ -299,6 +300,15 @@ class WNBACollector(BaseCollector):
             for t in season_types:
                 if t['start_date'] and t['end_date'] and t['start_date'] <= today <= t['end_date']:
                     current_phase = t['name']
+                    break
+
+            if current_phase == 'Off Season' and season_types:
+                first_start = min((t['start_date'] for t in season_types if t['start_date']), default="")
+                last_end = max((t['end_date'] for t in season_types if t['end_date']), default="")
+                if first_start and today < first_start:
+                    current_phase = 'Upcoming'
+                elif last_end and today > last_end:
+                    current_phase = 'Off Season'
 
             return {
                 'year': year,
