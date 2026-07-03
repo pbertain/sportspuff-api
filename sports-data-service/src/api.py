@@ -2540,6 +2540,8 @@ def get_schedules_all_sports_curl_v1(
         target_date = parse_date_param(date, timezone)
 
         sport_games = _get_all_sport_games(target_date, timezone)
+        for sport_key, games in sport_games.items():
+            _enrich_curl_wrappers(sport_key, target_date, games)
         all_games = []
         for games in sport_games.values():
             all_games.extend(games)
@@ -2602,6 +2604,8 @@ def get_scores_all_sports_curl_v1(
         target_date = parse_date_param(date, timezone)
 
         sport_games = _get_all_sport_games(target_date, timezone)
+        for sport_key, games in sport_games.items():
+            _enrich_curl_wrappers(sport_key, target_date, games)
         all_games = []
         for games in sport_games.values():
             all_games.extend(games)
@@ -3681,6 +3685,8 @@ def get_schedule_curl_v1(
         # Handle 'all' sport - aggregate from all sports
         if sport_lower == 'all':
             sport_games = _get_all_sport_games(target_date, timezone)
+            for sport_key, games in sport_games.items():
+                _enrich_curl_wrappers(sport_key, target_date, games)
             all_games = []
             for games in sport_games.values():
                 all_games.extend(games)
@@ -3747,6 +3753,8 @@ def get_scores_api_v1(
 
         if sport_lower == 'all':
             sport_games = _get_all_sport_games(target_date, timezone)
+            for sport_key, games in sport_games.items():
+                _enrich_curl_wrappers(sport_key, target_date, games)
             all_scores = []
             by_sport: Dict[str, List[Dict[str, Any]]] = {}
             for sport_key, games in sport_games.items():

@@ -78,6 +78,56 @@ def test_curl_cricket_enrichment_round_trips_fields(monkeypatch):
     assert wrappers[0].cricket_winner == "MINY"
 
 
+def test_curl_schedule_all_enriches_world_cup_wrappers(monkeypatch):
+    class Wrapper:
+        def __init__(self):
+            self.league = "WC"
+            self.game_id = "wc-1"
+            self.home_team = "Germany"
+            self.visitor_team = "Paraguay"
+            self.home_team_abbrev = "GER"
+            self.visitor_team_abbrev = "PAR"
+            self.home_wins = 0
+            self.home_draws = 0
+            self.home_losses = 0
+            self.visitor_wins = 0
+            self.visitor_draws = 0
+            self.visitor_losses = 0
+            self.home_score_total = 0
+            self.visitor_score_total = 0
+            self.game_status = "scheduled"
+            self.game_type = "group_matchday_1"
+            self.is_final = False
+            self.game_time = None
+
+    def fake_get_all_sport_games(target_date, timezone):
+        return {"wc": [Wrapper()], "nba": []}
+
+    def fake_enricher(sport, target_date, wrappers):
+        if sport == "wc":
+            wrappers[0].home_record = "2-1-0"
+            wrappers[0].visitor_record = "1-0-2"
+        return wrappers
+
+    captured = {}
+
+    def fake_format_schedule(games, target_date, timezone, show_all_sports=False):
+        captured["games"] = games
+        captured["show_all_sports"] = show_all_sports
+        return "ok"
+
+    monkeypatch.setattr(api, "_get_all_sport_games", fake_get_all_sport_games)
+    monkeypatch.setattr(api, "_enrich_curl_wrappers", fake_enricher)
+    monkeypatch.setattr(api, "format_schedule_curl", fake_format_schedule)
+
+    response = api.get_schedule_curl_v1("all", "tomorrow", None)
+
+    assert response == "ok"
+    assert captured["show_all_sports"] is True
+    assert captured["games"][0].home_record == "2-1-0"
+    assert captured["games"][0].visitor_record == "1-0-2"
+
+
 def test_world_cup_bracket_endpoint_returns_structured_lattice(monkeypatch):
     class FakeWCCollector:
         def get_knockout_bracket(self):
