@@ -1399,6 +1399,8 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
         return _format_cricket_game(game, tz)
     if sport.lower() == 'cycling':
         return _format_cycling_game(game, tz)
+    if sport.lower() == 'wc':
+        return _format_world_cup_game(game, tz)
 
     visitor_wins = game.visitor_wins or 0
     visitor_losses = game.visitor_losses or 0
@@ -1545,6 +1547,79 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
             status = "TBD"
 
         return f"  {visitor_abbrev} {away_rec}    @     {home_abbrev} {home_rec}  {status}"
+
+
+def _format_world_cup_record(game: Any, side: str) -> str:
+    """Format a World Cup team record as W-D-L, falling back to raw fields."""
+    record = getattr(game, f"{side}_record", "") or ""
+    if record:
+        return f"[{record}]"
+    wins = int(getattr(game, f"{side}_wins", 0) or 0)
+    draws = int(getattr(game, f"{side}_draws", 0) or 0)
+    losses = int(getattr(game, f"{side}_losses", 0) or 0)
+    return f"[{wins}-{draws}-{losses}]"
+
+
+def _format_world_cup_game(game: Any, tz: pytz.BaseTzInfo = None) -> str:
+    """Format a World Cup game with group-stage records visible for both sides."""
+    if tz is None:
+        tz = pytz.timezone('US/Pacific')
+
+    visitor_abbrev = (getattr(game, "visitor_team_abbrev", "") or (getattr(game, "visitor_team", "") or "???")[:4]).ljust(3)
+    home_abbrev = (getattr(game, "home_team_abbrev", "") or (getattr(game, "home_team", "") or "???")[:4]).ljust(3)
+    away_rec = _format_world_cup_record(game, "visitor")
+    home_rec = _format_world_cup_record(game, "home")
+
+    vs = int(getattr(game, "visitor_score_total", 0) or 0)
+    hs = int(getattr(game, "home_score_total", 0) or 0)
+
+    if getattr(game, "is_final", False):
+        visitor_won = vs > hs
+        home_won = hs > vs
+        v_mark = '*' if visitor_won else ' '
+        h_mark = '*' if home_won else ' '
+        home_so = getattr(game, 'home_shootout_score', None)
+        visitor_so = getattr(game, 'visitor_shootout_score', None)
+        if home_so is not None and visitor_so is not None and home_so != visitor_so:
+            status = f"FT-PK {visitor_so or 0}-{home_so or 0}"
+        else:
+            status = "FT"
+        return f" {v_mark}{visitor_abbrev} {away_rec} ({vs:2d}@{hs:2d}) {h_mark}{home_abbrev} {home_rec}  {status}"
+
+    period = str(getattr(game, "current_period", "") or "")
+    time_left = getattr(game, "time_remaining", "") or ""
+    if getattr(game, "game_status", "") == "in_progress" or vs > 0 or hs > 0:
+        if period and time_left and time_left.strip():
+            status = f"Q{period} {time_left}"
+        elif period and period not in ("?", "", "0"):
+            status = f"Q{period}"
+        else:
+            status = "LIVE"
+    else:
+        game_time = getattr(game, "game_time", None)
+        if game_time:
+            try:
+                gt = game_time
+                if hasattr(gt, "tzinfo") and gt.tzinfo is None:
+                    gt = pytz.UTC.localize(gt)
+                game_time_local = gt.astimezone(tz)
+                tz_abbrev = game_time_local.strftime("%Z")
+                time_str = game_time_local.strftime("%-I:%M %p")
+                now = datetime.now(tz)
+                diff = game_time_local - now
+                total_seconds = int(diff.total_seconds())
+                if total_seconds > 0:
+                    hours, remainder = divmod(total_seconds, 3600)
+                    minutes = remainder // 60
+                    status = f"{time_str} {tz_abbrev} - in {hours}h{minutes:02d}m"
+                else:
+                    status = f"{time_str} {tz_abbrev}"
+            except Exception:
+                status = "TBD"
+        else:
+            status = "TBD"
+
+    return f"  {visitor_abbrev} {away_rec}    @     {home_abbrev} {home_rec}  {status}"
 
 
 def _format_cricket_game(game, tz):
@@ -1897,6 +1972,15 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
             output += "-" * 45 + "\n"
             for game in scored_games:
                 output += _format_cycling_game(game, tz)
+                output += "\n"
+            output += "-" * 45 + "\n"
+            continue
+
+        if sport == 'wc' and scored_games:
+            output += "WC [Group/Knockout]\n"
+            output += "-" * 45 + "\n"
+            for game in scored_games:
+                output += _format_world_cup_game(game, tz)
                 output += "\n"
             output += "-" * 45 + "\n"
             continue
@@ -2560,7 +2644,7 @@ def get_schedule_api_v1(
                     all_games.append(d)
                     by_sport.setdefault(sport_key, []).append(d)
             for sport_key, batch in by_sport.items():
-                _apply_dict_enrichers(sport_key, target_date, batch)
+                _apply_dict_enrichers(sport_key, batch, target_date)
             all_games.sort(key=lambda x: x.get('game_time') or '')
             return {"sport": "all", "date": target_date.isoformat(), "games": all_games}
 
@@ -2570,7 +2654,7 @@ def get_schedule_api_v1(
 
         games, cache_snapshot = _get_games_for_curl(league, target_date, timezone, include_metadata=True)
         games_out = [_game_wrapper_to_dict(g, league) for g in games]
-        _apply_dict_enrichers(sport_lower, target_date, games_out)
+        _apply_dict_enrichers(sport_lower, games_out, target_date)
         return {
             "sport": sport,
             "date": target_date.isoformat(),
@@ -2977,7 +3061,7 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
     return d
 
 
-def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> list:
+def _apply_dict_enrichers(sport: str, games_dicts: list, target_date: date) -> list:
     """Run all dict-based enrichers (playoff_series, tennis_scores,
     box_score) on a list of game dicts. Each enricher is a no-op for sports
     it doesn't handle, so this can be called for any sport."""
@@ -2992,8 +3076,73 @@ def _apply_dict_enrichers(sport: str, target_date: date, games_dicts: list) -> l
     _enrich_box(sport, target_date, games_dicts)
     _apply_tennis_contract(sport, games_dicts)
     _apply_box_score(sport, games_dicts)
+    _apply_world_cup_team_records(sport, games_dicts)
     _apply_world_cup_winner(sport, games_dicts)
     return games_dicts
+
+
+def _apply_world_cup_team_records(sport: str, games_dicts: list) -> None:
+    """Attach current World Cup group-stage records to any WC game dicts."""
+    if sport.lower() != "wc":
+        return
+
+    collector = get_collector("WC")
+    if not collector or not hasattr(collector, "get_team_records"):
+        return
+
+    try:
+        team_records = collector.get_team_records() or {}
+    except Exception as e:
+        logger.debug("World Cup team record lookup failed: %s", e)
+        return
+
+    if not team_records:
+        return
+
+    def _resolve(team_name: str) -> Optional[Dict[str, Any]]:
+        if not team_name:
+            return None
+        normalized = collector._normalize_team_name(team_name)
+        if normalized in team_records:
+            return team_records[normalized]
+        abbrev = normalized.strip().upper()
+        if abbrev in team_records:
+            return team_records[abbrev]
+        return None
+
+    for g in games_dicts:
+        if not isinstance(g, dict):
+            continue
+        home = _resolve(g.get("home_team") or g.get("home_team_abbrev") or "")
+        visitor = _resolve(g.get("visitor_team") or g.get("visitor_team_abbrev") or "")
+        if home:
+            g["home_wins"] = home.get("wins", 0)
+            g["home_draws"] = home.get("draws", 0)
+            g["home_losses"] = home.get("losses", 0)
+            g["home_record"] = home.get("record", "")
+            g["home_group"] = home.get("group", "")
+            g["home_group_rank"] = home.get("group_rank")
+            g["home_currently_advancing"] = home.get("currently_advancing")
+            g["home_advancement_path"] = home.get("advancement_path", "")
+            g["home_third_place_rank"] = home.get("third_place_rank")
+            g["home_points"] = home.get("points", 0)
+            g["home_goals_for"] = home.get("goals_for", 0)
+            g["home_goals_against"] = home.get("goals_against", 0)
+            g["home_goal_difference"] = home.get("goal_difference", 0)
+        if visitor:
+            g["visitor_wins"] = visitor.get("wins", 0)
+            g["visitor_draws"] = visitor.get("draws", 0)
+            g["visitor_losses"] = visitor.get("losses", 0)
+            g["visitor_record"] = visitor.get("record", "")
+            g["visitor_group"] = visitor.get("group", "")
+            g["visitor_group_rank"] = visitor.get("group_rank")
+            g["visitor_currently_advancing"] = visitor.get("currently_advancing")
+            g["visitor_advancement_path"] = visitor.get("advancement_path", "")
+            g["visitor_third_place_rank"] = visitor.get("third_place_rank")
+            g["visitor_points"] = visitor.get("points", 0)
+            g["visitor_goals_for"] = visitor.get("goals_for", 0)
+            g["visitor_goals_against"] = visitor.get("goals_against", 0)
+            g["visitor_goal_difference"] = visitor.get("goal_difference", 0)
 
 
 def _apply_world_cup_winner(sport: str, games_dicts: list) -> None:
@@ -3189,7 +3338,7 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         }
         for w in wrappers
     ]
-    _apply_dict_enrichers(sport, target_date, proxies)
+    _apply_dict_enrichers(sport, proxies, target_date)
     keys = (
         # playoff_series
         "is_playoff", "series_summary", "series_round",
@@ -3204,6 +3353,15 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         # tennis_scores
         "tennis_set_scores", "home_sets_won", "visitor_sets_won",
         "tennis_summary", "tennis_winner",
+        # world cup group-stage metadata
+        "home_wins", "home_draws", "home_losses",
+        "home_record", "home_group", "home_group_rank", "home_currently_advancing",
+        "home_advancement_path", "home_third_place_rank", "home_points",
+        "home_goals_for", "home_goals_against", "home_goal_difference",
+        "visitor_wins", "visitor_draws", "visitor_losses",
+        "visitor_record", "visitor_group", "visitor_group_rank", "visitor_currently_advancing",
+        "visitor_advancement_path", "visitor_third_place_rank", "visitor_points",
+        "visitor_goals_for", "visitor_goals_against", "visitor_goal_difference",
         # tennis_scores may also override these:
         "is_final", "game_status",
         # world cup / cycling extras
@@ -3598,7 +3756,7 @@ def get_scores_api_v1(
                     all_scores.append(d)
                     by_sport.setdefault(sport_key, []).append(d)
             for sport_key, batch in by_sport.items():
-                _apply_dict_enrichers(sport_key, target_date, batch)
+                _apply_dict_enrichers(sport_key, batch, target_date)
             return {"sport": "all", "date": target_date.isoformat(), "scores": all_scores}
 
         league = SPORT_MAPPINGS.get(sport_lower)
@@ -3607,7 +3765,7 @@ def get_scores_api_v1(
 
         games, cache_snapshot = _get_games_for_curl(league, target_date, timezone, include_metadata=True)
         scores = [_game_wrapper_to_dict(g, league) for g in games]
-        _apply_dict_enrichers(sport_lower, target_date, scores)
+        _apply_dict_enrichers(sport_lower, scores, target_date)
         return {
             "sport": sport,
             "date": target_date.isoformat(),

@@ -248,6 +248,55 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             rec["rank"] = rank
         return flat
 
+    def get_team_records(self) -> Dict[str, Dict[str, Any]]:
+        """Return a lookup table for team records keyed by normalized name and abbreviation.
+
+        This is used to decorate live schedule rows and the knockout lattice with
+        the current group-stage record for every team we know about.
+        """
+        records: Dict[str, Dict[str, Any]] = {}
+        for group in self.get_group_standings():
+            for rec in group.get("teams", []):
+                payload = {
+                    "team_name": rec.get("team_name", ""),
+                    "abbreviation": rec.get("abbreviation", ""),
+                    "group": rec.get("group", ""),
+                    "group_rank": rec.get("group_rank"),
+                    "rank": rec.get("rank"),
+                    "matches": rec.get("matches", 0),
+                    "wins": rec.get("wins", 0),
+                    "draws": rec.get("draws", 0),
+                    "losses": rec.get("losses", 0),
+                    "goals_for": rec.get("goals_for", 0),
+                    "goals_against": rec.get("goals_against", 0),
+                    "goal_difference": rec.get("goal_difference", 0),
+                    "points": rec.get("points", 0),
+                    "record": rec.get("record", ""),
+                    "currently_advancing": rec.get("currently_advancing", False),
+                    "advancement_path": rec.get("advancement_path", "not_advancing"),
+                    "third_place_rank": rec.get("third_place_rank"),
+                }
+                for key in {
+                    self._normalize_team_name(rec.get("team_name", "")),
+                    (rec.get("abbreviation") or "").strip().upper(),
+                }:
+                    if key:
+                        records[key] = payload
+        return records
+
+    def _lookup_team_record(self, team_name: str, records: Dict[str, Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Resolve a team name or abbreviation against the World Cup record map."""
+        normalized = self._normalize_team_name(team_name)
+        if not normalized:
+            return None
+        direct = records.get(normalized)
+        if direct:
+            return direct
+        abbrev = normalized.strip().upper()
+        if abbrev:
+            return records.get(abbrev)
+        return None
+
     def get_group_standings(self) -> List[Dict[str, Any]]:
         """Return group-stage standings split into World Cup groups."""
         season = self.current_season()
@@ -414,6 +463,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             logger.error("WC bracket: cannot fetch season: %s", e)
             events = []
 
+        team_records = self.get_team_records()
         by_match = {}
         round_of_32_events = []
         for raw in events:
@@ -441,6 +491,8 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         round_of_32 = []
         for match_number, home_slot, away_slot in self.ROUND_OF_32_SLOTS:
             actual = by_match.get(match_number)
+            home_record = self._lookup_team_record(actual.get("home_team"), team_records) if actual else None
+            away_record = self._lookup_team_record(actual.get("visitor_team"), team_records) if actual else None
             round_of_32.append({
                 "match_number": match_number,
                 "home_slot": home_slot,
@@ -452,6 +504,20 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 "game_time": actual.get("game_time") if actual else None,
                 "game_status": actual.get("game_status") if actual else "scheduled",
                 "winner": self._winner_from_game(actual) if actual else None,
+                "home_wins": home_record.get("wins") if home_record else None,
+                "home_draws": home_record.get("draws") if home_record else None,
+                "home_losses": home_record.get("losses") if home_record else None,
+                "home_record": home_record.get("record") if home_record else None,
+                "away_record": away_record.get("record") if away_record else None,
+                "away_wins": away_record.get("wins") if away_record else None,
+                "away_draws": away_record.get("draws") if away_record else None,
+                "away_losses": away_record.get("losses") if away_record else None,
+                "home_group": home_record.get("group") if home_record else None,
+                "away_group": away_record.get("group") if away_record else None,
+                "home_group_rank": home_record.get("group_rank") if home_record else None,
+                "away_group_rank": away_record.get("group_rank") if away_record else None,
+                "home_currently_advancing": home_record.get("currently_advancing") if home_record else None,
+                "away_currently_advancing": away_record.get("currently_advancing") if away_record else None,
             })
 
         return {
