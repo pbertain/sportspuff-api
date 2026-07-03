@@ -13,6 +13,7 @@ import csv
 import os
 from collections import defaultdict
 from datetime import date as date_cls, datetime, timezone
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import pytz
@@ -22,7 +23,7 @@ class CyclingFileCollector:
     SPORTSPUFF_CODE = "CYCLING"
 
     def __init__(self, data_dir: str):
-        self.data_dir = data_dir
+        self.data_dir = data_dir or str(Path(__file__).resolve().parents[2] / "templates")
         self.timezone = pytz.timezone("US/Pacific")
 
     def set_timezone(self, timezone) -> None:
@@ -146,6 +147,7 @@ class CyclingFileCollector:
                 "cycling_event_label": self._clean(raw.get("cycling_event_label")) or f"{race} {stage_name}".strip(),
                 "cycling_country": self._clean(raw.get("cycling_country")),
                 "cycling_url": self._clean(raw.get("cycling_url")),
+                "cycling_url_label": self._clean(raw.get("cycling_url_label")) or (stage_name or race or "Details"),
                 "cycling_video": self._clean(raw.get("cycling_video")),
                 "cycling_distance_km": self._clean(raw.get("distance_km")),
                 "cycling_winner": self._clean(raw.get("winner")),

@@ -6,6 +6,7 @@ with both JSON and cURL-style text output.
 """
 
 from datetime import datetime, date, timedelta
+from pathlib import Path as FSPath
 from typing import Optional, Dict, Any, List, Tuple
 from fastapi import FastAPI, Path, Query, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -429,10 +430,12 @@ def get_collector(league: str):
     if league == 'CYCLING':
         from .collectors.cycling_thesportsdb import CyclingTheSportsDBCollector
         cycling = CyclingTheSportsDBCollector()
-        if settings.cycling_data_dir:
-            from .collectors.cycling_file import CyclingDecoratedCollector, CyclingFileCollector
-            overlay = CyclingFileCollector(settings.cycling_data_dir)
-            cycling = CyclingDecoratedCollector(cycling, overlay)
+        from .collectors.cycling_file import CyclingDecoratedCollector, CyclingFileCollector
+        cycling_data_dir = (settings.cycling_data_dir or "").strip()
+        if not cycling_data_dir:
+            cycling_data_dir = str(FSPath(__file__).resolve().parents[1] / "templates")
+        overlay = CyclingFileCollector(cycling_data_dir)
+        cycling = CyclingDecoratedCollector(cycling, overlay)
 
     collectors = {
         'NBA': nba,
@@ -1688,8 +1691,8 @@ def _format_tennis_match(game, tz) -> str:
     line. ESPN-sourced set scores show when present; otherwise the rows
     just carry the names. Tournament context is rendered as a sub-banner
     one level up."""
-    home = (getattr(game, 'home_team', '') or '').strip() or '?'
-    visitor = (getattr(game, 'visitor_team', '') or '').strip() or '?'
+    home = (getattr(game, 'home_full_name', '') or getattr(game, 'home_team', '') or '').strip() or '?'
+    visitor = (getattr(game, 'visitor_full_name', '') or getattr(game, 'visitor_team', '') or '').strip() or '?'
     name_w = 14
 
     set_scores = getattr(game, 'tennis_set_scores', None) or []
@@ -1741,6 +1744,7 @@ def _format_cycling_game(game, tz) -> str:
     race_type = (getattr(game, 'race_type', '') or '').strip()
     distance = getattr(game, 'cycling_distance_km', '') or ''
     url = (getattr(game, 'cycling_url', '') or '').strip()
+    url_label = (getattr(game, 'cycling_url_label', '') or '').strip()
 
     status = (getattr(game, 'game_status', '') or 'scheduled').strip().upper()
     if getattr(game, 'is_final', False):
@@ -1762,7 +1766,10 @@ def _format_cycling_game(game, tz) -> str:
         parts.append(f"{distance} km")
     parts.append(status)
     if url:
-        parts.append(f"link: {url}")
+        if url_label:
+            parts.append(f"link: {url_label} -> {url}")
+        else:
+            parts.append(f"link: {url}")
 
     return " | ".join(parts)
 
@@ -3026,6 +3033,7 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         d["cycling_event_label"] = getattr(g, 'cycling_event_label', '') or ''
         d["cycling_country"] = getattr(g, 'cycling_country', '') or ''
         d["cycling_url"] = getattr(g, 'cycling_url', '') or ''
+        d["cycling_url_label"] = getattr(g, 'cycling_url_label', '') or ''
         d["cycling_video"] = getattr(g, 'cycling_video', '') or ''
         d["cycling_winner"] = getattr(g, 'cycling_winner', '') or ''
         d["cycling_rank"] = getattr(g, 'cycling_rank', None)
@@ -3056,6 +3064,10 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         d["tennis_round"] = getattr(g, 'tennis_round', '') or ''
         d["tennis_country"] = getattr(g, 'tennis_country', '') or ''
         d["tennis_video"] = getattr(g, 'tennis_video', '') or ''
+        d["home_full_name"] = getattr(g, 'home_full_name', '') or ''
+        d["visitor_full_name"] = getattr(g, 'visitor_full_name', '') or ''
+        d["home_seed"] = getattr(g, 'home_seed', None)
+        d["visitor_seed"] = getattr(g, 'visitor_seed', None)
         # ESPN-sourced enrichment. None if match wasn't matched against ESPN.
         d["tennis_set_scores"] = getattr(g, 'tennis_set_scores', None)
         d["home_sets_won"] = getattr(g, 'home_sets_won', None)
@@ -3330,6 +3342,10 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         {
             "home_team": getattr(w, "home_team", "") or "",
             "visitor_team": getattr(w, "visitor_team", "") or "",
+            "home_full_name": getattr(w, "home_full_name", "") or "",
+            "visitor_full_name": getattr(w, "visitor_full_name", "") or "",
+            "home_seed": getattr(w, "home_seed", None),
+            "visitor_seed": getattr(w, "visitor_seed", None),
             "home_score_total": getattr(w, "home_score_total", 0) or 0,
             "visitor_score_total": getattr(w, "visitor_score_total", 0) or 0,
             "home_period_scores": getattr(w, "home_period_scores", None) or {},
@@ -3339,6 +3355,9 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
             "is_final": getattr(w, "is_final", False),
             "wc_winner": getattr(w, "wc_winner", "") or "",
             "cycling_url": getattr(w, "cycling_url", "") or "",
+            "cycling_url_label": getattr(w, "cycling_url_label", "") or "",
+            "venue_name": getattr(w, "venue_name", "") or "",
+            "court_name": getattr(w, "court_name", "") or "",
         }
         for w in wrappers
     ]
@@ -3356,7 +3375,8 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         "cricket_winner", "cricket_result", "cricket_away_outcome",
         # tennis_scores
         "tennis_set_scores", "home_sets_won", "visitor_sets_won",
-        "tennis_summary", "tennis_winner",
+        "tennis_summary", "tennis_winner", "home_full_name", "visitor_full_name",
+        "home_seed", "visitor_seed", "venue_name", "court_name",
         # world cup group-stage metadata
         "home_wins", "home_draws", "home_losses",
         "home_record", "home_group", "home_group_rank", "home_currently_advancing",
@@ -3371,6 +3391,7 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         # world cup / cycling extras
         "wc_winner",
         "cycling_url",
+        "cycling_url_label",
     )
     for w, p in zip(wrappers, proxies):
         for k in keys:

@@ -246,6 +246,24 @@ class TennisTheSportsDBCollector(TheSportsDBCollector):
             logger.error("Tennis parse error: %s", e)
             return None
 
+    def _espn_fallback_rows(self, target_date) -> List[Dict[str, Any]]:
+        from ..services.tennis_scores import build_schedule_games
+        return build_schedule_games(self.SPORTSPUFF_CODE, target_date)
+
+    def get_schedule(self, target_date=None) -> List[Dict[str, Any]]:
+        rows = super().get_schedule(target_date)
+        if rows:
+            return rows
+        target = target_date or datetime.now(timezone.utc).astimezone(self.timezone).date()
+        return self._espn_fallback_rows(target)
+
+    def get_live_scores(self, target_date=None) -> List[Dict[str, Any]]:
+        rows = super().get_live_scores(target_date)
+        if rows:
+            return rows
+        target = target_date or datetime.now(timezone.utc).astimezone(self.timezone).date()
+        return self._espn_fallback_rows(target)
+
     # No standings table for tennis. Returns [] with a hint via the status row.
     def get_standings(self) -> List[Dict[str, Any]]:
         return []

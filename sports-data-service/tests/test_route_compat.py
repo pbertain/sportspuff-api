@@ -1,6 +1,10 @@
 from starlette.requests import Request
+from types import SimpleNamespace
+from datetime import date
 
 from src import api
+from src.collectors.tennis_thesportsdb import TennisTheSportsDBCollector
+from src.services import tennis_scores
 
 
 def _request(path: str) -> Request:
@@ -126,6 +130,84 @@ def test_curl_schedule_all_enriches_world_cup_wrappers(monkeypatch):
     assert captured["show_all_sports"] is True
     assert captured["games"][0].home_record == "2-1-0"
     assert captured["games"][0].visitor_record == "1-0-2"
+
+
+def test_cycling_uses_bundled_template_overlay_by_default(monkeypatch):
+    class FakeCyclingBaseCollector:
+        def set_timezone(self, timezone):
+            self.timezone = timezone
+
+        def get_schedule(self, target_date):
+            return []
+
+        def get_live_scores(self, target_date):
+            return []
+
+    monkeypatch.setattr("src.collectors.cycling_thesportsdb.CyclingTheSportsDBCollector", FakeCyclingBaseCollector)
+    monkeypatch.setattr(api.settings, "cycling_data_dir", "")
+
+    collector = api.get_collector("CYCLING")
+    rows = collector.get_schedule(date(2026, 7, 4))
+
+    assert rows
+    assert rows[0]["cycling_race"] == "Tour de France"
+    assert rows[0]["cycling_stage_label"] == "Stage 1"
+    assert rows[0]["cycling_url"] == "https://www.letour.fr/en/stage-1"
+
+
+def test_tennis_schedule_falls_back_to_espn_rows(monkeypatch):
+    monkeypatch.setattr(TennisTheSportsDBCollector, "_season_events", lambda self, season: [])
+    monkeypatch.setattr(
+        tennis_scores,
+        "build_schedule_games",
+        lambda sport, target_date: [
+            {
+                "league": sport.upper(),
+                "game_id": f"{sport}-espn-1",
+                "game_date": target_date.isoformat(),
+                "game_time": None,
+                "game_type": "match",
+                "home_team": "Carlos Alcaraz",
+                "visitor_team": "Novak Djokovic",
+                "game_status": "scheduled",
+                "is_final": False,
+                "home_score_total": 0,
+                "visitor_score_total": 0,
+                "home_full_name": "Carlos Alcaraz",
+                "visitor_full_name": "Novak Djokovic",
+                "tennis_tournament": "Wimbledon",
+            }
+        ],
+    )
+
+    collector = TennisTheSportsDBCollector("ATP")
+    rows = collector.get_schedule(date(2026, 7, 3))
+
+    assert rows
+    assert rows[0]["tennis_tournament"] == "Wimbledon"
+    assert rows[0]["home_full_name"] == "Carlos Alcaraz"
+    assert rows[0]["visitor_full_name"] == "Novak Djokovic"
+
+
+def test_cycling_pretty_link_formatting():
+    game = SimpleNamespace(
+        cycling_race="Tour de France",
+        cycling_stage_label="Stage 1",
+        cycling_event_label="Tour de France Stage 1",
+        game_date="2026-07-04",
+        start_city="Barcelone",
+        finish_city="Barcelone",
+        race_type="Team Time-Trial",
+        cycling_distance_km="19.6",
+        game_status="scheduled",
+        is_final=False,
+        cycling_url="https://www.letour.fr/en/stage-1",
+        cycling_url_label="Stage 1 details",
+    )
+
+    text = api._format_cycling_game(game, api.pytz.timezone("US/Pacific"))
+
+    assert "Stage 1 details -> https://www.letour.fr/en/stage-1" in text
 
 
 def test_world_cup_bracket_endpoint_returns_structured_lattice(monkeypatch):

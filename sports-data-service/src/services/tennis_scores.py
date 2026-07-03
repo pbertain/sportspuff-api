@@ -19,7 +19,7 @@ from __future__ import annotations
 import logging
 import re
 import time
-from datetime import date as _date
+from datetime import date as _date, datetime, timezone
 from threading import Lock
 from typing import Any, Dict, List, Optional
 
@@ -110,6 +110,7 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
 
     return {
         "competition_date": (comp.get("date") or "")[:10],
+        "competition_time": comp.get("date") or "",
         "tournament": tournament,
         "side1_name": sides[0]["name"],
         "side2_name": sides[1]["name"],
@@ -175,6 +176,91 @@ def _fetch_matches(sport: str, target_date: _date) -> Optional[List[Dict[str, An
     with _cache_lock:
         _cache[cache_key] = {"data": matches, "ts": now_ts}
     return matches
+
+
+def _parse_iso_datetime(value: str) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except Exception:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def build_schedule_games(sport: str, target_date: _date) -> List[Dict[str, Any]]:
+    """Build fallback ATP/WTA schedule rows from ESPN when TheSportsDB is empty."""
+    matches = _fetch_matches(sport, target_date)
+    if not matches:
+        return []
+
+    games: List[Dict[str, Any]] = []
+    for idx, m in enumerate(matches, start=1):
+        home_name = (m.get("side2_name") or "").strip()
+        visitor_name = (m.get("side1_name") or "").strip()
+        if not home_name or not visitor_name:
+            continue
+
+        dt = _parse_iso_datetime(m.get("competition_time") or "")
+        game_date = m.get("competition_date") or target_date.isoformat()
+        state = m.get("state") or ""
+        game_status = "scheduled"
+        if state == "in":
+            game_status = "in_progress"
+        elif m.get("is_final"):
+            game_status = "final"
+
+        game_id = f"{sport.lower()}-espn-{game_date}-{idx}"
+        games.append({
+            "league": sport.upper(),
+            "game_id": game_id,
+            "game_date": game_date,
+            "game_time": dt,
+            "game_type": "match",
+            "home_team": home_name,
+            "home_team_abbrev": "",
+            "home_team_id": "",
+            "home_wins": 0,
+            "home_losses": 0,
+            "home_score_total": 0,
+            "visitor_team": visitor_name,
+            "visitor_team_abbrev": "",
+            "visitor_team_id": "",
+            "visitor_wins": 0,
+            "visitor_losses": 0,
+            "visitor_score_total": 0,
+            "game_status": game_status,
+            "current_period": "",
+            "time_remaining": "",
+            "is_final": bool(m.get("is_final")),
+            "is_overtime": False,
+            "home_period_scores": {},
+            "visitor_period_scores": {},
+            "venue": "",
+            "tennis_tournament": m.get("tournament") or "",
+            "tennis_match_label": f"{m.get('tournament') or ''} {home_name} vs {visitor_name}".strip(),
+            "tennis_round": "",
+            "tennis_country": "",
+            "tennis_video": "",
+            "league_badge": "",
+            "home_full_name": home_name,
+            "visitor_full_name": visitor_name,
+            "home_seed": m.get("side2_seed"),
+            "visitor_seed": m.get("side1_seed"),
+            "tennis_set_scores": [
+                {"set": s["set"], "home": s["side2"], "visitor": s["side1"]}
+                for s in (m.get("set_scores") or [])
+            ],
+            "home_sets_won": m.get("side2_sets_won"),
+            "visitor_sets_won": m.get("side1_sets_won"),
+            "tennis_summary": m.get("summary"),
+            "tennis_winner": "home" if m.get("side2_winner") else ("visitor" if m.get("side1_winner") else None),
+            "venue_name": m.get("venue_name") or "",
+            "court_name": m.get("court_name") or "",
+        })
+    return games
 
 
 def _find_match(matches: List[Dict[str, Any]], home: str, visitor: str) -> Optional[Dict[str, Any]]:
