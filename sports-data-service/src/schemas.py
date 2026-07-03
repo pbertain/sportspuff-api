@@ -168,9 +168,13 @@ class GameOut(BaseModel):
     cycling_stage_number: Optional[int] = None
     cycling_event_label: Optional[str] = None
     cycling_country: Optional[str] = None
+    cycling_url: Optional[str] = None
     cycling_video: Optional[str] = None
     cycling_winner: Optional[str] = Field(default=None, description="Stage winner or race winner when available.")
     cycling_rank: Optional[int] = Field(default=None, description="General-classification or ranking position when available.")
+    race_type: Optional[str] = None
+    start_city: Optional[str] = None
+    finish_city: Optional[str] = None
 
     # ---- World Cup ----
     wc_round: Optional[Union[int, str]] = None

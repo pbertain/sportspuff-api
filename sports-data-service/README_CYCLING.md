@@ -1,6 +1,6 @@
 # Cycling CSV Ingest
 
-This directory documents the file-backed cycling source used by `cycling_provider=file`.
+This directory documents the file-backed cycling overlay used when `CYCLING_DATA_DIR` is configured.
 
 ## Overview
 
@@ -12,6 +12,7 @@ The API reads a directory of CSV files and converts them into the existing cycli
 - jersey standings
 
 The goal is to keep the source files easy for a human to edit while still producing the richer JSON needed by the API and frontend.
+When `CYCLING_DATA_DIR` is configured, the file rows are used as an overlay on top of the live cycling feed so they can supply dates, URLs, stage labels, and local notes without replacing the upstream feed.
 
 ## Configuration
 
@@ -41,5 +42,5 @@ Sample templates live in `templates/`:
 ## Notes
 
 - Leave rows blank for classifications you do not want to publish yet.
-- If `cycling_provider=file` is set but the directory is missing or empty, the API falls back to the TheSportsDB cycling collector.
+- If `CYCLING_DATA_DIR` is missing or empty, the API uses the TheSportsDB cycling collector alone.
 - The CSV import is intentionally narrow: it is designed for Tour de France season data first, then can be extended to other stage races if needed.

@@ -12,7 +12,7 @@ from __future__ import annotations
 import csv
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date as date_cls, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pytz
@@ -36,7 +36,9 @@ class CyclingFileCollector:
         path = self._path(name)
         if not os.path.exists(path):
             return []
-        with open(path, newline="", encoding="utf-8") as f:
+        # UTF-8-SIG strips a BOM from the first header row if the file was
+        # edited in spreadsheet software.
+        with open(path, newline="", encoding="utf-8-sig") as f:
             return [dict(row) for row in csv.DictReader(f)]
 
     @staticmethod
@@ -59,24 +61,62 @@ class CyclingFileCollector:
         except Exception:
             return default
 
-    def _stage_rows(self) -> List[Dict[str, Any]]:
+    @staticmethod
+    def _parse_date(value: Any) -> Optional[date_cls]:
+        text = "" if value is None else str(value).strip()
+        if not text:
+            return None
+        for fmt in ("%Y-%m-%d", "%Y%m%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y"):
+            try:
+                return datetime.strptime(text, fmt).date()
+            except ValueError:
+                continue
+        return None
+
+    def _date_text(self, value: Any) -> str:
+        parsed = self._parse_date(value)
+        if parsed:
+            return parsed.isoformat()
+        text = self._clean(value)
+        return text
+
+    @staticmethod
+    def _rest_day_label(stage_number: str, stage_name: str) -> str:
+        if stage_name:
+            return stage_name
+        if stage_number:
+            return f"Rest {stage_number}"
+        return "Rest Day"
+
+    def _stage_rows(self, target_date: Optional[date_cls] = None) -> List[Dict[str, Any]]:
         rows = []
         for raw in self._read_csv("cycling_stages.csv"):
             race = self._clean(raw.get("race"))
-            date_s = self._clean(raw.get("date"))
-            if not race or not date_s:
+            stage_date = self._parse_date(raw.get("date"))
+            if not race or not stage_date:
                 continue
-            stage_number = self._int(raw.get("stage_number"), 0)
-            stage_name = self._clean(raw.get("stage_name")) or (f"Stage {stage_number}" if stage_number else "Race Day")
+            if target_date and stage_date != target_date:
+                continue
+
+            stage_number_raw = self._clean(raw.get("stage_number"))
+            stage_number = self._int(stage_number_raw, 0)
+            stage_name = self._clean(raw.get("stage_name"))
+            race_type = self._clean(raw.get("race_type"))
+            if race_type.lower() == "rest day" or stage_number_raw.upper().startswith("R"):
+                stage_name = self._rest_day_label(stage_number_raw.lstrip("Rr"), stage_name)
+                game_type = "rest_day"
+            else:
+                stage_name = stage_name or (f"Stage {stage_number}" if stage_number else "Race Day")
+                game_type = "stage" if stage_number or stage_name.lower().startswith("stage") else "one_day"
             status = self._clean(raw.get("status")) or "scheduled"
             home_team = self._clean(raw.get("home_team")) or race
             visitor_team = self._clean(raw.get("visitor_team")) or stage_name
             rows.append({
                 "league": "CYCLING",
-                "game_id": self._clean(raw.get("game_id")) or f"{race}-{stage_number or date_s}",
-                "game_date": date_s,
+                "game_id": self._clean(raw.get("game_id")) or f"{race}-{stage_number_raw or stage_date.isoformat()}",
+                "game_date": stage_date.isoformat(),
                 "game_time": None,
-                "game_type": self._clean(raw.get("game_type")) or ("stage" if stage_number else "one_day"),
+                "game_type": self._clean(raw.get("game_type")) or game_type,
                 "home_team": home_team,
                 "home_team_abbrev": self._clean(raw.get("home_team_abbrev")),
                 "home_team_id": self._clean(raw.get("home_team_id")),
@@ -105,18 +145,22 @@ class CyclingFileCollector:
                 "cycling_stage_number": stage_number or None,
                 "cycling_event_label": self._clean(raw.get("cycling_event_label")) or f"{race} {stage_name}".strip(),
                 "cycling_country": self._clean(raw.get("cycling_country")),
+                "cycling_url": self._clean(raw.get("cycling_url")),
                 "cycling_video": self._clean(raw.get("cycling_video")),
                 "cycling_distance_km": self._clean(raw.get("distance_km")),
                 "cycling_winner": self._clean(raw.get("winner")),
                 "cycling_rank": self._safe_int(raw.get("rank")),
+                "race_type": race_type,
+                "start_city": self._clean(raw.get("start_city")),
+                "finish_city": self._clean(raw.get("finish_city")),
             })
         return rows
 
     def get_live_scores(self, target_date):
-        return self._stage_rows()
+        return self._stage_rows(target_date)
 
     def get_schedule(self, target_date):
-        return self._stage_rows()
+        return self._stage_rows(target_date)
 
     def get_standings(self) -> List[Dict[str, Any]]:
         gc_rows = self._read_csv("cycling_gc.csv")
@@ -206,3 +250,81 @@ class CyclingFileCollector:
             "current_phase": current,
             "season_types": season_types,
         }
+
+
+class CyclingDecoratedCollector:
+    """Overlay file-backed cycling rows onto a base collector.
+
+    The base collector stays authoritative for upstream data; the file
+    collector is used to fill in missing stage metadata, URLs, rest days,
+    and local race notes.
+    """
+
+    SPORTSPUFF_CODE = "CYCLING"
+
+    def __init__(self, base_collector, overlay_collector: CyclingFileCollector):
+        self.base_collector = base_collector
+        self.overlay_collector = overlay_collector
+
+    def set_timezone(self, timezone) -> None:
+        if self.base_collector and hasattr(self.base_collector, "set_timezone"):
+            self.base_collector.set_timezone(timezone)
+        if self.overlay_collector and hasattr(self.overlay_collector, "set_timezone"):
+            self.overlay_collector.set_timezone(timezone)
+
+    @staticmethod
+    def _row_key(row: Dict[str, Any]) -> tuple:
+        return (
+            str(row.get("game_date") or ""),
+            str(row.get("cycling_race") or row.get("home_team") or "").strip().lower(),
+            str(row.get("cycling_stage_label") or row.get("visitor_team") or "").strip().lower(),
+            str(row.get("cycling_event_label") or "").strip().lower(),
+        )
+
+    @staticmethod
+    def _merge_rows(base_rows: List[Dict[str, Any]], overlay_rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        overlay_map: Dict[tuple, List[Dict[str, Any]]] = defaultdict(list)
+        for row in overlay_rows:
+            overlay_map[CyclingDecoratedCollector._row_key(row)].append(row)
+
+        merged: List[Dict[str, Any]] = []
+        for row in base_rows:
+            key = CyclingDecoratedCollector._row_key(row)
+            if overlay_map.get(key):
+                overlay = overlay_map[key].pop(0)
+                combined = dict(row)
+                for k, v in overlay.items():
+                    if v not in (None, "", []):
+                        combined[k] = v
+                merged.append(combined)
+            else:
+                merged.append(row)
+
+        for rows in overlay_map.values():
+            for row in rows:
+                merged.append(row)
+
+        merged.sort(key=lambda r: (r.get("game_date") or "", r.get("cycling_stage_number") or 999999, r.get("cycling_stage_label") or "", r.get("cycling_event_label") or ""))
+        return merged
+
+    def get_live_scores(self, target_date):
+        base_rows = self.base_collector.get_live_scores(target_date) if self.base_collector else []
+        overlay_rows = self.overlay_collector.get_live_scores(target_date) if self.overlay_collector else []
+        return self._merge_rows(base_rows or [], overlay_rows or [])
+
+    def get_schedule(self, target_date):
+        base_rows = self.base_collector.get_schedule(target_date) if self.base_collector else []
+        overlay_rows = self.overlay_collector.get_schedule(target_date) if self.overlay_collector else []
+        return self._merge_rows(base_rows or [], overlay_rows or [])
+
+    def get_standings(self) -> List[Dict[str, Any]]:
+        overlay_rows = self.overlay_collector.get_standings() if self.overlay_collector else []
+        if overlay_rows:
+            return overlay_rows
+        return self.base_collector.get_standings() if self.base_collector else []
+
+    def get_season_info(self):
+        overlay_info = self.overlay_collector.get_season_info() if self.overlay_collector else None
+        if overlay_info:
+            return overlay_info
+        return self.base_collector.get_season_info() if self.base_collector else None

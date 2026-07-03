@@ -426,12 +426,13 @@ def get_collector(league: str):
         wta = TennisTheSportsDBCollector('WTA')
 
     cycling = None
-    if league == 'CYCLING' and settings.cycling_provider == 'file' and settings.cycling_data_dir:
-        from .collectors.cycling_file import CyclingFileCollector
-        cycling = CyclingFileCollector(settings.cycling_data_dir)
-    elif league == 'CYCLING':
+    if league == 'CYCLING':
         from .collectors.cycling_thesportsdb import CyclingTheSportsDBCollector
         cycling = CyclingTheSportsDBCollector()
+        if settings.cycling_data_dir:
+            from .collectors.cycling_file import CyclingDecoratedCollector, CyclingFileCollector
+            overlay = CyclingFileCollector(settings.cycling_data_dir)
+            cycling = CyclingDecoratedCollector(cycling, overlay)
 
     collectors = {
         'NBA': nba,
@@ -1396,6 +1397,8 @@ def format_game_for_curl(game: Game, sport: str, tz: pytz.BaseTzInfo = None) -> 
 
     if sport.lower() in ('ipl', 'mlc'):
         return _format_cricket_game(game, tz)
+    if sport.lower() == 'cycling':
+        return _format_cycling_game(game, tz)
 
     visitor_wins = game.visitor_wins or 0
     visitor_losses = game.visitor_losses or 0
@@ -1648,6 +1651,47 @@ def _format_tennis_match(game, tz) -> str:
     return f"{line1}\n{line2}"
 
 
+def _format_cycling_game(game, tz) -> str:
+    """Format a cycling stage/rest day for curl-style output."""
+    race = (getattr(game, 'cycling_race', '') or getattr(game, 'home_team', '') or 'Cycling').strip()
+    stage = (getattr(game, 'cycling_stage_label', '') or getattr(game, 'visitor_team', '') or '').strip()
+    event_label = (getattr(game, 'cycling_event_label', '') or f"{race} {stage}".strip()).strip()
+    game_date = getattr(game, 'game_date', None)
+    if hasattr(game_date, "isoformat"):
+        date_text = game_date.isoformat()
+    else:
+        date_text = str(game_date or '').strip()
+    start_city = (getattr(game, 'start_city', '') or '').strip()
+    finish_city = (getattr(game, 'finish_city', '') or '').strip()
+    race_type = (getattr(game, 'race_type', '') or '').strip()
+    distance = getattr(game, 'cycling_distance_km', '') or ''
+    url = (getattr(game, 'cycling_url', '') or '').strip()
+
+    status = (getattr(game, 'game_status', '') or 'scheduled').strip().upper()
+    if getattr(game, 'is_final', False):
+        status = 'FINAL'
+    elif status == 'IN_PROGRESS':
+        status = 'LIVE'
+
+    parts = [date_text or "TBD", stage or event_label]
+    if start_city or finish_city:
+        if start_city and finish_city and start_city != finish_city:
+            parts.append(f"{start_city} -> {finish_city}")
+        elif start_city:
+            parts.append(start_city)
+        elif finish_city:
+            parts.append(finish_city)
+    if race_type:
+        parts.append(race_type)
+    if distance:
+        parts.append(f"{distance} km")
+    parts.append(status)
+    if url:
+        parts.append(f"link: {url}")
+
+    return " | ".join(parts)
+
+
 def _get_season_type_for_sport(sport: str, target_date: date) -> str:
     """Get season type for a sport from database when there are no games for the date."""
     sport_to_league = {
@@ -1766,7 +1810,9 @@ def format_schedule_curl(games: List[Game], target_date: date, tz: pytz.BaseTzIn
 
         if sport_games:
             first_game = sport_games[0]
-            if getattr(first_game, 'is_playoff', False):
+            if sport == 'cycling':
+                season_type = getattr(first_game, 'cycling_race', '') or getattr(first_game, 'game_type', 'Cycling').title()
+            elif getattr(first_game, 'is_playoff', False):
                 season_type = 'Post Season (Playoffs)'
             else:
                 season_type = game_type_map.get(first_game.game_type.lower(), first_game.game_type.title().replace('_', ' '))
@@ -1845,6 +1891,16 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
                 seen_game_ids.add(game_id or 'no_id')
                 scored_games.append(g)
 
+        if sport == 'cycling' and scored_games:
+            race_name = scored_games[0].cycling_race or scored_games[0].league
+            output += f"{race_name} [Stage Schedule]\n"
+            output += "-" * 45 + "\n"
+            for game in scored_games:
+                output += _format_cycling_game(game, tz)
+                output += "\n"
+            output += "-" * 45 + "\n"
+            continue
+
         if sport in ('atp', 'wta') and scored_games:
             league_name = scored_games[0].league
             by_t: Dict[str, List[Game]] = {}
@@ -1880,7 +1936,11 @@ def format_scores_curl(games: List[Game], target_date: date, tz: pytz.BaseTzInfo
         output += "-" * 45 + "\n"
 
         if scored_games:
-            if sport in ('ipl', 'mlc'):
+            if sport == 'cycling':
+                for game in scored_games:
+                    output += _format_cycling_game(game, tz)
+                    output += "\n"
+            elif sport in ('ipl', 'mlc'):
                 for game in scored_games:
                     output += _format_cricket_game(game, tz)
                     output += "\n"
@@ -2877,9 +2937,13 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         d["cycling_stage_number"] = getattr(g, 'cycling_stage_number', None)
         d["cycling_event_label"] = getattr(g, 'cycling_event_label', '') or ''
         d["cycling_country"] = getattr(g, 'cycling_country', '') or ''
+        d["cycling_url"] = getattr(g, 'cycling_url', '') or ''
         d["cycling_video"] = getattr(g, 'cycling_video', '') or ''
         d["cycling_winner"] = getattr(g, 'cycling_winner', '') or ''
         d["cycling_rank"] = getattr(g, 'cycling_rank', None)
+        d["race_type"] = getattr(g, 'race_type', '') or ''
+        d["start_city"] = getattr(g, 'start_city', '') or ''
+        d["finish_city"] = getattr(g, 'finish_city', '') or ''
     if league == 'WC':
         d["wc_round"] = getattr(g, 'wc_round', '')
         d["wc_round_label"] = getattr(g, 'wc_round_label', '')
@@ -3121,6 +3185,7 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
             "visitor_shootout_score": getattr(w, "visitor_shootout_score", None),
             "is_final": getattr(w, "is_final", False),
             "wc_winner": getattr(w, "wc_winner", "") or "",
+            "cycling_url": getattr(w, "cycling_url", "") or "",
         }
         for w in wrappers
     ]
@@ -3143,6 +3208,7 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         "is_final", "game_status",
         # world cup / cycling extras
         "wc_winner",
+        "cycling_url",
     )
     for w, p in zip(wrappers, proxies):
         for k in keys:
@@ -3386,9 +3452,13 @@ def _get_games_for_curl(
                         'cycling_stage_number': game_dict.get('cycling_stage_number', None),
                         'cycling_event_label': game_dict.get('cycling_event_label', ''),
                         'cycling_country': game_dict.get('cycling_country', ''),
+                        'cycling_url': game_dict.get('cycling_url', ''),
                         'cycling_video': game_dict.get('cycling_video', ''),
                         'cycling_winner': game_dict.get('cycling_winner', ''),
                         'cycling_rank': game_dict.get('cycling_rank', None),
+                        'race_type': game_dict.get('race_type', ''),
+                        'start_city': game_dict.get('start_city', ''),
+                        'finish_city': game_dict.get('finish_city', ''),
                         'wc_round': game_dict.get('wc_round', ''),
                         'wc_round_label': game_dict.get('wc_round_label', ''),
                         'wc_winner': game_dict.get('wc_winner', ''),
