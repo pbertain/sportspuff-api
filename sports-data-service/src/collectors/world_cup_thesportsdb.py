@@ -219,7 +219,15 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         event_name = (raw.get("strEvent") or raw.get("strFilename") or "").lower()
         if "third" in event_name or "3rd" in event_name:
             return "third_place"
-        if "final" in event_name and "semi" not in event_name and "quarter" not in event_name:
+        if "round of 32" in event_name:
+            return "round_of_32"
+        if "round of 16" in event_name:
+            return "round_of_16"
+        if "quarter" in event_name:
+            return "quarterfinal"
+        if "semi" in event_name:
+            return "semifinal"
+        if "final" in event_name and "semi" not in event_name and "quarter" not in event_name and "round of 16" not in event_name and "round of 32" not in event_name:
             return "final"
         try:
             r = int(raw.get("intRound") or 0)
@@ -227,15 +235,15 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             return "group_stage"
         if r in (1, 2, 3):
             return f"group_matchday_{r}"
-        if r in (4,):
+        if r in (32,):
             return "round_of_32"
-        if r in (5,):
+        if r in (16,):
             return "round_of_16"
-        if r in (6,):
+        if r in (8,):
             return "quarterfinal"
-        if r in (7,):
+        if r in (4,):
             return "semifinal"
-        if r in (8, 9):
+        if r in (2, 1):
             return "final"
         return "knockout"
 
@@ -516,6 +524,11 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 except Exception:
                     home_so = None
                     away_so = None
+            winner = actual.get("wc_winner") if actual else None
+            if not winner and home_so is not None and away_so is not None and home_so != away_so and actual:
+                winner = actual.get("home_team") if int(home_so or 0) > int(away_so or 0) else actual.get("visitor_team")
+            if not winner and actual:
+                winner = self._winner_from_game(actual)
             round_of_32.append({
                 "match_number": match_number,
                 "home_slot": home_slot,
@@ -526,11 +539,15 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 "game_date": actual.get("game_date") if actual else None,
                 "game_time": actual.get("game_time") if actual else None,
                 "game_status": actual.get("game_status") if actual else "scheduled",
+                "home_score": home_score,
+                "visitor_score": away_score,
+                "away_score": away_score,
                 "home_score_total": home_score,
                 "visitor_score_total": away_score,
                 "home_shootout_score": home_so,
                 "visitor_shootout_score": away_so,
-                "winner": self._winner_from_game(actual) if actual else None,
+                "winner": winner,
+                "wc_winner": winner,
                 "home_wins": home_record.get("wins") if home_record else None,
                 "home_draws": home_record.get("draws") if home_record else None,
                 "home_losses": home_record.get("losses") if home_record else None,

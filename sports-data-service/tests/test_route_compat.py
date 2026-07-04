@@ -353,6 +353,55 @@ def test_world_cup_bracket_endpoint_returns_structured_lattice(monkeypatch):
     assert payload["knockout_bracket"]["rounds"][0]["name"] == "Round of 32"
 
 
+def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    raw_event = {
+        "idEvent": "123",
+        "intMatch": "73",
+        "intRound": "32",
+        "dateEvent": "2026-07-04",
+        "strTime": "11:00:00",
+        "strStatus": "FT",
+        "strHomeTeam": "Egypt",
+        "strAwayTeam": "Australia",
+        "intHomeScore": "1",
+        "intAwayScore": "1",
+    }
+
+    def fake_season_events(_season):
+        return [raw_event]
+
+    def fake_enrich_games(_sport, _date, games):
+        games[0]["home_shootout_score"] = 2
+        games[0]["visitor_shootout_score"] = 4
+        return games
+
+    monkeypatch.setattr(collector, "_season_events", fake_season_events)
+    monkeypatch.setattr(collector, "get_team_records", lambda: {
+        "EGYPT": {"wins": 3, "draws": 0, "losses": 0, "record": "3-0-0", "group": "G", "group_rank": 1, "currently_advancing": True},
+        "AUSTRALIA": {"wins": 1, "draws": 1, "losses": 1, "record": "1-1-1", "group": "D", "group_rank": 2, "currently_advancing": True},
+    })
+    monkeypatch.setattr("src.services.box_score.enrich_games", fake_enrich_games)
+
+    bracket = collector.get_knockout_bracket()
+    match = bracket["rounds"][0]["matches"][0]
+
+    assert match["match_number"] == 73
+    assert match["home_team"] == "Egypt"
+    assert match["away_team"] == "Australia"
+    assert match["home_score"] == 1
+    assert match["visitor_score"] == 1
+    assert match["home_shootout_score"] == 2
+    assert match["visitor_shootout_score"] == 4
+    assert match["winner"] == "Australia"
+    assert match["wc_winner"] == "Australia"
+    assert match["home_record"] == "3-0-0"
+    assert match["away_record"] == "1-1-1"
+
+
 def test_world_cup_season_info_includes_knockout_bracket(monkeypatch):
     class FakeWCCollector:
         def get_season_info(self):
