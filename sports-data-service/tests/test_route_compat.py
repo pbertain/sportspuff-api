@@ -237,9 +237,13 @@ def test_tennis_espn_fetch_filters_atp_and_wta_tours(monkeypatch):
     assert len(atp_matches or []) == 1
     assert atp_matches[0]["side1_name"] == "Carlos Alcaraz"
     assert atp_matches[0]["side2_name"] == "Novak Djokovic"
+    assert atp_matches[0]["side1_seed"] == 1
+    assert atp_matches[0]["side2_seed"] == 2
     assert len(wta_matches or []) == 1
     assert wta_matches[0]["side1_name"] == "Aryna Sabalenka"
     assert wta_matches[0]["side2_name"] == "Iga Swiatek"
+    assert wta_matches[0]["side1_seed"] == 1
+    assert wta_matches[0]["side2_seed"] == 2
 
 
 def test_tennis_format_includes_seeds_and_ranks():

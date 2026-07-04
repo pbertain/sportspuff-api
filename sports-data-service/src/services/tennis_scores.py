@@ -74,6 +74,7 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
         ath = c.get("athlete") or {}
         ls_raw = c.get("linescores") or []
         linescores: List[int] = []
+        order_raw = c.get("order")
         for ls in ls_raw:
             try:
                 linescores.append(int(ls.get("value") or 0))
@@ -85,6 +86,7 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
             "linescores": linescores,
             "sets_won": sets_won,
             "winner": bool(c.get("winner")),
+            "order": order_raw,
         })
 
     n_sets = max(len(sides[0]["linescores"]), len(sides[1]["linescores"]))
@@ -123,8 +125,8 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
         "side2_sets_won": sides[1]["sets_won"],
         "side1_winner": sides[0]["winner"],
         "side2_winner": sides[1]["winner"],
-        "side1_seed": seeds.get(sides[0]["name"].strip().lower()),
-        "side2_seed": seeds.get(sides[1]["name"].strip().lower()),
+        "side1_seed": seeds.get(sides[0]["name"].strip().lower()) or sides[0]["order"],
+        "side2_seed": seeds.get(sides[1]["name"].strip().lower()) or sides[1]["order"],
         "set_scores": set_scores,
         "summary": summary,
         "is_final": is_final,
