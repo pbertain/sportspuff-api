@@ -29,6 +29,7 @@ services:
       - "${API_PORT:-34180}:${API_PORT:-34180}"
     volumes:
       - ./src:/app/src
+      - ./templates:/app/templates
       - ./scripts:/app/scripts
     depends_on:
       postgres:
