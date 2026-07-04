@@ -272,20 +272,6 @@
         chdir: "{{ deployment_dir }}/sports-data-service"
       ignore_errors: true
 
-    - name: Reset Docker storage on dev hosts
-      shell: |
-        sudo systemctl stop docker.socket || true
-        sudo systemctl stop docker || true
-        sudo systemctl stop containerd || true
-        sudo rm -rf /var/lib/docker/* /var/lib/containerd/*
-        sudo systemctl start containerd || true
-        sudo systemctl start docker
-        sudo systemctl is-active docker
-      args:
-        chdir: "{{ deployment_dir }}/sports-data-service"
-      when: deployment_env == "dev"
-      ignore_errors: false
-
     - name: Build and start containers
       block:
         - name: Build and start containers
@@ -293,7 +279,7 @@
             export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
             export API_PORT="{{ api_port }}"
             export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
-            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build --no-cache
+            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build
             cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" up -d
           environment:
             POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
@@ -313,7 +299,7 @@
             export POSTGRES_PASSWORD="{{ vault_postgres_password }}"
             export API_PORT="{{ api_port }}"
             export COMPOSE_PROJECT_NAME="sports-data-{{ deployment_env }}"
-            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build --no-cache
+            cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" build
             cd "{{ deployment_dir }}/sports-data-service" && sudo -E docker-compose -p "sports-data-{{ deployment_env }}" up -d
           environment:
             POSTGRES_PASSWORD: "{{ vault_postgres_password }}"
