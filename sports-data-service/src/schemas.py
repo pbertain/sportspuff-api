@@ -143,14 +143,18 @@ class GameOut(BaseModel):
     # Convention: player1 = visitor, player2 = home. Populated for ATP/WTA.
     tournament_name: Optional[str] = None
     match_status: Optional[str] = None
+    home_rank: Optional[int] = None
+    visitor_rank: Optional[int] = None
     player1_name: Optional[str] = None
     player1_last_name: Optional[str] = None
     player1_seed: Optional[int] = None
+    player1_rank: Optional[int] = None
     player1_score: Optional[List[int]] = None
     player1_sets_won: Optional[int] = None
     player2_name: Optional[str] = None
     player2_last_name: Optional[str] = None
     player2_seed: Optional[int] = None
+    player2_rank: Optional[int] = None
     player2_score: Optional[List[int]] = None
     player2_sets_won: Optional[int] = None
     winner: Optional[str] = Field(default=None, description='"player1" or "player2" once final.')

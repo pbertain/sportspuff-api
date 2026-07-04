@@ -33,6 +33,11 @@ _ESPN_SUBPATH: Dict[str, str] = {
     "wta": "tennis/wta",
 }
 
+_ESPN_GROUP_SLUGS: Dict[str, str] = {
+    "atp": "mens-singles",
+    "wta": "womens-singles",
+}
+
 
 # ESPN puts seed in parens before the player's full name, e.g.
 #   "(7) Alejandro Davidovich Fokina (ESP) bt Mattia Bellucci (ITA) 6-1 6-3"
@@ -133,6 +138,7 @@ def _fetch_matches(sport: str, target_date: _date) -> Optional[List[Dict[str, An
     subpath = _ESPN_SUBPATH.get(sport.lower())
     if not subpath:
         return None
+    group_slug = _ESPN_GROUP_SLUGS.get(sport.lower())
 
     cache_key = f"{sport.lower()}:{target_date.isoformat()}"
     now_ts = time.time()
@@ -165,8 +171,8 @@ def _fetch_matches(sport: str, target_date: _date) -> Optional[List[Dict[str, An
         tournament = ev.get("name") or ""
         for grp in ev.get("groupings") or []:
             slug = ((grp.get("grouping") or {}).get("slug") or "").lower()
-            # Skip doubles — our event shape only carries one player per side.
-            if "doubles" in slug:
+            # Skip anything outside the tour-specific singles bracket.
+            if group_slug and slug != group_slug:
                 continue
             for comp in grp.get("competitions") or []:
                 m = _competition_to_match(comp, tournament)

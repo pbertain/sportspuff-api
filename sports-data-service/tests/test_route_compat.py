@@ -189,6 +189,100 @@ def test_tennis_schedule_falls_back_to_espn_rows(monkeypatch):
     assert rows[0]["visitor_full_name"] == "Novak Djokovic"
 
 
+def test_tennis_espn_fetch_filters_atp_and_wta_tours(monkeypatch):
+    class _FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {
+                "events": [
+                    {
+                        "name": "Wimbledon",
+                        "groupings": [
+                            {
+                                "grouping": {"slug": "mens-singles"},
+                                "competitions": [
+                                    {
+                                        "date": "2026-07-04T10:00:00Z",
+                                        "competitors": [
+                                            {"athlete": {"displayName": "Carlos Alcaraz"}, "linescores": [], "winner": False},
+                                            {"athlete": {"displayName": "Novak Djokovic"}, "linescores": [], "winner": True},
+                                        ],
+                                    }
+                                ],
+                            },
+                            {
+                                "grouping": {"slug": "womens-singles"},
+                                "competitions": [
+                                    {
+                                        "date": "2026-07-04T11:00:00Z",
+                                        "competitors": [
+                                            {"athlete": {"displayName": "Aryna Sabalenka"}, "linescores": [], "winner": False},
+                                            {"athlete": {"displayName": "Iga Swiatek"}, "linescores": [], "winner": True},
+                                        ],
+                                    }
+                                ],
+                            },
+                        ],
+                    }
+                ]
+            }
+
+    tennis_scores._cache.clear()
+    monkeypatch.setattr(tennis_scores.requests, "get", lambda *args, **kwargs: _FakeResponse())
+
+    atp_matches = tennis_scores._fetch_matches("ATP", date(2026, 7, 4))
+    wta_matches = tennis_scores._fetch_matches("WTA", date(2026, 7, 4))
+
+    assert len(atp_matches or []) == 1
+    assert atp_matches[0]["side1_name"] == "Carlos Alcaraz"
+    assert atp_matches[0]["side2_name"] == "Novak Djokovic"
+    assert len(wta_matches or []) == 1
+    assert wta_matches[0]["side1_name"] == "Aryna Sabalenka"
+    assert wta_matches[0]["side2_name"] == "Iga Swiatek"
+
+
+def test_tennis_format_includes_seeds_and_ranks():
+    game = SimpleNamespace(
+        home_full_name="Carlos Alcaraz",
+        visitor_full_name="Novak Djokovic",
+        home_team="Alcaraz",
+        visitor_team="Djokovic",
+        home_seed=3,
+        visitor_seed=2,
+        tennis_set_scores=[],
+        tennis_winner=None,
+        game_status="scheduled",
+        game_time=None,
+        is_final=False,
+    )
+
+    text = api._format_tennis_match(game, api.pytz.timezone("US/Pacific"))
+
+    assert "[3]" in text
+    assert "[2]" in text
+
+
+def test_tennis_contract_exposes_rank_aliases():
+    games = [
+        {
+            "league": "ATP",
+            "home_team": "Alcaraz",
+            "visitor_team": "Djokovic",
+            "home_full_name": "Carlos Alcaraz",
+            "visitor_full_name": "Novak Djokovic",
+            "home_seed": 1,
+            "visitor_seed": 2,
+            "tennis_tournament": "Wimbledon",
+        }
+    ]
+
+    api._apply_tennis_contract("atp", games)
+
+    assert games[0]["player1_rank"] == 2
+    assert games[0]["player2_rank"] == 1
+
+
 def test_cycling_pretty_link_formatting():
     game = SimpleNamespace(
         cycling_race="Tour de France",

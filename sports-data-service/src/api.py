@@ -1691,8 +1691,18 @@ def _format_tennis_match(game, tz) -> str:
     line. ESPN-sourced set scores show when present; otherwise the rows
     just carry the names. Tournament context is rendered as a sub-banner
     one level up."""
-    home = (getattr(game, 'home_full_name', '') or getattr(game, 'home_team', '') or '').strip() or '?'
-    visitor = (getattr(game, 'visitor_full_name', '') or getattr(game, 'visitor_team', '') or '').strip() or '?'
+    home_name = (getattr(game, 'home_full_name', '') or getattr(game, 'home_team', '') or '').strip() or '?'
+    visitor_name = (getattr(game, 'visitor_full_name', '') or getattr(game, 'visitor_team', '') or '').strip() or '?'
+    home_seed = getattr(game, 'home_seed', None)
+    visitor_seed = getattr(game, 'visitor_seed', None)
+
+    def _seeded(name: str, seed) -> str:
+        if seed in (None, "", 0):
+            return name
+        return f"{name} [{seed}]"
+
+    home = _seeded(home_name, home_seed)
+    visitor = _seeded(visitor_name, visitor_seed)
     name_w = 14
 
     set_scores = getattr(game, 'tennis_set_scores', None) or []
@@ -3068,6 +3078,8 @@ def _game_wrapper_to_dict(g, league: str = '') -> Dict[str, Any]:
         d["visitor_full_name"] = getattr(g, 'visitor_full_name', '') or ''
         d["home_seed"] = getattr(g, 'home_seed', None)
         d["visitor_seed"] = getattr(g, 'visitor_seed', None)
+        d["home_rank"] = getattr(g, 'home_seed', None)
+        d["visitor_rank"] = getattr(g, 'visitor_seed', None)
         # ESPN-sourced enrichment. None if match wasn't matched against ESPN.
         d["tennis_set_scores"] = getattr(g, 'tennis_set_scores', None)
         d["home_sets_won"] = getattr(g, 'home_sets_won', None)
@@ -3298,6 +3310,8 @@ def _apply_tennis_contract(sport: str, games_dicts: list) -> None:
         g["player2_name"] = g.get("home_full_name") or home_last
         g["player1_seed"] = g.get("visitor_seed")
         g["player2_seed"] = g.get("home_seed")
+        g["player1_rank"] = g.get("visitor_seed")
+        g["player2_rank"] = g.get("home_seed")
 
         sets = g.get("tennis_set_scores") or []
         if sets:
@@ -3346,6 +3360,8 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
             "visitor_full_name": getattr(w, "visitor_full_name", "") or "",
             "home_seed": getattr(w, "home_seed", None),
             "visitor_seed": getattr(w, "visitor_seed", None),
+            "player1_rank": getattr(w, "player1_rank", None),
+            "player2_rank": getattr(w, "player2_rank", None),
             "home_score_total": getattr(w, "home_score_total", 0) or 0,
             "visitor_score_total": getattr(w, "visitor_score_total", 0) or 0,
             "home_period_scores": getattr(w, "home_period_scores", None) or {},
@@ -3376,7 +3392,7 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         # tennis_scores
         "tennis_set_scores", "home_sets_won", "visitor_sets_won",
         "tennis_summary", "tennis_winner", "home_full_name", "visitor_full_name",
-        "home_seed", "visitor_seed", "venue_name", "court_name",
+        "home_seed", "visitor_seed", "player1_rank", "player2_rank", "venue_name", "court_name",
         # world cup group-stage metadata
         "home_wins", "home_draws", "home_losses",
         "home_record", "home_group", "home_group_rank", "home_currently_advancing",

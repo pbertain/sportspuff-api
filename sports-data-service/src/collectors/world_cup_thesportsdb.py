@@ -456,6 +456,8 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         official Round-of-32 slot placeholders. Once events are present, they
         are overlaid by match number when possible.
         """
+        from ..services.box_score import enrich_games as _enrich_box
+
         season = self.current_season()
         try:
             events = self._season_events(season)
@@ -493,6 +495,27 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             actual = by_match.get(match_number)
             home_record = self._lookup_team_record(actual.get("home_team"), team_records) if actual else None
             away_record = self._lookup_team_record(actual.get("visitor_team"), team_records) if actual else None
+            home_score = actual.get("home_score_total") if actual else None
+            away_score = actual.get("visitor_score_total") if actual else None
+            home_so = None
+            away_so = None
+            if actual and actual.get("game_date") and actual.get("home_team") and actual.get("visitor_team"):
+                try:
+                    temp_game = [{
+                        "home_team": actual.get("home_team"),
+                        "visitor_team": actual.get("visitor_team"),
+                        "game_date": actual.get("game_date"),
+                        "home_period_scores": {},
+                        "visitor_period_scores": {},
+                        "home_shootout_score": None,
+                        "visitor_shootout_score": None,
+                    }]
+                    _enrich_box("wc", datetime.strptime(actual.get("game_date"), "%Y-%m-%d").date(), temp_game)
+                    home_so = temp_game[0].get("home_shootout_score")
+                    away_so = temp_game[0].get("visitor_shootout_score")
+                except Exception:
+                    home_so = None
+                    away_so = None
             round_of_32.append({
                 "match_number": match_number,
                 "home_slot": home_slot,
@@ -503,6 +526,10 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 "game_date": actual.get("game_date") if actual else None,
                 "game_time": actual.get("game_time") if actual else None,
                 "game_status": actual.get("game_status") if actual else "scheduled",
+                "home_score_total": home_score,
+                "visitor_score_total": away_score,
+                "home_shootout_score": home_so,
+                "visitor_shootout_score": away_so,
                 "winner": self._winner_from_game(actual) if actual else None,
                 "home_wins": home_record.get("wins") if home_record else None,
                 "home_draws": home_record.get("draws") if home_record else None,
