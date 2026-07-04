@@ -58,6 +58,7 @@
         - "{{ deployment_dir }}/sports-data-service/src/services"
         - "{{ deployment_dir }}/sports-data-service/src/utils"
         - "{{ deployment_dir }}/sports-data-service/scripts"
+        - "{{ deployment_dir }}/sports-data-service/templates"
         - "{{ deployment_dir }}/sports-data-service/systemd"
         - "{{ deployment_dir }}/sports-data-service/alembic"
         - "{{ deployment_dir }}/sports-data-service/alembic/versions"
@@ -73,7 +74,13 @@
         src: ../sports-data-service/scripts
         dest: "{{ deployment_dir }}/sports-data-service/"
         mode: preserve
-    
+
+    - name: Copy templates directory
+      copy:
+        src: ../sports-data-service/templates
+        dest: "{{ deployment_dir }}/sports-data-service/"
+        mode: preserve
+
     - name: Copy systemd directory
       copy:
         src: ../sports-data-service/systemd
