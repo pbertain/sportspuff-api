@@ -283,6 +283,31 @@ def test_tennis_contract_exposes_rank_aliases():
     assert games[0]["player2_rank"] == 1
 
 
+def test_wc_curl_wrappers_keep_pk_scores(monkeypatch):
+    class Wrapper:
+        def __init__(self):
+            self.league = "WC"
+            self.home_team = "Australia"
+            self.visitor_team = "Egypt"
+            self.home_team_abbrev = "AUS"
+            self.visitor_team_abbrev = "EGY"
+            self.home_score_total = 1
+            self.visitor_score_total = 1
+            self.home_shootout_score = 2
+            self.visitor_shootout_score = 4
+            self.is_final = True
+            self.game_status = "final"
+            self.game_time = None
+
+    monkeypatch.setattr(api, "_apply_dict_enrichers", lambda sport, games_dicts, target_date: games_dicts)
+
+    wrappers = [Wrapper()]
+    api._enrich_curl_wrappers("wc", date(2026, 7, 3), wrappers)
+
+    assert wrappers[0].home_shootout_score == 2
+    assert wrappers[0].visitor_shootout_score == 4
+
+
 def test_cycling_pretty_link_formatting():
     game = SimpleNamespace(
         cycling_race="Tour de France",

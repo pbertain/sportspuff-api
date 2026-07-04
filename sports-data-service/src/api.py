@@ -3404,6 +3404,7 @@ def _enrich_curl_wrappers(sport: str, target_date: date, wrappers: list) -> list
         "visitor_goals_for", "visitor_goals_against", "visitor_goal_difference",
         # tennis_scores may also override these:
         "is_final", "game_status",
+        "home_shootout_score", "visitor_shootout_score",
         # world cup / cycling extras
         "wc_winner",
         "cycling_url",
@@ -3829,6 +3830,7 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
     from datetime import datetime
     now_tz = datetime.now(pytz.timezone('US/Pacific'))
     today = now_tz.date()
+    is_wc = league.upper() == 'WC'
     
     # Get live scores from collector (includes in-progress and final games)
     collector = get_collector(league)
@@ -3844,6 +3846,8 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                         "home_score": game.get('home_score_total', 0),
                         "visitor_team": game.get('visitor_team', ''),
                         "visitor_score": game.get('visitor_score_total', 0),
+                        "home_shootout_score": game.get('home_shootout_score') if is_wc else None,
+                        "visitor_shootout_score": game.get('visitor_shootout_score') if is_wc else None,
                         "is_final": game.get('is_final', False),
                         "game_status": game.get('game_status', 'scheduled'),
                         "current_period": game.get('current_period', ''),
@@ -3880,6 +3884,8 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                             "home_score": game.get('home_score_total', 0),
                             "visitor_team": game.get('visitor_team', ''),
                             "visitor_score": game.get('visitor_score_total', 0),
+                            "home_shootout_score": game.get('home_shootout_score') if is_wc else None,
+                            "visitor_shootout_score": game.get('visitor_shootout_score') if is_wc else None,
                             "is_final": game.get('is_final', False),
                             "game_status": game.get('game_status', 'scheduled'),
                             "current_period": game.get('current_period', ''),
@@ -3902,6 +3908,8 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                         "home_score": game.get('home_score_total', 0),
                         "visitor_team": game.get('visitor_team', ''),
                         "visitor_score": game.get('visitor_score_total', 0),
+                        "home_shootout_score": game.get('home_shootout_score') if is_wc else None,
+                        "visitor_shootout_score": game.get('visitor_shootout_score') if is_wc else None,
                         "is_final": game.get('is_final', False),
                         "game_status": game.get('game_status', 'scheduled'),
                         "current_period": game.get('current_period', ''),
@@ -3930,6 +3938,8 @@ def _get_scores_for_league(league: str, target_date: date) -> List[Dict[str, Any
                 "home_score": game.home_score_total,
                 "visitor_team": game.visitor_team,
                 "visitor_score": game.visitor_score_total,
+                "home_shootout_score": getattr(game, 'home_shootout_score', None) if is_wc else None,
+                "visitor_shootout_score": getattr(game, 'visitor_shootout_score', None) if is_wc else None,
                 "is_final": game.is_final,
                 "game_status": game.game_status,
                 "current_period": game.current_period,
