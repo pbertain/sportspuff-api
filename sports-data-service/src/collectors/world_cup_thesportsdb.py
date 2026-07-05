@@ -136,6 +136,11 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         (87, "Winner Group J", "Runner-up Group H"),
         (88, "Winner Group K", "3rd Group D/E/I/J/L"),
     )
+    ROUND_OF_16_MATCHES = tuple(range(89, 97))
+    QUARTERFINAL_MATCHES = tuple(range(97, 101))
+    SEMIFINAL_MATCHES = tuple(range(101, 103))
+    THIRD_PLACE_MATCH = 103
+    FINAL_MATCH = 104
 
     def __init__(self):
         super().__init__("WC")
@@ -460,9 +465,10 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
     def get_knockout_bracket(self) -> Dict[str, Any]:
         """Return bracket data for the 32-team knockout stage.
 
-        Before TheSportsDB publishes actual knockout events, this returns the
-        official Round-of-32 slot placeholders. Once events are present, they
-        are overlaid by match number when possible.
+        The bracket is synthesized from the Round of 32 and then propagated
+        forward so later rounds have the right lattice even before TheSportsDB
+        publishes the downstream fixtures. If upstream later-round events are
+        present, they are merged into the generated structure.
         """
         from ..services.box_score import enrich_games as _enrich_box
 
@@ -475,6 +481,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
 
         team_records = self.get_team_records()
         by_match = {}
+        by_round: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
         round_of_32_events = []
         for raw in events:
             try:
@@ -486,13 +493,15 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             parsed = self._parse_event(raw)
             if not parsed:
                 continue
-            if parsed.get("wc_round_label") == "round_of_32":
+            round_label = parsed.get("wc_round_label") or "knockout"
+            by_round[round_label].append(parsed)
+            if round_label == "round_of_32":
                 round_of_32_events.append((raw.get("dateEvent") or "", raw.get("strTime") or "", parsed))
             match_number = self._parse_int(raw.get("intMatch") or raw.get("intEvent") or raw.get("idEvent"), default=0)
             if match_number:
                 by_match[match_number] = parsed
 
-        for index, (_, _, parsed) in enumerate(sorted(round_of_32_events), 0):
+        for index, (_, _, parsed) in enumerate(sorted(round_of_32_events, key=lambda item: (item[0], item[1])), 0):
             if index >= len(self.ROUND_OF_32_SLOTS):
                 break
             match_number = self.ROUND_OF_32_SLOTS[index][0]
@@ -564,6 +573,40 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 "away_currently_advancing": away_record.get("currently_advancing") if away_record else None,
             })
 
+        round_of_16 = self._build_knockout_round(
+            round_name="round_of_16",
+            match_numbers=self.ROUND_OF_16_MATCHES,
+            source_round=round_of_32,
+            by_round=by_round,
+            team_records=team_records,
+        )
+        quarterfinal = self._build_knockout_round(
+            round_name="quarterfinal",
+            match_numbers=self.QUARTERFINAL_MATCHES,
+            source_round=round_of_16,
+            by_round=by_round,
+            team_records=team_records,
+        )
+        semifinal = self._build_knockout_round(
+            round_name="semifinal",
+            match_numbers=self.SEMIFINAL_MATCHES,
+            source_round=quarterfinal,
+            by_round=by_round,
+            team_records=team_records,
+        )
+        third_place = self._build_third_place_match(
+            source_round=semifinal,
+            by_round=by_round,
+            team_records=team_records,
+        )
+        final = self._build_knockout_round(
+            round_name="final",
+            match_numbers=(self.FINAL_MATCH,),
+            source_round=semifinal,
+            by_round=by_round,
+            team_records=team_records,
+        )
+
         return {
             "format": "round_of_32",
             "sides": {
@@ -572,8 +615,180 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             },
             "rounds": [
                 {"name": "Round of 32", "matches": round_of_32},
+                {"name": "Round of 16", "matches": round_of_16},
+                {"name": "Quarter-final", "matches": quarterfinal},
+                {"name": "Semi-final", "matches": semifinal},
+                {"name": "Third Place", "matches": [third_place] if third_place else []},
+                {"name": "Final", "matches": final if final else []},
             ],
         }
+
+    def _build_knockout_round(
+        self,
+        round_name: str,
+        match_numbers: Tuple[int, ...],
+        source_round: List[Dict[str, Any]],
+        by_round: Dict[str, List[Dict[str, Any]]],
+        team_records: Dict[str, Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        actuals = sorted(by_round.get(round_name, []), key=lambda g: ((g.get("game_date") or ""), (g.get("game_time") or "")))
+        matches: List[Dict[str, Any]] = []
+        for index, match_number in enumerate(match_numbers):
+            source_index = index * 2
+            home_source = source_round[source_index] if source_index < len(source_round) else None
+            away_source = source_round[source_index + 1] if source_index + 1 < len(source_round) else None
+            actual = actuals[index] if index < len(actuals) else None
+            matches.append(self._build_knockout_match(
+                match_number=match_number,
+                round_name=round_name,
+                actual=actual,
+                home_source=home_source,
+                away_source=away_source,
+                team_records=team_records,
+            ))
+        return matches
+
+    def _build_third_place_match(
+        self,
+        source_round: List[Dict[str, Any]],
+        by_round: Dict[str, List[Dict[str, Any]]],
+        team_records: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        actuals = sorted(by_round.get("third_place", []), key=lambda g: ((g.get("game_date") or ""), (g.get("game_time") or "")))
+        actual = actuals[0] if actuals else None
+        home_source = source_round[0] if len(source_round) > 0 else None
+        away_source = source_round[1] if len(source_round) > 1 else None
+        return self._build_knockout_match(
+            match_number=self.THIRD_PLACE_MATCH,
+            round_name="third_place",
+            actual=actual,
+            home_source=home_source,
+            away_source=away_source,
+            team_records=team_records,
+            source_team_mode="loser",
+        )
+
+    def _build_knockout_match(
+        self,
+        match_number: int,
+        round_name: str,
+        actual: Optional[Dict[str, Any]],
+        home_source: Optional[Dict[str, Any]],
+        away_source: Optional[Dict[str, Any]],
+        team_records: Dict[str, Dict[str, Any]],
+        source_team_mode: str = "winner",
+    ) -> Dict[str, Any]:
+        if source_team_mode == "loser":
+            home_team = self._source_match_loser(home_source)
+            away_team = self._source_match_loser(away_source)
+        else:
+            home_team = self._source_match_winner(home_source)
+            away_team = self._source_match_winner(away_source)
+        home_record = self._lookup_team_record(home_team, team_records) if home_team else None
+        away_record = self._lookup_team_record(away_team, team_records) if away_team else None
+
+        home_game = self._coalesce_knockout_team(actual, "home_team", home_team)
+        away_game = self._coalesce_knockout_team(actual, "visitor_team", away_team)
+        slot_prefix = "Loser" if source_team_mode == "loser" else "Winner"
+        home_slot = self._source_slot_label(home_source, prefix=slot_prefix)
+        away_slot = self._source_slot_label(away_source, prefix=slot_prefix)
+
+        home_score = actual.get("home_score_total") if actual else None
+        away_score = actual.get("visitor_score_total") if actual else None
+        home_so = actual.get("home_shootout_score") if actual else None
+        away_so = actual.get("visitor_shootout_score") if actual else None
+        winner = actual.get("wc_winner") if actual else None
+        if not winner and actual:
+            if home_so is not None and away_so is not None and home_so != away_so:
+                winner = home_game if int(home_so or 0) > int(away_so or 0) else away_game
+            else:
+                winner = self._winner_from_game(actual)
+        if not winner and actual and actual.get("game_status") == "final":
+            winner = self._winner_from_game(actual)
+
+        match = {
+            "match_number": match_number,
+            "home_slot": home_slot,
+            "away_slot": away_slot,
+            "home_team": home_game,
+            "away_team": away_game,
+            "game_id": actual.get("game_id") if actual else None,
+            "game_date": actual.get("game_date") if actual else None,
+            "game_time": actual.get("game_time") if actual else None,
+            "game_status": actual.get("game_status") if actual else "scheduled",
+            "home_score": home_score,
+            "visitor_score": away_score,
+            "away_score": away_score,
+            "home_score_total": home_score,
+            "visitor_score_total": away_score,
+            "home_shootout_score": home_so,
+            "visitor_shootout_score": away_so,
+            "winner": winner,
+            "wc_winner": winner,
+            "home_wins": home_record.get("wins") if home_record else None,
+            "home_draws": home_record.get("draws") if home_record else None,
+            "home_losses": home_record.get("losses") if home_record else None,
+            "home_record": home_record.get("record") if home_record else None,
+            "away_record": away_record.get("record") if away_record else None,
+            "away_wins": away_record.get("wins") if away_record else None,
+            "away_draws": away_record.get("draws") if away_record else None,
+            "away_losses": away_record.get("losses") if away_record else None,
+            "home_group": home_record.get("group") if home_record else None,
+            "away_group": away_record.get("group") if away_record else None,
+            "home_group_rank": home_record.get("group_rank") if home_record else None,
+            "away_group_rank": away_record.get("group_rank") if away_record else None,
+            "home_currently_advancing": home_record.get("currently_advancing") if home_record else None,
+            "away_currently_advancing": away_record.get("currently_advancing") if away_record else None,
+        }
+        return match
+
+    @staticmethod
+    def _source_match_winner(match: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not match:
+            return None
+        if match.get("wc_winner"):
+            return match.get("wc_winner")
+        if match.get("winner"):
+            return match.get("winner")
+        if match.get("game_status") == "final":
+            home_so = match.get("home_shootout_score")
+            away_so = match.get("visitor_shootout_score")
+            if home_so is not None and away_so is not None and home_so != away_so:
+                return match.get("home_team") if int(home_so or 0) > int(away_so or 0) else match.get("away_team") or match.get("visitor_team")
+            return WorldCupTheSportsDBCollector._winner_from_game(match)
+        return None
+
+    @staticmethod
+    def _coalesce_knockout_team(actual: Optional[Dict[str, Any]], key: str, fallback: Optional[str]) -> Optional[str]:
+        if actual and actual.get(key):
+            return actual.get(key)
+        return fallback
+
+    @staticmethod
+    def _source_slot_label(source_match: Optional[Dict[str, Any]], prefix: str) -> str:
+        if source_match and source_match.get("match_number"):
+            return f"{prefix} Match {source_match['match_number']}"
+        return "TBD"
+
+    @staticmethod
+    def _source_match_loser(match: Optional[Dict[str, Any]]) -> Optional[str]:
+        if not match:
+            return None
+        home = match.get("home_team")
+        away = match.get("away_team")
+        if match.get("game_status") != "final":
+            return None
+        home_so = match.get("home_shootout_score")
+        away_so = match.get("visitor_shootout_score")
+        if home_so is not None and away_so is not None and home_so != away_so:
+            return away if int(home_so or 0) > int(away_so or 0) else home
+        if home and away:
+            winner = WorldCupTheSportsDBCollector._winner_from_game(match)
+            if winner == home:
+                return away
+            if winner == away:
+                return home
+        return None
 
     def _infer_groups(self, events: List[Dict[str, Any]]) -> Tuple[Dict[str, str], List[str]]:
         official_lookup, official_order = self._official_groups_for_current_season()

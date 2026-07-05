@@ -402,6 +402,93 @@ def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):
     assert match["away_record"] == "1-1-1"
 
 
+def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    def _event(match_number: int, round_value: int, home: str, away: str, home_score: int = 2, away_score: int = 1):
+        return {
+            "idEvent": str(1000 + match_number),
+            "intMatch": str(match_number),
+            "intRound": str(round_value),
+            "dateEvent": "2026-07-04",
+            "strTime": "12:00:00",
+            "strStatus": "FT",
+            "strEvent": f"WC {round_value}",
+            "strHomeTeam": home,
+            "strAwayTeam": away,
+            "intHomeScore": str(home_score),
+            "intAwayScore": str(away_score),
+        }
+
+    round32_teams = [
+        "Team A", "Team B", "Team C", "Team D",
+        "Team E", "Team F", "Team G", "Team H",
+        "Team I", "Team J", "Team K", "Team L",
+        "Team M", "Team N", "Team O", "Team P",
+        "Team Q", "Team R", "Team S", "Team T",
+        "Team U", "Team V", "Team W", "Team X",
+        "Team Y", "Team Z", "Team AA", "Team AB",
+        "Team AC", "Team AD", "Team AE", "Team AF",
+    ]
+
+    events = []
+    current_winners = []
+    for index, match_number in enumerate(range(73, 89)):
+        home = round32_teams[index * 2]
+        away = round32_teams[index * 2 + 1]
+        events.append(_event(match_number, 32, home, away))
+        current_winners.append(home)
+
+    round_specs = [
+        (89, 16),
+        (97, 8),
+        (101, 4),
+        (104, 2),
+    ]
+    next_winners = current_winners
+    for start_match_number, round_value in round_specs:
+        stage_winners = []
+        for offset in range(0, len(next_winners), 2):
+            home = next_winners[offset]
+            away = next_winners[offset + 1]
+            events.append(_event(start_match_number + offset // 2, round_value, home, away))
+            stage_winners.append(home)
+        next_winners = stage_winners
+
+    monkeypatch.setattr(collector, "_season_events", lambda _season: events)
+    monkeypatch.setattr(collector, "get_team_records", lambda: {})
+
+    bracket = collector.get_knockout_bracket()
+    rounds = {round_info["name"]: round_info["matches"] for round_info in bracket["rounds"]}
+
+    round_of_16 = rounds["Round of 16"]
+    quarterfinals = rounds["Quarter-final"]
+    semifinals = rounds["Semi-final"]
+    finals = rounds["Final"]
+
+    assert round_of_16[0]["home_team"] == "Team A"
+    assert round_of_16[0]["away_team"] == "Team C"
+    assert round_of_16[0]["home_slot"] == "Winner Match 73"
+    assert round_of_16[0]["away_slot"] == "Winner Match 74"
+
+    assert quarterfinals[0]["home_team"] == "Team A"
+    assert quarterfinals[0]["away_team"] == "Team E"
+    assert quarterfinals[0]["home_slot"] == "Winner Match 89"
+    assert quarterfinals[0]["away_slot"] == "Winner Match 90"
+
+    assert semifinals[0]["home_team"] == "Team A"
+    assert semifinals[0]["away_team"] == "Team I"
+    assert semifinals[0]["home_slot"] == "Winner Match 97"
+    assert semifinals[0]["away_slot"] == "Winner Match 98"
+
+    assert finals[0]["home_team"] == "Team A"
+    assert finals[0]["away_team"] == "Team Q"
+    assert finals[0]["home_slot"] == "Winner Match 101"
+    assert finals[0]["away_slot"] == "Winner Match 102"
+
+
 def test_world_cup_season_info_includes_knockout_bracket(monkeypatch):
     class FakeWCCollector:
         def get_season_info(self):
