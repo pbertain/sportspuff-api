@@ -1,6 +1,9 @@
 from starlette.requests import Request
 from types import SimpleNamespace
 from datetime import date
+from pathlib import Path
+
+import pytest
 
 from src import api
 from src.collectors.tennis_thesportsdb import TennisTheSportsDBCollector
@@ -351,6 +354,59 @@ def test_world_cup_bracket_endpoint_returns_structured_lattice(monkeypatch):
     assert payload["knockout_bracket"]["format"] == "round_of_32"
     assert payload["knockout_bracket"]["sides"]["left"][0]["match_number"] == 73
     assert payload["knockout_bracket"]["rounds"][0]["name"] == "Round of 32"
+
+
+def test_tour_de_france_bundle_endpoint_uses_letour_scraper_bundle(monkeypatch):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(
+        api.settings,
+        "tour_de_france_data_dir",
+        str(Path(__file__).resolve().parents[2] / "letour-scraper"),
+    )
+
+    payload = api.get_tour_de_france_bundle_api_v1(2026)
+
+    assert payload["race"] == "Tour de France"
+    assert payload["year"] == 2026
+    assert payload["stages"]
+    assert payload["stages"][0]["stage"]["date"] == "2026-07-04"
+    assert payload["stages"][0]["stage"]["status"] == "final"
+    assert payload["stages"][0]["schedule"]["stage_number"] == 1
+    assert payload["latest_classifications"]["stage"]
+    assert payload["meta"]["source_updated_at"]
+
+
+def test_tour_de_france_stage_endpoint_returns_stage_detail(monkeypatch):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(
+        api.settings,
+        "tour_de_france_data_dir",
+        str(Path(__file__).resolve().parents[2] / "letour-scraper"),
+    )
+
+    payload = api.get_tour_de_france_stage_api_v1(2026, 2)
+
+    assert payload["race"] == "Tour de France"
+    assert payload["year"] == 2026
+    assert payload["stage"]["stage_number"] == 2
+    assert payload["stage"]["date"] == "2026-07-05"
+    assert payload["schedule"]["stage_number"] == 2
+    assert payload["classifications"]
+    assert payload["meta"]["source_updated_at"]
+
+
+def test_tour_de_france_stage_endpoint_404s_for_unknown_stage(monkeypatch):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(
+        api.settings,
+        "tour_de_france_data_dir",
+        str(Path(__file__).resolve().parents[2] / "letour-scraper"),
+    )
+
+    with pytest.raises(api.HTTPException) as exc:
+        api.get_tour_de_france_stage_api_v1(2026, 99)
+
+    assert exc.value.status_code == 404
 
 
 def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):

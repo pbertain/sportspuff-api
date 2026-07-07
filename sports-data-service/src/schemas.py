@@ -309,6 +309,102 @@ class SeasonInfoResponse(BaseModel):
     meta: Optional[EndpointMeta] = None
 
 
+class CyclingClassificationRow(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    race: Optional[str] = None
+    stage_number: Optional[int] = None
+    classification_type: Optional[str] = None
+    rank: Optional[int] = None
+    rider_name: Optional[str] = None
+    rider_slug: Optional[str] = None
+    rider_url: Optional[str] = None
+    bib: Optional[int] = None
+    team_name: Optional[str] = None
+    team_slug: Optional[str] = None
+    team_url: Optional[str] = None
+    time: Optional[str] = None
+    gap: Optional[str] = None
+    points: Optional[str] = None
+    bonus: Optional[str] = None
+    source_url: Optional[str] = None
+
+
+class CyclingStageSchedule(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    stage_number: Optional[int] = None
+    stage_name: Optional[str] = None
+    cycling_url: Optional[str] = None
+    rankings_url: Optional[str] = None
+    stage_start_local: Optional[str] = None
+    stage_finish_expected_local: Optional[str] = None
+    stage_first_start_local: Optional[str] = None
+    stage_last_arrival_local: Optional[str] = None
+    poll_state: Optional[str] = None
+    recommended_poll_minutes: Optional[int] = None
+
+
+class CyclingStageSummary(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    race: Optional[str] = None
+    stage_number: Optional[int] = None
+    stage_name: Optional[str] = None
+    date: Optional[str] = None
+    status: Optional[str] = None
+    winner: Optional[str] = None
+    winner_url: Optional[str] = None
+    team: Optional[str] = None
+    team_url: Optional[str] = None
+    distance_km: Optional[str] = None
+    race_type: Optional[str] = None
+    start_city: Optional[str] = None
+    finish_city: Optional[str] = None
+    cycling_event_label: Optional[str] = None
+    cycling_country: Optional[str] = None
+    cycling_url: Optional[str] = None
+    rankings_url: Optional[str] = None
+    stage_page_title: Optional[str] = None
+    rankings_page_title: Optional[str] = None
+    stage_start_local: Optional[str] = None
+    stage_finish_expected_local: Optional[str] = None
+    stage_first_start_local: Optional[str] = None
+    stage_last_arrival_local: Optional[str] = None
+    poll_state: Optional[str] = None
+    recommended_poll_minutes: Optional[int] = None
+
+
+class CyclingStageDetail(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    stage: CyclingStageSummary
+    schedule: CyclingStageSchedule
+    classifications: List[CyclingClassificationRow]
+
+
+class CyclingTourBundleResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    race: str
+    year: Union[int, str]
+    source: Optional[str] = None
+    generated_at: Optional[str] = None
+    current_stage: Optional[CyclingStageDetail] = None
+    stages: List[CyclingStageDetail]
+    latest_classifications: Dict[str, List[CyclingClassificationRow]]
+    teams: List[Dict[str, Any]]
+    riders: List[Dict[str, Any]]
+    meta: Optional[EndpointMeta] = None
+
+
+class CyclingTourStageResponse(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    race: str
+    year: Union[int, str]
+    source: Optional[str] = None
+    generated_at: Optional[str] = None
+    stage: CyclingStageSummary
+    schedule: CyclingStageSchedule
+    classifications: List[CyclingClassificationRow]
+    meta: Optional[EndpointMeta] = None
+
+
 class WorldCupBracketResponse(BaseModel):
     model_config = ConfigDict(extra="allow")
     sport: str = Field(default="wc")

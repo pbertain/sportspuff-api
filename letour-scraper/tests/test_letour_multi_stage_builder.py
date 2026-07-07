@@ -1,0 +1,106 @@
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "letour_multi_stage_builder.py"
+SPEC = spec_from_file_location("letour_multi_stage_builder", MODULE_PATH)
+builder = module_from_spec(SPEC)
+assert SPEC and SPEC.loader
+SPEC.loader.exec_module(builder)
+
+
+def test_extract_ranking_tab_urls_picks_expected_classifications():
+    html = """
+    <div>
+      <span class="js-tabs-ranking" data-ajax-stack='{"itg":"/en/ajax/ranking/3/itg/hash/none","ipg":"/en/ajax/ranking/3/ipg/hash/none"}'></span>
+      <span class="js-tabs-ranking-nested" data-type="ite" data-tabs-ajax="/en/ajax/ranking/3/ite/hash/subtab"></span>
+      <span class="js-tabs-ranking-nested" data-type="foo" data-tabs-ajax="/ignore"></span>
+    </div>
+    """
+
+    urls = builder.extract_ranking_tab_urls(html)
+
+    assert urls["ite"] == "https://www.letour.fr/en/ajax/ranking/3/ite/hash/subtab"
+    assert urls["itg"] == "https://www.letour.fr/en/ajax/ranking/3/itg/hash/none"
+    assert urls["ipg"] == "https://www.letour.fr/en/ajax/ranking/3/ipg/hash/none"
+    assert "foo" not in urls
+
+
+def test_parse_classification_rows_parses_rider_table():
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th><th>Rider</th><th>Rider No.</th><th>Team</th><th>Times</th><th>Gap</th><th>B</th><th>P</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><a href="/en/rider/1/uae-team-emirates-xrg/tadej-pogacar">T. POGACAR</a></td>
+          <td>1</td>
+          <td><a href="/en/team/UEX/uae-team-emirates-xrg">UAE TEAM EMIRATES XRG</a></td>
+          <td>08h 46' 55''</td>
+          <td>-</td>
+          <td>B : 16''</td>
+          <td>-</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+
+    rows = builder.parse_classification_rows(html, 3, "https://www.letour.fr/example", "gc")
+
+    assert rows[0]["classification_type"] == "gc"
+    assert rows[0]["rank"] == "1"
+    assert rows[0]["rider_name"] == "T. POGACAR"
+    assert rows[0]["rider_slug"] == "tadej-pogacar"
+    assert rows[0]["team_slug"] == "uae-team-emirates-xrg"
+    assert rows[0]["time"] == "08h 46' 55''"
+    assert rows[0]["bonus"] == "B : 16''"
+
+
+def test_parse_classification_rows_parses_team_table():
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th>Rank</th><th>Team</th><th>Times</th><th>Gap</th><th>P</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><a href="/en/team/UEX/uae-team-emirates-xrg">UAE TEAM EMIRATES XRG</a></td>
+          <td>14h 16' 27''</td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+
+    rows = builder.parse_classification_rows(html, 3, "https://www.letour.fr/example", "teams")
+
+    assert rows[0]["classification_type"] == "teams"
+    assert rows[0]["rider_name"] is None
+    assert rows[0]["team_name"] == "UAE TEAM EMIRATES XRG"
+    assert rows[0]["team_slug"] == "uae-team-emirates-xrg"
+    assert rows[0]["time"] == "14h 16' 27''"
+
+
+def test_stage_date_and_state_use_stage_day_not_today():
+    stage_row = {
+        "date": builder.parse_stage_date("Stage 3 - 07/06 - Granollers > Les Angles", 2026),
+        "stage_first_start_local": "12:10",
+        "stage_last_arrival_local": "16:54",
+    }
+
+    state_before = builder.infer_stage_state(stage_row, now_local=builder.datetime(2026, 7, 6, 11, 45))
+    state_during = builder.infer_stage_state(stage_row, now_local=builder.datetime(2026, 7, 6, 13, 0))
+    state_after = builder.infer_stage_state(stage_row, now_local=builder.datetime(2026, 7, 7, 10, 0))
+
+    assert stage_row["date"] == "2026-07-06"
+    assert state_before == "active_window"
+    assert state_during == "active_window"
+    assert state_after == "post_stage"

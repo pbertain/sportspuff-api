@@ -1,0 +1,9 @@
+file,description
+stages.csv,"One row per stage with schedule windows, poll hints, and source URLs"
+classifications.csv,Ranking rows per stage with classification types and rider/team links
+teams.csv,Unique teams with letour.fr links
+riders.csv,Unique riders with letour.fr links for page rendering
+stage_schedule.csv,Scheduling helper for your app
+letour_app_bundle.json,"App-friendly JSON bundle for stage, classification, rider, and team rendering"
+suggested_cron.txt,Suggested cron entries
+polling_plan.json,Machine-readable polling guidance

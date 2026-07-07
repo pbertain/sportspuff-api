@@ -70,7 +70,7 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
     state = status_type.get("state") or ""  # 'pre' / 'in' / 'post'
 
     sides = []
-    for c in competitors:
+    for idx, c in enumerate(competitors, start=1):
         ath = c.get("athlete") or {}
         ls_raw = c.get("linescores") or []
         linescores: List[int] = []
@@ -86,7 +86,7 @@ def _competition_to_match(comp: Dict[str, Any], tournament: str) -> Optional[Dic
             "linescores": linescores,
             "sets_won": sets_won,
             "winner": bool(c.get("winner")),
-            "order": order_raw,
+            "order": order_raw if isinstance(order_raw, int) else idx,
         })
 
     n_sets = max(len(sides[0]["linescores"]), len(sides[1]["linescores"]))

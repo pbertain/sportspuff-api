@@ -1,0 +1,4 @@
+stage_number,stage_name,cycling_url,rankings_url,stage_start_local,stage_finish_expected_local,stage_first_start_local,stage_last_arrival_local,poll_state,recommended_poll_minutes
+1,Barcelone > Barcelone,https://www.letour.fr/en/stage-1,https://www.letour.fr/en/rankings/stage-1,,,17:05,19:16,post_stage,60
+2,Tarragone > Barcelone,https://www.letour.fr/en/stage-2,https://www.letour.fr/en/rankings/stage-2,13:45,17:26,,,post_stage,60
+3,Granollers > Les Angles,https://www.letour.fr/en/stage-3,https://www.letour.fr/en/rankings/stage-3,12:10,16:54,,,post_stage,60

@@ -22,6 +22,7 @@ from .config import settings
 from .collectors import NBACollector, MLBCollector, NHLCollector, NFLCollector, WNBACollector, CricketCollector, MLSCollector
 from .utils import api_tracker
 from .services import upstream_health
+from .services.tour_de_france import TourDeFranceDataService
 from . import schemas
 
 import time as _time
@@ -35,6 +36,8 @@ _standings_cache: Dict[str, Any] = {}
 _STANDINGS_CACHE_TTL = 1800  # 30 minutes
 _wc_bracket_cache: Dict[str, Any] = {}
 _WC_BRACKET_TTL = 1800  # 30 minutes
+_tour_de_france_cache: Dict[str, Any] = {}
+_TOUR_DE_FRANCE_TTL = 300  # 5 minutes
 
 # In-flight fetch coalescing: when N concurrent requests miss the same cache
 # key, only the first runs the fetcher; the rest wait on its result. Prevents
@@ -4483,6 +4486,41 @@ def _get_wc_knockout_bracket_payload() -> Dict[str, Any]:
     }
 
 
+def _tour_de_france_data_dir() -> str:
+    configured = (settings.tour_de_france_data_dir or "").strip()
+    if configured:
+        return configured
+    repo_default = FSPath(__file__).resolve().parents[2] / "letour-scraper"
+    if repo_default.exists():
+        return str(repo_default)
+    cycling_dir = (settings.cycling_data_dir or "").strip()
+    if cycling_dir:
+        return cycling_dir
+    return str(repo_default)
+
+
+def _get_tour_de_france_payload(year: int) -> Dict[str, Any]:
+    service = TourDeFranceDataService(_tour_de_france_data_dir())
+    payload = service.get_bundle(year)
+    if not payload.get("stages"):
+        raise HTTPException(status_code=404, detail=f"Tour de France {year} bundle not found")
+    return {
+        **payload,
+        "source_updated_at": payload.get("source_updated_at"),
+    }
+
+
+def _get_tour_de_france_stage_payload(year: int, stage_number: int) -> Dict[str, Any]:
+    service = TourDeFranceDataService(_tour_de_france_data_dir())
+    payload = service.get_stage(year, stage_number)
+    if not payload:
+        raise HTTPException(status_code=404, detail=f"Tour de France {year} stage {stage_number} not found")
+    return {
+        **payload,
+        "source_updated_at": payload.get("source_updated_at"),
+    }
+
+
 @app.get("/api/v1/season-info/{league}", response_model=schemas.SeasonInfoResponse)
 def get_season_info(
     league: str = Path(..., description="League (mlb, nba, nfl, nhl, wnba)"),
@@ -4572,6 +4610,55 @@ def get_world_cup_bracket_api_v1():
         "meta": _build_endpoint_meta(
             cache_snapshot,
             _WC_BRACKET_TTL,
+            source_updated_at=cache_snapshot.get("source_updated_at"),
+            empty_state=cache_snapshot.get("empty_state"),
+        ),
+    }
+
+
+@app.get("/api/v1/cycling/tour-de-france", response_model=schemas.CyclingTourBundleResponse)
+def get_tour_de_france_current_api_v1():
+    year = datetime.now().year
+    return get_tour_de_france_bundle_api_v1(year)
+
+
+@app.get("/api/v1/cycling/tour-de-france/{year}", response_model=schemas.CyclingTourBundleResponse)
+def get_tour_de_france_bundle_api_v1(
+    year: int = Path(..., description="Tour de France season year"),
+):
+    payload, cache_snapshot = _get_cached_payload(
+        _tour_de_france_cache,
+        f"tour-de-france:{year}",
+        _TOUR_DE_FRANCE_TTL,
+        lambda: _get_tour_de_france_payload(year),
+    )
+    return {
+        **payload,
+        "meta": _build_endpoint_meta(
+            cache_snapshot,
+            _TOUR_DE_FRANCE_TTL,
+            source_updated_at=cache_snapshot.get("source_updated_at"),
+            empty_state=cache_snapshot.get("empty_state"),
+        ),
+    }
+
+
+@app.get("/api/v1/cycling/tour-de-france/{year}/stages/{stage_number}", response_model=schemas.CyclingTourStageResponse)
+def get_tour_de_france_stage_api_v1(
+    year: int = Path(..., description="Tour de France season year"),
+    stage_number: int = Path(..., ge=1, description="Tour de France stage number"),
+):
+    payload, cache_snapshot = _get_cached_payload(
+        _tour_de_france_cache,
+        f"tour-de-france:{year}:stage:{stage_number}",
+        _TOUR_DE_FRANCE_TTL,
+        lambda: _get_tour_de_france_stage_payload(year, stage_number),
+    )
+    return {
+        **payload,
+        "meta": _build_endpoint_meta(
+            cache_snapshot,
+            _TOUR_DE_FRANCE_TTL,
             source_updated_at=cache_snapshot.get("source_updated_at"),
             empty_state=cache_snapshot.get("empty_state"),
         ),

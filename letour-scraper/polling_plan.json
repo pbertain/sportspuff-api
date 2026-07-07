@@ -1,0 +1,8 @@
+{
+  "generated_at": "2026-07-07T07:30:44Z",
+  "notes": [
+    "Use hourly polling outside active race windows.",
+    "Use 15-minute polling from 30 minutes before start until 60 minutes after expected finish or last arrival.",
+    "Treat a stage as effectively finished when the stage window has passed and two consecutive polls return unchanged results."
+  ]
+}
