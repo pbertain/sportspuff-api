@@ -53,6 +53,7 @@
         mode: '0755'
       loop:
         - "{{ deployment_dir }}/sports-data-service"
+        - "{{ deployment_dir }}/letour-scraper"
         - "{{ deployment_dir }}/sports-data-service/src"
         - "{{ deployment_dir }}/sports-data-service/src/collectors"
         - "{{ deployment_dir }}/sports-data-service/src/services"
@@ -79,6 +80,12 @@
       copy:
         src: ../sports-data-service/templates
         dest: "{{ deployment_dir }}/sports-data-service/"
+        mode: preserve
+
+    - name: Copy letour-scraper directory
+      copy:
+        src: ../letour-scraper
+        dest: "{{ deployment_dir }}/"
         mode: preserve
 
     - name: Copy systemd directory
