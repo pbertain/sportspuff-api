@@ -31,6 +31,7 @@ services:
       - ./src:/app/src
       - ./templates:/app/templates
       - ./scripts:/app/scripts
+      - ../letour-scraper:/app/letour-scraper:ro
     depends_on:
       postgres:
         condition: service_healthy
