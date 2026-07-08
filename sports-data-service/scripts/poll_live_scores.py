@@ -7,18 +7,14 @@ or as a one-time update.
 """
 
 import sys
-import os
 import argparse
 import logging
 import signal
 from datetime import datetime
 
-# Add src directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from config import settings
-from services import LivePoller
-from database import create_tables
+from src.config import settings
+from src.services import LivePoller
+from src.database import create_tables
 
 # Set up logging
 logging.basicConfig(

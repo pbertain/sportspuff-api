@@ -7,17 +7,13 @@ It can be run manually or via systemd timer.
 """
 
 import sys
-import os
 import argparse
 import logging
 from datetime import datetime, date
 
-# Add src directory to path
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-
-from config import settings
-from services import ScheduleUpdater
-from database import create_tables
+from src.config import settings
+from src.services import ScheduleUpdater
+from src.database import create_tables
 
 # Set up logging
 logging.basicConfig(
