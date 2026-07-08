@@ -4490,13 +4490,14 @@ def _tour_de_france_data_dir() -> str:
     configured = (settings.tour_de_france_data_dir or "").strip()
     if configured:
         return configured
-    repo_default = FSPath(__file__).resolve().parents[2] / "letour-scraper"
-    if repo_default.exists():
-        return str(repo_default)
+    for parent in FSPath(__file__).resolve().parents:
+        candidate = parent / "letour-scraper"
+        if candidate.exists():
+            return str(candidate)
     cycling_dir = (settings.cycling_data_dir or "").strip()
     if cycling_dir:
         return cycling_dir
-    return str(repo_default)
+    return str((FSPath(__file__).resolve().parent / "letour-scraper"))
 
 
 def _get_tour_de_france_payload(year: int) -> Dict[str, Any]:
