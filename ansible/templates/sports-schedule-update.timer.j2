@@ -1,8 +1,8 @@
 [Unit]
 Description=Sports Data Schedule Updater Timer ({{ deployment_env }})
-Requires=sports-schedule-update-{{ deployment_env }}.service
 
 [Timer]
+Unit=sports-schedule-update-{{ deployment_env }}.service
 # General schedule updates (all leagues)
 OnCalendar=*-*-* 06:00:00
 OnCalendar=*-*-* 18:00:00

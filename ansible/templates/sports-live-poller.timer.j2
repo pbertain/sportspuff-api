@@ -1,8 +1,8 @@
 [Unit]
 Description=Sports Data Live Score Poller Timer ({{ deployment_env }})
-Requires=sports-live-poller-{{ deployment_env }}.service
 
 [Timer]
+Unit=sports-live-poller-{{ deployment_env }}.service
 OnCalendar=*-*-* 10:00:00
 OnCalendar=*-*-* 12:00:00
 OnCalendar=*-*-* 14:00:00

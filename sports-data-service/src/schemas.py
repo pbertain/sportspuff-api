@@ -329,6 +329,12 @@ class CyclingClassificationRow(BaseModel):
     source_url: Optional[str] = None
 
 
+class CyclingClassificationBoard(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    classification_type: str
+    rows: List[CyclingClassificationRow]
+
+
 class CyclingStageSchedule(BaseModel):
     model_config = ConfigDict(extra="allow")
     stage_number: Optional[int] = None
@@ -376,7 +382,8 @@ class CyclingStageDetail(BaseModel):
     model_config = ConfigDict(extra="allow")
     stage: CyclingStageSummary
     schedule: CyclingStageSchedule
-    classifications: List[CyclingClassificationRow]
+    classifications: List[CyclingClassificationBoard]
+    classification_rows: Optional[List[CyclingClassificationRow]] = None
 
 
 class CyclingTourBundleResponse(BaseModel):

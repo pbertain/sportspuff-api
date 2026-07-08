@@ -43,6 +43,17 @@ def _parse_date(value: Any) -> Optional[str]:
     return None
 
 
+_CLASSIFICATION_TYPE_ORDER = {
+    "stage": 0,
+    "gc": 1,
+    "points": 2,
+    "kom": 3,
+    "youth": 4,
+    "teams": 5,
+    "combative": 6,
+}
+
+
 class TourDeFranceDataService:
     def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
@@ -195,18 +206,38 @@ class TourDeFranceDataService:
         row["classification_type"] = _clean(row.get("classification_type")).lower()
         return row
 
+    def _classification_boards(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        grouped: Dict[str, List[Dict[str, Any]]] = {}
+        for row in rows:
+            ctype = _clean(row.get("classification_type")).lower()
+            if not ctype:
+                continue
+            grouped.setdefault(ctype, []).append(row)
+
+        ordered_types = sorted(
+            grouped,
+            key=lambda ctype: (_CLASSIFICATION_TYPE_ORDER.get(ctype, 999), ctype),
+        )
+        return [
+            {
+                "classification_type": ctype,
+                "rows": grouped[ctype],
+            }
+            for ctype in ordered_types
+        ]
+
     def _latest_classifications(self, stages: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         latest: Dict[str, Dict[str, Any]] = {}
         for entry in stages:
             stage = entry.get("stage") or {}
             stage_number = _safe_int(stage.get("stage_number")) or 0
-            for row in entry.get("classifications") or []:
+            for row in entry.get("classification_rows") or []:
                 ctype = _clean(row.get("classification_type")).lower()
                 if not ctype:
                     continue
                 slot = latest.get(ctype)
                 if slot is None or stage_number >= slot["stage_number"]:
-                    latest[ctype] = {"stage_number": stage_number, "rows": entry.get("classifications") or []}
+                    latest[ctype] = {"stage_number": stage_number, "rows": entry.get("classification_rows") or []}
 
         boards: Dict[str, List[Dict[str, Any]]] = {}
         for ctype, payload in latest.items():
@@ -271,11 +302,12 @@ class TourDeFranceDataService:
         for entry in stages:
             stage = self._normalize_stage(entry.get("stage") or {})
             schedule = self._normalize_schedule(entry.get("schedule") or {})
-            classifications = [self._normalize_classification_row(row) for row in (entry.get("classifications") or [])]
+            classification_rows = [self._normalize_classification_row(row) for row in (entry.get("classifications") or [])]
             normalized_stages.append({
                 "stage": stage,
                 "schedule": schedule,
-                "classifications": classifications,
+                "classifications": self._classification_boards(classification_rows),
+                "classification_rows": classification_rows,
             })
 
         current_stage = self._current_stage(normalized_stages, year)

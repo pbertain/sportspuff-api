@@ -392,6 +392,9 @@ def test_tour_de_france_stage_endpoint_returns_stage_detail(monkeypatch):
     assert payload["stage"]["date"] == "2026-07-05"
     assert payload["schedule"]["stage_number"] == 2
     assert payload["classifications"]
+    assert payload["classifications"][0]["classification_type"] == "stage"
+    assert payload["classifications"][0]["rows"]
+    assert payload["classification_rows"]
     assert payload["meta"]["source_updated_at"]
 
 
