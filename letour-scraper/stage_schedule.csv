@@ -2,3 +2,21 @@ stage_number,stage_name,cycling_url,rankings_url,stage_start_local,stage_finish_
 1,Barcelone > Barcelone,https://www.letour.fr/en/stage-1,https://www.letour.fr/en/rankings/stage-1,,,17:05,19:16,post_stage,60
 2,Tarragone > Barcelone,https://www.letour.fr/en/stage-2,https://www.letour.fr/en/rankings/stage-2,13:45,17:26,,,post_stage,60
 3,Granollers > Les Angles,https://www.letour.fr/en/stage-3,https://www.letour.fr/en/rankings/stage-3,12:10,16:54,,,post_stage,60
+4,Carcassonne > Foix,https://www.letour.fr/en/stage-4,https://www.letour.fr/en/rankings/stage-4,13:10,17:23,,,post_stage,60
+5,Lannemezan > Pau,https://www.letour.fr/en/stage-5,https://www.letour.fr/en/rankings/stage-5,14:05,17:37,,,pre_stage,60
+6,Pau > Gavarnie-Gèdre,https://www.letour.fr/en/stage-6,https://www.letour.fr/en/rankings/stage-6,12:25,17:29,,,pre_stage,60
+7,Hagetmau > Bordeaux,https://www.letour.fr/en/stage-7,https://www.letour.fr/en/rankings/stage-7,13:15,17:13,,,pre_stage,60
+8,Périgueux > Bergerac,https://www.letour.fr/en/stage-8,https://www.letour.fr/en/rankings/stage-8,13:15,17:20,,,pre_stage,60
+9,Malemort > Ussel,https://www.letour.fr/en/stage-9,https://www.letour.fr/en/rankings/stage-9,13:35,17:47,,,pre_stage,60
+10,Aurillac > Le Lioran,https://www.letour.fr/en/stage-10,https://www.letour.fr/en/rankings/stage-10,13:10,17:12,,,pre_stage,60
+11,Vichy > Nevers,https://www.letour.fr/en/stage-11,https://www.letour.fr/en/rankings/stage-11,13:50,17:31,,,pre_stage,60
+12,Circuit Nevers Magny-Cours > Chalon-sur-Saône,https://www.letour.fr/en/stage-12,https://www.letour.fr/en/rankings/stage-12,13:30,17:29,,,pre_stage,60
+13,Dole > Belfort,https://www.letour.fr/en/stage-13,https://www.letour.fr/en/rankings/stage-13,13:00,17:46,,,pre_stage,60
+14,Mulhouse > Le Markstein Fellering,https://www.letour.fr/en/stage-14,https://www.letour.fr/en/rankings/stage-14,13:10,17:24,,,pre_stage,60
+15,Champagnole > Plateau de Solaison,https://www.letour.fr/en/stage-15,https://www.letour.fr/en/rankings/stage-15,13:10,17:41,,,pre_stage,60
+16,Évian-les-Bains > Thonon-les-Bains,https://www.letour.fr/en/stage-16,https://www.letour.fr/en/rankings/stage-16,,,13:00,17:50,pre_stage,60
+17,Chambery > Voiron,https://www.letour.fr/en/stage-17,https://www.letour.fr/en/rankings/stage-17,13:20,17:18,,,pre_stage,60
+18,Voiron > Orcières-Merlette,https://www.letour.fr/en/stage-18,https://www.letour.fr/en/rankings/stage-18,12:35,17:12,,,pre_stage,60
+19,Gap > Alpe d'Huez,https://www.letour.fr/en/stage-19,https://www.letour.fr/en/rankings/stage-19,14:00,17:24,,,pre_stage,60
+20,Le Bourg d'Oisans > Alpe d'Huez,https://www.letour.fr/en/stage-20,https://www.letour.fr/en/rankings/stage-20,11:20,16:11,,,pre_stage,60
+21,Thoiry > Paris Champs-Élysées,https://www.letour.fr/en/stage-21,https://www.letour.fr/en/rankings/stage-21,16:15,19:30,,,pre_stage,60

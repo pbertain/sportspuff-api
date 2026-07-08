@@ -522,7 +522,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--year", type=int, default=2026)
     parser.add_argument("--start-stage", type=int, default=1)
-    parser.add_argument("--end-stage", type=int, default=3)
+    parser.add_argument("--end-stage", type=int, default=21)
     parser.add_argument("--outdir", default="output/letour-multi-stage")
     args = parser.parse_args()
 
