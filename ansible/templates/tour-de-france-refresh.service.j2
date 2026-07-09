@@ -1,0 +1,15 @@
+[Unit]
+Description=Tour de France Bundle Refresher ({{ deployment_env }})
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ansible
+WorkingDirectory={{ deployment_dir }}/letour-scraper
+ExecStart={{ deployment_dir }}/letour-scraper/.venv/bin/python {{ deployment_dir }}/letour-scraper/refresh_if_due.py --outdir {{ deployment_dir }}/letour-scraper
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

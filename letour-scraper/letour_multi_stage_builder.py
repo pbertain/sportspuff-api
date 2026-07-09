@@ -5,6 +5,7 @@ import re
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urljoin
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import requests
@@ -27,6 +28,10 @@ CLASSIFICATION_TYPE_BY_TAB = {
 }
 
 
+def _now_tour_local_naive():
+    return datetime.now(ZoneInfo("Europe/Paris")).replace(tzinfo=None)
+
+
 def fetch_html(path: str):
     url = path if path.startswith("http") else urljoin(BASE, path)
     response = requests.get(url, headers=HEADERS, timeout=30)
@@ -44,6 +49,11 @@ def page_title(html: str) -> str:
 def page_text(html: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
     return " ".join(soup.get_text(" ", strip=True).split())
+
+
+def main_stage_header(html: str):
+    soup = BeautifulSoup(html, "html.parser")
+    return soup.select_one(".stageHeader__stage--main") or soup
 
 
 def validate_stage_page(html: str, stage_number: int, year: int):
@@ -120,18 +130,26 @@ def parse_stage_date(text: str, year: int):
     return date(year, month, day).isoformat()
 
 
-def parse_stage_distance_km(text: str):
-    match = re.search(r"Length\s+([0-9]+(?:\.[0-9]+)?)\s*km", text)
-    return match.group(1) if match else None
-
-
-def parse_stage_type(text: str):
-    match = re.search(r"Type\s+([A-Za-z][A-Za-z \-]+?)\s+D\+", text)
-    return _clean(match.group(1)) if match else None
+def parse_stage_metrics(html: str):
+    header = main_stage_header(html)
+    metrics = {"distance_km": None, "race_type": None}
+    for block in header.select(".stageHeader__length__text"):
+        parts = [_clean(part) for part in block.stripped_strings if _clean(part)]
+        if len(parts) < 2:
+            continue
+        label, value = parts[0], parts[-1]
+        label_norm = norm(label)
+        if label_norm == "length":
+            match = re.search(r"([0-9]+(?:\.[0-9]+)?)\s*km", value)
+            if match:
+                metrics["distance_km"] = match.group(1)
+        elif label_norm == "type":
+            metrics["race_type"] = value
+    return metrics
 
 
 def infer_stage_state(stage_row: dict, now_local: datetime | None = None):
-    now_local = now_local or datetime.now()
+    now_local = now_local or _now_tour_local_naive()
     stage_date_raw = stage_row.get("date")
     if not stage_date_raw:
         return "unknown"
@@ -166,7 +184,7 @@ def recommended_poll_minutes(stage_row: dict, now_local: datetime | None = None)
 
 
 def stage_status(stage_row: dict, has_results: bool, now_local: datetime | None = None):
-    now_local = now_local or datetime.now()
+    now_local = now_local or _now_tour_local_naive()
     stage_date_raw = stage_row.get("date")
     if stage_date_raw:
         try:
@@ -349,6 +367,7 @@ def build_for_stage(stage_number: int, year: int):
     rankings_title = validate_stage_page(rankings_html, stage_number, year)
     stage_text = page_text(stage_html)
     rankings_text = page_text(rankings_html)
+    stage_metrics = parse_stage_metrics(stage_html)
 
     teams_stage, riders_stage = extract_links(stage_html)
     teams_rank, riders_rank = extract_links(rankings_html)
@@ -378,16 +397,15 @@ def build_for_stage(stage_number: int, year: int):
                 "team": top.iloc[0].get("team_name"),
                 "team_url": top.iloc[0].get("team_url"),
             }
-    if not winner["winner"]:
-        winner = extract_stage_winner(stage_html)
+    stage_date = parse_stage_date(rankings_text or stage_text, year)
 
     stage_row = {
         "race": "Tour de France",
         "stage_number": stage_number,
         "stage_name": stage_name,
-        "date": parse_stage_date(rankings_text or stage_text, year),
-        "distance_km": parse_stage_distance_km(stage_text),
-        "race_type": parse_stage_type(stage_text),
+        "date": stage_date,
+        "distance_km": stage_metrics.get("distance_km"),
+        "race_type": stage_metrics.get("race_type"),
         "start_city": stage_name.split(">")[0].strip() if ">" in stage_name else None,
         "finish_city": stage_name.split(">")[-1].strip() if ">" in stage_name else None,
         "cycling_event_label": f"Tour de France {year} - Stage {stage_number}",
@@ -402,6 +420,9 @@ def build_for_stage(stage_number: int, year: int):
     stage_row["poll_state"] = infer_stage_state(stage_row)
     stage_row["recommended_poll_minutes"] = recommended_poll_minutes(stage_row)
     stage_row["status"] = stage_status(stage_row, has_results=not classifications.empty)
+    if not winner["winner"] and stage_row["status"] == "final":
+        winner = extract_stage_winner(stage_html)
+        stage_row.update(winner)
 
     rider_dim = (
         riders[["rider_name", "rider_slug", "rider_url"]]

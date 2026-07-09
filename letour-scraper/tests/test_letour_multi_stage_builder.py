@@ -104,3 +104,33 @@ def test_stage_date_and_state_use_stage_day_not_today():
     assert state_before == "active_window"
     assert state_during == "active_window"
     assert state_after == "post_stage"
+
+
+def test_parse_stage_metrics_scopes_to_main_stage_header():
+    html = """
+    <a class="stageHeader__stage">
+      <p class="stageHeader__length__text">
+        <span class="stageHeader__length__label">Length</span><br>
+        19.6 km
+      </p>
+      <p class="stageHeader__length__text">
+        <span class="stageHeader__length__label">Type</span><br>
+        Team Time-Trial
+      </p>
+    </a>
+    <div class="stageHeader__stage stageHeader__stage--main">
+      <p class="stageHeader__length__text">
+        <span class="stageHeader__length__label">Length</span><br>
+        168.5 km
+      </p>
+      <p class="stageHeader__length__text">
+        <span class="stageHeader__length__label">Type</span><br>
+        Hilly
+      </p>
+    </div>
+    """
+
+    metrics = builder.parse_stage_metrics(html)
+
+    assert metrics["distance_km"] == "168.5"
+    assert metrics["race_type"] == "Hilly"

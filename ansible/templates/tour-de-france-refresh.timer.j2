@@ -1,0 +1,13 @@
+[Unit]
+Description=Tour de France Bundle Refresher Timer ({{ deployment_env }})
+
+[Timer]
+Unit=tour-de-france-refresh-{{ deployment_env }}.service
+OnCalendar=*-*-* *:07:00
+OnCalendar=*-*-* *:22:00
+OnCalendar=*-*-* *:37:00
+OnCalendar=*-*-* *:52:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

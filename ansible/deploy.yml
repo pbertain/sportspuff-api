@@ -88,6 +88,20 @@
         dest: "{{ deployment_dir }}/"
         mode: preserve
 
+    - name: Ensure Tour scraper Python venv support is installed
+      apt:
+        name: python3-venv
+        state: present
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install Tour scraper Python dependencies
+      pip:
+        requirements: "{{ deployment_dir }}/letour-scraper/requirements.txt"
+        virtualenv: "{{ deployment_dir }}/letour-scraper/.venv"
+        virtualenv_command: python3 -m venv
+      become_user: "{{ app_user }}"
+
     - name: Copy systemd directory
       copy:
         src: ../sports-data-service/systemd
@@ -374,6 +388,10 @@
           dest: "sports-live-poller-{{ deployment_env }}.service"
         - src: templates/sports-live-poller.timer.j2
           dest: "sports-live-poller-{{ deployment_env }}.timer"
+        - src: templates/tour-de-france-refresh.service.j2
+          dest: "tour-de-france-refresh-{{ deployment_env }}.service"
+        - src: templates/tour-de-france-refresh.timer.j2
+          dest: "tour-de-france-refresh-{{ deployment_env }}.timer"
     
     - name: Reload systemd daemon
       systemd:
@@ -394,6 +412,12 @@
     - name: Enable and start live poller timer
       systemd:
         name: "sports-live-poller-{{ deployment_env }}.timer"
+        enabled: yes
+        state: started
+
+    - name: Enable and start Tour refresh timer
+      systemd:
+        name: "tour-de-france-refresh-{{ deployment_env }}.timer"
         enabled: yes
         state: started
     
