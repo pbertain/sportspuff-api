@@ -473,7 +473,11 @@ def test_tour_de_france_bundle_endpoint_uses_letour_scraper_bundle(monkeypatch):
     assert payload["stages"]
     assert payload["stages"][0]["stage"]["date"] == "2026-07-04"
     assert payload["stages"][0]["stage"]["status"] == "final"
+    assert payload["stages"][0]["stage"]["stage_timezone"] == "Europe/Paris"
+    assert payload["stages"][0]["stage"]["stage_timezone_abbrev"] == "CEST"
+    assert payload["stages"][1]["stage"]["stage_start_utc"] == "2026-07-05T11:45:00Z"
     assert payload["stages"][0]["schedule"]["stage_number"] == 1
+    assert payload["stages"][0]["schedule"]["stage_timezone"] == "Europe/Paris"
     assert payload["latest_classifications"]["stage"]
     assert payload["meta"]["source_updated_at"]
 
@@ -492,7 +496,11 @@ def test_tour_de_france_stage_endpoint_returns_stage_detail(monkeypatch):
     assert payload["year"] == 2026
     assert payload["stage"]["stage_number"] == 2
     assert payload["stage"]["date"] == "2026-07-05"
+    assert payload["stage"]["stage_timezone"] == "Europe/Paris"
+    assert payload["stage"]["stage_timezone_abbrev"] == "CEST"
+    assert payload["stage"]["stage_start_utc"] == "2026-07-05T11:45:00Z"
     assert payload["schedule"]["stage_number"] == 2
+    assert payload["schedule"]["stage_timezone"] == "Europe/Paris"
     assert payload["classifications"]
     assert payload["classifications"][0]["classification_type"] == "stage"
     assert payload["classifications"][0]["rows"]

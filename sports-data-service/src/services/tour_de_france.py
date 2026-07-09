@@ -5,6 +5,7 @@ import json
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+from zoneinfo import ZoneInfo
 
 
 def _iso_utc_from_epoch(epoch: float) -> str:
@@ -52,6 +53,29 @@ _CLASSIFICATION_TYPE_ORDER = {
     "teams": 5,
     "combative": 6,
 }
+
+_TOUR_TIMEZONE = ZoneInfo("Europe/Paris")
+
+
+def _local_time_to_utc_iso(stage_date: Optional[str], local_time: Any) -> Optional[str]:
+    if not stage_date or not local_time:
+        return None
+    try:
+        naive = datetime.strptime(f"{stage_date} {str(local_time).strip()}", "%Y-%m-%d %H:%M")
+    except ValueError:
+        return None
+    localized = naive.replace(tzinfo=_TOUR_TIMEZONE)
+    return localized.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _timezone_abbrev(stage_date: Optional[str], local_time: Any) -> str:
+    if stage_date and local_time:
+        try:
+            naive = datetime.strptime(f"{stage_date} {str(local_time).strip()}", "%Y-%m-%d %H:%M")
+            return naive.replace(tzinfo=_TOUR_TIMEZONE).tzname() or "Europe/Paris"
+        except ValueError:
+            pass
+    return datetime.now(_TOUR_TIMEZONE).tzname() or "Europe/Paris"
 
 
 class TourDeFranceDataService:
@@ -198,6 +222,31 @@ class TourDeFranceDataService:
         schedule["recommended_poll_minutes"] = _safe_int(schedule.get("recommended_poll_minutes"))
         return schedule
 
+    def _annotate_stage_timezones(self, stage: Dict[str, Any], schedule: Dict[str, Any]) -> None:
+        stage_date = stage.get("date")
+        timezone_abbrev = _timezone_abbrev(
+            stage_date,
+            stage.get("stage_start_local") or schedule.get("stage_start_local"),
+        )
+        shared = {
+            "stage_timezone": "Europe/Paris",
+            "stage_timezone_abbrev": timezone_abbrev,
+        }
+        stage.update(shared)
+        schedule.update(shared)
+
+        for field in (
+            "stage_start_local",
+            "stage_finish_expected_local",
+            "stage_first_start_local",
+            "stage_last_arrival_local",
+        ):
+            utc_field = field.replace("_local", "_utc")
+            local_value = stage.get(field) or schedule.get(field)
+            utc_value = _local_time_to_utc_iso(stage_date, local_value)
+            stage[utc_field] = utc_value
+            schedule[utc_field] = utc_value
+
     def _normalize_classification_row(self, raw: Dict[str, Any]) -> Dict[str, Any]:
         row = dict(raw)
         row["stage_number"] = _safe_int(row.get("stage_number"))
@@ -302,6 +351,7 @@ class TourDeFranceDataService:
         for entry in stages:
             stage = self._normalize_stage(entry.get("stage") or {})
             schedule = self._normalize_schedule(entry.get("schedule") or {})
+            self._annotate_stage_timezones(stage, schedule)
             classification_rows = [self._normalize_classification_row(row) for row in (entry.get("classifications") or [])]
             normalized_stages.append({
                 "stage": stage,

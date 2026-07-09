@@ -342,9 +342,15 @@ class CyclingStageSchedule(BaseModel):
     cycling_url: Optional[str] = None
     rankings_url: Optional[str] = None
     stage_start_local: Optional[str] = None
+    stage_start_utc: Optional[str] = None
     stage_finish_expected_local: Optional[str] = None
+    stage_finish_expected_utc: Optional[str] = None
     stage_first_start_local: Optional[str] = None
+    stage_first_start_utc: Optional[str] = None
     stage_last_arrival_local: Optional[str] = None
+    stage_last_arrival_utc: Optional[str] = None
+    stage_timezone: Optional[str] = None
+    stage_timezone_abbrev: Optional[str] = None
     poll_state: Optional[str] = None
     recommended_poll_minutes: Optional[int] = None
 
@@ -371,9 +377,15 @@ class CyclingStageSummary(BaseModel):
     stage_page_title: Optional[str] = None
     rankings_page_title: Optional[str] = None
     stage_start_local: Optional[str] = None
+    stage_start_utc: Optional[str] = None
     stage_finish_expected_local: Optional[str] = None
+    stage_finish_expected_utc: Optional[str] = None
     stage_first_start_local: Optional[str] = None
+    stage_first_start_utc: Optional[str] = None
     stage_last_arrival_local: Optional[str] = None
+    stage_last_arrival_utc: Optional[str] = None
+    stage_timezone: Optional[str] = None
+    stage_timezone_abbrev: Optional[str] = None
     poll_state: Optional[str] = None
     recommended_poll_minutes: Optional[int] = None
 
