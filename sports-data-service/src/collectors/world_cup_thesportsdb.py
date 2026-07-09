@@ -493,6 +493,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             parsed = self._parse_event(raw)
             if not parsed:
                 continue
+            parsed = self._enrich_knockout_match_result(parsed, _enrich_box)
             round_label = parsed.get("wc_round_label") or "knockout"
             by_round[round_label].append(parsed)
             if round_label == "round_of_32":
@@ -622,6 +623,40 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
                 {"name": "Final", "matches": final if final else []},
             ],
         }
+
+    @staticmethod
+    def _enrich_knockout_match_result(
+        actual: Dict[str, Any],
+        enrich_box,
+    ) -> Dict[str, Any]:
+        if not actual or not actual.get("game_date") or not actual.get("home_team") or not actual.get("visitor_team"):
+            return actual
+
+        if actual.get("home_shootout_score") is not None and actual.get("visitor_shootout_score") is not None and actual.get("wc_winner"):
+            return actual
+
+        try:
+            temp_game = [{
+                "home_team": actual.get("home_team"),
+                "visitor_team": actual.get("visitor_team"),
+                "game_date": actual.get("game_date"),
+                "home_period_scores": {},
+                "visitor_period_scores": {},
+                "home_shootout_score": actual.get("home_shootout_score"),
+                "visitor_shootout_score": actual.get("visitor_shootout_score"),
+            }]
+            enrich_box("wc", datetime.strptime(actual.get("game_date"), "%Y-%m-%d").date(), temp_game)
+            home_so = temp_game[0].get("home_shootout_score")
+            away_so = temp_game[0].get("visitor_shootout_score")
+            if home_so is not None and actual.get("home_shootout_score") is None:
+                actual["home_shootout_score"] = home_so
+            if away_so is not None and actual.get("visitor_shootout_score") is None:
+                actual["visitor_shootout_score"] = away_so
+            if not actual.get("wc_winner") and home_so is not None and away_so is not None and home_so != away_so:
+                actual["wc_winner"] = actual.get("home_team") if int(home_so or 0) > int(away_so or 0) else actual.get("visitor_team")
+        except Exception:
+            return actual
+        return actual
 
     def _build_knockout_round(
         self,

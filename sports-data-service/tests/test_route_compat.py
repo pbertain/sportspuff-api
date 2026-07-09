@@ -571,6 +571,53 @@ def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):
     assert match["away_record"] == "1-1-1"
 
 
+def test_world_cup_later_round_matches_keep_shootout_winners(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    raw_event = {
+        "idEvent": "2513671",
+        "intMatch": "96",
+        "intRound": "16",
+        "dateEvent": "2026-07-07",
+        "strTime": "20:00:00",
+        "strStatus": "AP",
+        "strHomeTeam": "Switzerland",
+        "strAwayTeam": "Colombia",
+        "intHomeScore": "0",
+        "intAwayScore": "0",
+    }
+
+    def fake_season_events(_season):
+        return [raw_event]
+
+    def fake_enrich_games(_sport, _date, games):
+        games[0]["home_shootout_score"] = 4
+        games[0]["visitor_shootout_score"] = 3
+        return games
+
+    monkeypatch.setattr(collector, "_season_events", fake_season_events)
+    monkeypatch.setattr(collector, "get_team_records", lambda: {
+        "SWITZERLAND": {"wins": 2, "draws": 1, "losses": 0, "record": "2-1-0", "group": "B", "group_rank": 1, "currently_advancing": True},
+        "COLOMBIA": {"wins": 2, "draws": 1, "losses": 0, "record": "2-1-0", "group": "K", "group_rank": 1, "currently_advancing": True},
+    })
+    monkeypatch.setattr("src.services.box_score.enrich_games", fake_enrich_games)
+
+    bracket = collector.get_knockout_bracket()
+    round_of_16 = bracket["rounds"][1]["matches"]
+    match = next(m for m in round_of_16 if m["game_id"] == "2513671")
+
+    assert match["home_team"] == "Switzerland"
+    assert match["away_team"] == "Colombia"
+    assert match["home_score"] == 0
+    assert match["visitor_score"] == 0
+    assert match["home_shootout_score"] == 4
+    assert match["visitor_shootout_score"] == 3
+    assert match["winner"] == "Switzerland"
+    assert match["wc_winner"] == "Switzerland"
+
+
 def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
     from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
 
