@@ -32,6 +32,7 @@ services:
       - ./templates:/app/templates
       - ./scripts:/app/scripts
       - ../letour-scraper:/app/letour-scraper:ro
+      - ../lavuelta-scraper:/app/lavuelta-scraper:ro
     depends_on:
       postgres:
         condition: service_healthy

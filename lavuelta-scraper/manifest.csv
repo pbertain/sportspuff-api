@@ -1,0 +1,9 @@
+file,description
+stages.csv,"One row per stage with schedule windows, poll hints, and source URLs"
+classifications.csv,Ranking rows per stage with classification types and rider/team links
+teams.csv,Unique teams with lavuelta.es links
+riders.csv,Unique riders with lavuelta.es links for page rendering
+stage_schedule.csv,Scheduling helper for your app
+polling_plan.json,Machine-readable polling guidance
+suggested_cron.txt,Suggested cron entries
+lavuelta_app_bundle.json,App-friendly JSON export

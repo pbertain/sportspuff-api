@@ -79,15 +79,19 @@ def _timezone_abbrev(stage_date: Optional[str], local_time: Any) -> str:
 
 
 class TourDeFranceDataService:
+    bundle_basename = "letour_app_bundle"
+    default_race = "Tour de France"
+    enable_stage_overlay = True
+
     def __init__(self, data_dir: str):
         self.data_dir = Path(data_dir)
         self.repo_root = Path(__file__).resolve().parents[3]
 
     def _bundle_path(self, year: int) -> Path:
-        preferred = self.data_dir / f"letour_app_bundle_{year}.json"
+        preferred = self.data_dir / f"{self.bundle_basename}_{year}.json"
         if preferred.exists():
             return preferred
-        return self.data_dir / "letour_app_bundle.json"
+        return self.data_dir / f"{self.bundle_basename}.json"
 
     def _csv_path(self, name: str) -> Path:
         return self.data_dir / name
@@ -151,8 +155,8 @@ class TourDeFranceDataService:
             stage_map[stage_number]["classifications"].append(raw)
 
         bundle = {
-            "race": "Tour de France",
-            "source": "letour-scraper-csv",
+            "race": self.default_race,
+            "source": f"{self.bundle_basename}-csv",
             "generated_files": [],
             "teams": teams,
             "riders": riders,
@@ -162,6 +166,8 @@ class TourDeFranceDataService:
         return bundle
 
     def _overlay_stage_rows(self) -> List[Dict[str, Any]]:
+        if not self.enable_stage_overlay:
+            return []
         for path in (
             self._csv_path("cycling_stages.csv"),
             self.repo_root / "sports-data-service" / "templates" / "cycling_stages.csv",
@@ -363,9 +369,9 @@ class TourDeFranceDataService:
         current_stage = self._current_stage(normalized_stages, year)
         latest_classifications = self._latest_classifications(normalized_stages)
         bundle = {
-            "race": payload.get("race") or "Tour de France",
+            "race": payload.get("race") or self.default_race,
             "year": year,
-            "source": payload.get("source") or "letour-scraper",
+            "source": payload.get("source") or self.bundle_basename,
             "generated_at": payload.get("generated_at") or source_updated_at,
             "source_updated_at": source_updated_at,
             "generated_files": payload.get("generated_files") or [],
@@ -381,12 +387,25 @@ class TourDeFranceDataService:
         bundle = self.get_bundle(year)
         for entry in bundle.get("stages") or []:
             if _safe_int((entry.get("stage") or {}).get("stage_number")) == stage_number:
+                stage_results: List[Dict[str, Any]] = []
+                for board in entry.get("classifications") or []:
+                    if _clean(board.get("classification_type")).lower() == "stage":
+                        stage_results = list(board.get("rows") or [])
+                        break
                 return {
                     "race": bundle.get("race"),
                     "year": bundle.get("year"),
                     "source": bundle.get("source"),
                     "generated_at": bundle.get("generated_at"),
                     "source_updated_at": bundle.get("source_updated_at"),
+                    "stage_results": stage_results,
+                    "overall_classifications": bundle.get("latest_classifications") or {},
                     **entry,
                 }
         return None
+
+
+class LaVueltaDataService(TourDeFranceDataService):
+    bundle_basename = "lavuelta_app_bundle"
+    default_race = "La Vuelta"
+    enable_stage_overlay = False

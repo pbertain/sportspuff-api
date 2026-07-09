@@ -1,0 +1,4 @@
+stage_number,stage_name,stage_start_local,stage_finish_expected_local,stage_first_start_local,stage_last_arrival_local,poll_state,recommended_poll_minutes,cycling_url,rankings_url
+1,Monaco > Monaco,,,,,unknown,60,https://www.lavuelta.es/en/stage-1,https://www.lavuelta.es/en/rankings/stage-1
+2,Monaco > Manosque,,,,,unknown,60,https://www.lavuelta.es/en/stage-2,https://www.lavuelta.es/en/rankings/stage-2
+3,Gruissan,,,,,unknown,60,https://www.lavuelta.es/en/stage-3,https://www.lavuelta.es/en/rankings/stage-3

@@ -420,7 +420,10 @@ class CyclingTourStageResponse(BaseModel):
     generated_at: Optional[str] = None
     stage: CyclingStageSummary
     schedule: CyclingStageSchedule
-    classifications: List[CyclingClassificationRow]
+    classifications: List[CyclingClassificationBoard]
+    classification_rows: Optional[List[CyclingClassificationRow]] = None
+    stage_results: Optional[List[CyclingClassificationRow]] = None
+    overall_classifications: Optional[Dict[str, List[CyclingClassificationRow]]] = None
     meta: Optional[EndpointMeta] = None
 
 

@@ -505,6 +505,10 @@ def test_tour_de_france_stage_endpoint_returns_stage_detail(monkeypatch):
     assert payload["classifications"][0]["classification_type"] == "stage"
     assert payload["classifications"][0]["rows"]
     assert payload["classification_rows"]
+    assert payload["stage_results"]
+    assert payload["stage_results"][0]["classification_type"] == "stage"
+    assert payload["stage_results"][0]["rank"] == 1
+    assert payload["overall_classifications"]["stage"]
     assert payload["meta"]["source_updated_at"]
 
 
@@ -520,6 +524,44 @@ def test_tour_de_france_stage_endpoint_404s_for_unknown_stage(monkeypatch):
         api.get_tour_de_france_stage_api_v1(2026, 99)
 
     assert exc.value.status_code == 404
+
+
+def test_la_vuelta_bundle_endpoint_uses_lavuelta_bundle(monkeypatch):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(
+        api.settings,
+        "la_vuelta_data_dir",
+        str(Path(__file__).resolve().parents[2] / "lavuelta-scraper"),
+    )
+
+    payload = api.get_la_vuelta_bundle_api_v1(2026)
+
+    assert payload["race"] == "La Vuelta"
+    assert payload["year"] == 2026
+    assert payload["stages"]
+    assert payload["stages"][0]["stage"]["stage_number"] == 1
+    assert payload["meta"]["source_updated_at"]
+
+
+def test_la_vuelta_stage_endpoint_returns_stage_results(monkeypatch):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(
+        api.settings,
+        "la_vuelta_data_dir",
+        str(Path(__file__).resolve().parents[2] / "lavuelta-scraper"),
+    )
+
+    payload = api.get_la_vuelta_stage_api_v1(2026, 1)
+
+    assert payload["race"] == "La Vuelta"
+    assert payload["year"] == 2026
+    assert payload["stage"]["stage_number"] == 1
+    assert payload["classifications"]
+    assert payload["classifications"][0]["classification_type"] == "stage"
+    assert payload["stage_results"]
+    assert payload["stage_results"][0]["classification_type"] == "stage"
+    assert payload["stage_results"][0]["rank"] == 1
+    assert payload["meta"]["source_updated_at"]
 
 
 def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):

@@ -54,6 +54,7 @@
       loop:
         - "{{ deployment_dir }}/sports-data-service"
         - "{{ deployment_dir }}/letour-scraper"
+        - "{{ deployment_dir }}/lavuelta-scraper"
         - "{{ deployment_dir }}/sports-data-service/src"
         - "{{ deployment_dir }}/sports-data-service/src/collectors"
         - "{{ deployment_dir }}/sports-data-service/src/services"
@@ -85,6 +86,12 @@
     - name: Copy letour-scraper directory
       copy:
         src: ../letour-scraper
+        dest: "{{ deployment_dir }}/"
+        mode: preserve
+
+    - name: Copy lavuelta-scraper directory
+      copy:
+        src: ../lavuelta-scraper
         dest: "{{ deployment_dir }}/"
         mode: preserve
 

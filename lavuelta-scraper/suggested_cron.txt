@@ -1,0 +1,6 @@
+# Hourly catch-all sync for La Vuelta
+7 * * * * python lavuelta_multi_stage_builder.py --year 2026 --start-stage 1 --end-stage 21 --outdir output/lavuelta-prod
+
+# During today's active stage window, poll every 15 minutes
+# Suggested cron ticks: */15 * * * *
+# Your app can inspect stages.csv -> poll_state and recommended_poll_minutes to decide whether to fan out a full stage refresh.
