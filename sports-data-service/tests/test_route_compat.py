@@ -281,6 +281,15 @@ def test_tennis_contract_exposes_rank_aliases():
             "home_seed": 1,
             "visitor_seed": 2,
             "tennis_tournament": "Wimbledon",
+            "tennis_set_scores": [
+                {"set": 1, "home": 6, "visitor": 4},
+                {"set": 2, "home": 3, "visitor": 6},
+                {"set": 3, "home": 6, "visitor": 3},
+                {"set": 4, "home": 7, "visitor": 5},
+            ],
+            "home_sets_won": 3,
+            "visitor_sets_won": 1,
+            "tennis_winner": "home",
         }
     ]
 
@@ -288,6 +297,99 @@ def test_tennis_contract_exposes_rank_aliases():
 
     assert games[0]["player1_rank"] == 2
     assert games[0]["player2_rank"] == 1
+    assert games[0]["visitor_rank"] == 2
+    assert games[0]["home_rank"] == 1
+    assert games[0]["visitor_score"] == 1
+    assert games[0]["home_score"] == 3
+    assert games[0]["player1_score"] == [4, 6, 3, 5]
+    assert games[0]["player2_score"] == [6, 3, 6, 7]
+    assert games[0]["winner"] == "player2"
+
+
+def test_tennis_scores_api_uses_sets_won_as_score_totals(monkeypatch):
+    class Wrapper:
+        def __init__(self):
+            self.game_id = "atp-1"
+            self.game_date = date(2026, 7, 8)
+            self.game_time = None
+            self.home_team = "Alcaraz"
+            self.home_team_abbrev = ""
+            self.visitor_team = "Djokovic"
+            self.visitor_team_abbrev = ""
+            self.game_status = "final"
+            self.game_type = "match"
+            self.home_score_total = 0
+            self.visitor_score_total = 0
+            self.is_final = True
+            self.current_period = ""
+            self.time_remaining = ""
+            self.home_wins = 0
+            self.home_losses = 0
+            self.visitor_wins = 0
+            self.visitor_losses = 0
+            self.home_period_scores = {}
+            self.visitor_period_scores = {}
+            self.tennis_tournament = "Wimbledon"
+            self.tennis_match_label = "Wimbledon Alcaraz vs Djokovic"
+            self.tennis_round = ""
+            self.tennis_country = ""
+            self.tennis_video = ""
+            self.home_full_name = "Carlos Alcaraz"
+            self.visitor_full_name = "Novak Djokovic"
+            self.home_seed = None
+            self.visitor_seed = None
+            self.tennis_set_scores = None
+            self.home_sets_won = None
+            self.visitor_sets_won = None
+            self.tennis_summary = None
+            self.tennis_winner = None
+
+    def fake_get_games_for_curl(league, target_date, timezone, include_metadata=False, **kwargs):
+        payload = [Wrapper()]
+        meta = {"timestamp": 0, "empty_state": None, "source_updated_at": None}
+        return (payload, meta) if include_metadata else payload
+
+    def fake_fetch_matches(sport, target_date):
+        assert sport == "atp"
+        return [
+            {
+                "competition_date": "2026-07-08",
+                "competition_time": "2026-07-08T10:00:00Z",
+                "tournament": "Wimbledon",
+                "side1_name": "Novak Djokovic",
+                "side2_name": "Carlos Alcaraz",
+                "side1_sets_won": 1,
+                "side2_sets_won": 3,
+                "side1_winner": False,
+                "side2_winner": True,
+                "side1_seed": 2,
+                "side2_seed": 1,
+                "set_scores": [
+                    {"set": 1, "side1": 4, "side2": 6},
+                    {"set": 2, "side1": 6, "side2": 3},
+                    {"set": 3, "side1": 3, "side2": 6},
+                    {"set": 4, "side1": 5, "side2": 7},
+                ],
+                "summary": "Carlos Alcaraz bt Novak Djokovic 6-4 3-6 6-3 7-5",
+                "is_final": True,
+                "state": "post",
+                "venue_name": "Centre Court",
+                "court_name": "Centre Court",
+            }
+        ]
+
+    monkeypatch.setattr(api, "_get_games_for_curl", fake_get_games_for_curl)
+    monkeypatch.setattr(tennis_scores, "_fetch_matches", fake_fetch_matches)
+
+    payload = api.get_scores_api_v1("atp", "2026-07-08", None)
+    score = payload["scores"][0]
+
+    assert score["visitor_score"] == 1
+    assert score["home_score"] == 3
+    assert score["player1_score"] == [4, 6, 3, 5]
+    assert score["player2_score"] == [6, 3, 6, 7]
+    assert score["player1_sets_won"] == 1
+    assert score["player2_sets_won"] == 3
 
 
 def test_wc_curl_wrappers_keep_pk_scores(monkeypatch):

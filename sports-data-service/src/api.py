@@ -3315,6 +3315,8 @@ def _apply_tennis_contract(sport: str, games_dicts: list) -> None:
         g["player2_seed"] = g.get("home_seed")
         g["player1_rank"] = g.get("visitor_seed")
         g["player2_rank"] = g.get("home_seed")
+        g["visitor_rank"] = g.get("visitor_seed")
+        g["home_rank"] = g.get("home_seed")
 
         sets = g.get("tennis_set_scores") or []
         if sets:
@@ -3325,6 +3327,10 @@ def _apply_tennis_contract(sport: str, games_dicts: list) -> None:
             g["player2_score"] = None
         g["player1_sets_won"] = g.get("visitor_sets_won")
         g["player2_sets_won"] = g.get("home_sets_won")
+        if g.get("visitor_sets_won") is not None:
+            g["visitor_score"] = g.get("visitor_sets_won")
+        if g.get("home_sets_won") is not None:
+            g["home_score"] = g.get("home_sets_won")
 
         tw = g.get("tennis_winner")
         if tw == "visitor":
