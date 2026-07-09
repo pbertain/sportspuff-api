@@ -259,6 +259,22 @@ class TourDeFranceDataService:
         row["rank"] = _safe_int(row.get("rank"))
         row["bib"] = _safe_int(row.get("bib"))
         row["classification_type"] = _clean(row.get("classification_type")).lower()
+        for field in (
+            "race",
+            "rider_name",
+            "rider_slug",
+            "rider_url",
+            "team_name",
+            "team_slug",
+            "team_url",
+            "time",
+            "gap",
+            "points",
+            "bonus",
+            "source_url",
+        ):
+            value = _clean(row.get(field))
+            row[field] = value or None
         return row
 
     def _classification_boards(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
