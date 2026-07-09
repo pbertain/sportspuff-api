@@ -208,6 +208,31 @@ class TourDeFranceDataService:
         stage["stage_number"] = _safe_int(stage.get("stage_number"))
         stage["recommended_poll_minutes"] = _safe_int(stage.get("recommended_poll_minutes"))
         stage["date"] = _parse_date(stage.get("date")) or _clean(stage.get("date")) or None
+        for field in (
+            "race",
+            "stage_name",
+            "winner",
+            "winner_url",
+            "team",
+            "team_url",
+            "distance_km",
+            "race_type",
+            "start_city",
+            "finish_city",
+            "cycling_event_label",
+            "cycling_country",
+            "cycling_url",
+            "rankings_url",
+            "stage_page_title",
+            "rankings_page_title",
+            "stage_start_local",
+            "stage_finish_expected_local",
+            "stage_first_start_local",
+            "stage_last_arrival_local",
+            "poll_state",
+        ):
+            value = _clean(stage.get(field))
+            stage[field] = value or None
         status = _clean(stage.get("status")).lower()
         if status in ("completed", "final", "finished"):
             status = "final"
