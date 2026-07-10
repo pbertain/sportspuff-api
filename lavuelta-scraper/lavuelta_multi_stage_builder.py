@@ -87,6 +87,11 @@ def norm(s):
     return ' '.join(str(s).split()).strip().lower()
 
 
+def looks_time_value(value) -> bool:
+    text = ' '.join(str(value or '').split()).strip()
+    return bool(re.search(r"\d{1,2}h\s+\d{2}'\s+\d{2}''", text))
+
+
 def parse_stage_schedule(text: str):
     schedule = {
         'stage_start_local': None,
@@ -127,18 +132,43 @@ def normalize_rider_table(df: pd.DataFrame, stage_number: int, source_url: str, 
     cols = list(df.columns)
     rows = []
     for _, row in df.iterrows():
+        rank = row[cols[0]] if len(cols) > 0 else None
+        rider_name = row[cols[1]] if len(cols) > 1 else None
+        bib = row[cols[2]] if len(cols) > 2 else None
+        team_name = row[cols[3]] if len(cols) > 3 else None
+        time_value = row[cols[4]] if len(cols) > 4 else None
+        gap = row[cols[5]] if len(cols) > 5 else None
+        points = row[cols[6]] if len(cols) > 6 else None
+        bonus = row[cols[7]] if len(cols) > 7 else None
+
+        # The rankings table currently includes an extra parsed column after the
+        # rider cell, which shifts the remaining values one position right.
+        if (
+            pd.notna(team_name)
+            and str(team_name).strip().isdigit()
+            and pd.notna(time_value)
+            and not looks_time_value(time_value)
+            and looks_time_value(gap)
+        ):
+            bib = team_name
+            team_name = time_value
+            time_value = gap
+            gap = points
+            bonus = row[cols[7]] if len(cols) > 7 else None
+            points = row[cols[8]] if len(cols) > 8 else None
+
         rows.append({
             'race': 'La Vuelta',
             'stage_number': stage_number,
             'classification_type': classification_type,
-            'rank': row[cols[0]] if len(cols) > 0 else None,
-            'rider_name': row[cols[1]] if len(cols) > 1 else None,
-            'bib': row[cols[2]] if len(cols) > 2 else None,
-            'team_name': row[cols[3]] if len(cols) > 3 else None,
-            'time': row[cols[4]] if len(cols) > 4 else None,
-            'gap': row[cols[5]] if len(cols) > 5 else None,
-            'points': row[cols[6]] if len(cols) > 6 else None,
-            'bonus': row[cols[7]] if len(cols) > 7 else None,
+            'rank': rank,
+            'rider_name': rider_name,
+            'bib': bib,
+            'team_name': team_name,
+            'time': time_value,
+            'gap': gap,
+            'points': points,
+            'bonus': bonus,
             'source_url': source_url,
         })
     return pd.DataFrame(rows)

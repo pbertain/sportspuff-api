@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import re
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,6 +15,13 @@ def _iso_utc_from_epoch(epoch: float) -> str:
 
 def _clean(value: Any) -> str:
     return "" if value is None else str(value).strip()
+
+
+def _looks_time_value(value: Any) -> bool:
+    text = _clean(value)
+    if not text:
+        return False
+    return bool(re.search(r"\d{1,2}h\s+\d{2}'\s+\d{2}''", text))
 
 
 def _safe_int(value: Any) -> Optional[int]:
@@ -300,6 +308,18 @@ class TourDeFranceDataService:
         ):
             value = _clean(row.get(field))
             row[field] = value or None
+        if (
+            row.get("team_name")
+            and row.get("team_name").isdigit()
+            and row.get("time")
+            and not _looks_time_value(row.get("time"))
+            and _looks_time_value(row.get("gap"))
+        ):
+            row["bib"] = _safe_int(row.get("team_name"))
+            row["team_name"] = row.get("time")
+            row["time"] = row.get("gap")
+            row["gap"] = row.get("points")
+            row["points"] = None
         return row
 
     def _classification_boards(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -561,6 +561,10 @@ def test_la_vuelta_stage_endpoint_returns_stage_results(monkeypatch):
     assert payload["stage_results"]
     assert payload["stage_results"][0]["classification_type"] == "stage"
     assert payload["stage_results"][0]["rank"] == 1
+    assert payload["stage_results"][0]["bib"] == 71
+    assert payload["stage_results"][0]["team_name"] == "ALPECIN-DECEUNINCK"
+    assert payload["stage_results"][0]["time"] == "04h 09' 12''"
+    assert payload["stage_results"][0]["gap"] == "-"
     assert payload["meta"]["source_updated_at"]
 
 
