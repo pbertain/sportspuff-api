@@ -2,6 +2,8 @@
 
 This bundle mirrors the Tour de France setup, but uses a separate script and a separate output directory.
 
+The Vuelta calendar is now pulled from `https://www.lavuelta.es/en/overall-route`, which gives the full 21-stage list with dates, stage types, start/finish cities, and distances for stage cards.
+
 ## CLI compatibility
 
 The La Vuelta script intentionally matches the Tour script's CLI:

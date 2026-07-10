@@ -39,3 +39,31 @@ def test_normalize_rider_table_repairs_shifted_rankings_layout():
     assert row["gap"] == "-"
     assert row["bonus"] == "B : 10''"
     assert row["points"] == "-"
+
+
+def test_parse_route_calendar_reads_full_stage_list():
+    html = """
+    <table>
+      <thead>
+        <tr>
+          <th>Stage</th><th>Type</th><th>Date</th><th>Start and Finish</th><th>Distance</th><th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td>1</td><td>Individual time-trial</td><td>Sat 08/22/2026</td><td>Monaco > Monaco</td><td>9 km</td><td>Stage 1</td></tr>
+        <tr><td>2</td><td>Hilly</td><td>Sun 08/23/2026</td><td>Monaco > Manosque</td><td>215.2 km</td><td>Stage 2</td></tr>
+        <tr><td>-</td><td>Rest Day</td><td>Mon 08/31/2026</td><td>Descanso</td><td></td><td>Rest 1</td></tr>
+      </tbody>
+    </table>
+    """
+
+    route = builder.parse_route_calendar(html)
+
+    assert len(route) == 2
+    assert route.iloc[0]["stage_number"] == 1
+    assert route.iloc[0]["date"] == "2026-08-22"
+    assert route.iloc[0]["race_type"] == "Individual time-trial"
+    assert route.iloc[0]["start_city"] == "Monaco"
+    assert route.iloc[0]["finish_city"] == "Monaco"
+    assert route.iloc[1]["stage_number"] == 2
+    assert route.iloc[1]["distance_km"] == "215.2"

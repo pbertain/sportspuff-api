@@ -64,6 +64,52 @@ def extract_tables(html: str):
     return tables
 
 
+def parse_route_calendar(html: str):
+    tables = extract_tables(html)
+    if not tables:
+        return pd.DataFrame()
+    df = tables[0].copy()
+    df.columns = [str(c).strip().replace('\n', ' ') for c in df.columns]
+    rows = []
+    for _, row in df.iterrows():
+        stage_raw = str(row.get('Stage', '')).strip()
+        if not stage_raw.isdigit():
+            continue
+        stage_number = int(stage_raw)
+        stage_type = ' '.join(str(row.get('Type', '')).split()).strip() or None
+        date_text = ' '.join(str(row.get('Date', '')).split()).strip() or None
+        start_finish = ' '.join(str(row.get('Start and Finish', '')).split()).strip() or None
+        distance_text = ' '.join(str(row.get('Distance', '')).split()).strip() or None
+        rows.append({
+            'stage_number': stage_number,
+            'stage_name': start_finish,
+            'date': parse_route_date(date_text),
+            'status': 'scheduled',
+            'race_type': stage_type,
+            'start_city': start_finish.split('>')[0].strip() if start_finish and '>' in start_finish else (start_finish or None),
+            'finish_city': start_finish.split('>')[-1].strip() if start_finish and '>' in start_finish else (start_finish or None),
+            'distance_km': distance_text.removesuffix(' km') if distance_text else None,
+            'cycling_country': 'Spain',
+            'cycling_url': f'{BASE}/en/stage-{stage_number}',
+            'rankings_url': f'{BASE}/en/rankings/stage-{stage_number}',
+            'stage_page_title': f'Stage {stage_number} - {start_finish} - La Vuelta 2026' if start_finish else None,
+            'rankings_page_title': f'Official classifications of La Vuelta - Stage {stage_number}',
+            'cycling_event_label': f'La Vuelta 2026 - Stage {stage_number}',
+        })
+    return pd.DataFrame(rows)
+
+
+def parse_route_date(date_text: str | None):
+    if not date_text:
+        return None
+    for fmt in ('%a %m/%d/%Y', '%a %m/%d/%y'):
+        try:
+            return datetime.strptime(date_text, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
 def extract_links(html: str):
     soup = BeautifulSoup(html, 'html.parser')
     teams, riders = [], []
@@ -195,7 +241,7 @@ def recommended_poll_minutes(stage_row: dict):
     return 15 if infer_stage_state(stage_row) == 'active_window' else 60
 
 
-def build_for_stage(stage_number: int, year: int):
+def build_for_stage(stage_number: int, year: int, route_row: dict | None = None):
     stage_path = f'/en/stage-{stage_number}'
     rankings_path = f'/en/rankings/stage-{stage_number}'
 
@@ -213,32 +259,46 @@ def build_for_stage(stage_number: int, year: int):
     teams = pd.concat([teams_stage, teams_rank], ignore_index=True).drop_duplicates(subset=['team_url'])
     riders = pd.concat([riders_stage, riders_rank], ignore_index=True).drop_duplicates(subset=['rider_url'])
 
-    stage_name = stage_title.split(' - ')[1] if ' - ' in stage_title else ''
-    if ' - La Vuelta' in stage_name:
+    route_row = route_row or {}
+    stage_name = route_row.get('stage_name') or (stage_title.split(' - ')[1] if ' - ' in stage_title else '')
+    if isinstance(stage_name, str) and ' - La Vuelta' in stage_name:
         stage_name = stage_name.split(' - La Vuelta')[0].strip()
 
     stage_row = {
         'race': 'La Vuelta',
         'stage_number': stage_number,
         'stage_name': stage_name,
-        'date': None,
-        'status': 'completed',
+        'date': route_row.get('date'),
+        'status': route_row.get('status') or 'scheduled',
         'winner': None,
         'winner_url': None,
         'team': None,
         'team_url': None,
-        'distance_km': None,
-        'race_type': None,
-        'start_city': stage_name.split('>')[0].strip() if '>' in stage_name else None,
-        'finish_city': stage_name.split('>')[-1].strip() if '>' in stage_name else None,
-        'cycling_event_label': f'La Vuelta {year} - Stage {stage_number}',
-        'cycling_country': 'Spain',
-        'cycling_url': stage_url,
-        'rankings_url': rankings_url,
-        'stage_page_title': stage_title,
-        'rankings_page_title': rankings_title,
+        'distance_km': route_row.get('distance_km'),
+        'race_type': route_row.get('race_type'),
+        'start_city': route_row.get('start_city') or (stage_name.split('>')[0].strip() if '>' in stage_name else None),
+        'finish_city': route_row.get('finish_city') or (stage_name.split('>')[-1].strip() if '>' in stage_name else None),
+        'cycling_event_label': route_row.get('cycling_event_label') or f'La Vuelta {year} - Stage {stage_number}',
+        'cycling_country': route_row.get('cycling_country') or 'Spain',
+        'cycling_url': route_row.get('cycling_url') or stage_url,
+        'rankings_url': route_row.get('rankings_url') or rankings_url,
+        'stage_page_title': route_row.get('stage_page_title') or stage_title,
+        'rankings_page_title': route_row.get('rankings_page_title') or rankings_title,
         **parse_stage_schedule(stage_text),
     }
+    stage_date = stage_row.get('date')
+    if stage_date:
+        try:
+            parsed_date = datetime.strptime(str(stage_date), '%Y-%m-%d').date()
+            today = datetime.now().date()
+            if parsed_date < today:
+                stage_row['status'] = 'completed'
+            elif parsed_date == today:
+                stage_row['status'] = 'in_progress'
+            else:
+                stage_row['status'] = 'scheduled'
+        except ValueError:
+            pass
 
     class_frames = []
     for idx, df in enumerate(ranking_tables):
@@ -313,7 +373,7 @@ def write_schedule_artifacts(outdir: Path, stages: pd.DataFrame):
     (outdir / 'polling_plan.json').write_text(json.dumps(payload, indent=2), encoding='utf-8')
 
 
-def write_app_bundle(outdir: Path, stages: pd.DataFrame, classifications: pd.DataFrame, teams: pd.DataFrame, riders: pd.DataFrame):
+def write_app_bundle(outdir: Path, year: int, stages: pd.DataFrame, classifications: pd.DataFrame, teams: pd.DataFrame, riders: pd.DataFrame):
     records = []
     for _, s in stages.iterrows():
         stage_no = int(s['stage_number']) if pd.notna(s['stage_number']) else None
@@ -324,7 +384,9 @@ def write_app_bundle(outdir: Path, stages: pd.DataFrame, classifications: pd.Dat
         })
     bundle = {
         'race': 'La Vuelta',
+        'year': year,
         'source': 'lavuelta.es',
+        'generated_at': datetime.now().isoformat(),
         'teams': teams.fillna('').to_dict(orient='records'),
         'riders': riders.fillna('').to_dict(orient='records'),
         'stages': records,
@@ -336,16 +398,24 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--year', type=int, default=2026)
     ap.add_argument('--start-stage', type=int, default=1)
-    ap.add_argument('--end-stage', type=int, default=3)
+    ap.add_argument('--end-stage', type=int, default=21)
     ap.add_argument('--outdir', default='output/lavuelta-multi-stage')
     args = ap.parse_args()
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    _route_url, route_html = fetch_html('/en/overall-route')
+    route_table = parse_route_calendar(route_html)
+    route_lookup = {
+        int(row['stage_number']): row
+        for row in route_table.to_dict(orient='records')
+        if row.get('stage_number') is not None
+    }
+
     stages_all, class_all, teams_all, riders_all = [], [], [], []
     for stage_number in range(args.start_stage, args.end_stage + 1):
-        stage_df, class_df, team_df, rider_df = build_for_stage(stage_number, args.year)
+        stage_df, class_df, team_df, rider_df = build_for_stage(stage_number, args.year, route_lookup.get(stage_number))
         stages_all.append(stage_df)
         class_all.append(class_df)
         teams_all.append(team_df)
@@ -356,12 +426,17 @@ def main():
     teams = pd.concat(teams_all, ignore_index=True).drop_duplicates(subset=['team_url']) if teams_all else pd.DataFrame()
     riders = pd.concat(riders_all, ignore_index=True).drop_duplicates(subset=['rider_url']) if riders_all else pd.DataFrame()
 
+    if not stages.empty:
+        stages['status'] = stages['status'].fillna('scheduled')
+        stages['date'] = stages['date'].fillna(pd.NA)
+        stages['distance_km'] = stages['distance_km'].fillna(pd.NA)
+
     stages.to_csv(outdir / 'stages.csv', index=False)
     classifications.to_csv(outdir / 'classifications.csv', index=False)
     teams.to_csv(outdir / 'teams.csv', index=False)
     riders.to_csv(outdir / 'riders.csv', index=False)
     write_schedule_artifacts(outdir, stages)
-    write_app_bundle(outdir, stages, classifications, teams, riders)
+    write_app_bundle(outdir, args.year, stages, classifications, teams, riders)
     pd.DataFrame([
         ('stages.csv', 'One row per stage with schedule windows, poll hints, and source URLs'),
         ('classifications.csv', 'Ranking rows per stage with classification types and rider/team links'),

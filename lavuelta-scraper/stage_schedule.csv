@@ -1,4 +1,22 @@
 stage_number,stage_name,stage_start_local,stage_finish_expected_local,stage_first_start_local,stage_last_arrival_local,poll_state,recommended_poll_minutes,cycling_url,rankings_url
 1,Monaco > Monaco,,,,,unknown,60,https://www.lavuelta.es/en/stage-1,https://www.lavuelta.es/en/rankings/stage-1
 2,Monaco > Manosque,,,,,unknown,60,https://www.lavuelta.es/en/stage-2,https://www.lavuelta.es/en/rankings/stage-2
-3,Gruissan,,,,,unknown,60,https://www.lavuelta.es/en/stage-3,https://www.lavuelta.es/en/rankings/stage-3
+3,Gruissan - Aude > Font Romeu,,,,,unknown,60,https://www.lavuelta.es/en/stage-3,https://www.lavuelta.es/en/rankings/stage-3
+4,Andorra la Vella > Andorra la Vella,,,,,unknown,60,https://www.lavuelta.es/en/stage-4,https://www.lavuelta.es/en/rankings/stage-4
+5,Falset . Costa Daurada > Roquetes. Terres de l'Ebre,,,,,unknown,60,https://www.lavuelta.es/en/stage-5,https://www.lavuelta.es/en/rankings/stage-5
+6,Alcossebre > Castelló,,,,,unknown,60,https://www.lavuelta.es/en/stage-6,https://www.lavuelta.es/en/rankings/stage-6
+7,vall d'Alba > Aramón Valdelinares,,,,,unknown,60,https://www.lavuelta.es/en/stage-7,https://www.lavuelta.es/en/rankings/stage-7
+8,Puçol > Xeraco,,,,,unknown,60,https://www.lavuelta.es/en/stage-8,https://www.lavuelta.es/en/rankings/stage-8
+9,La Vila Joiosa/ Villajoyosa > Alto de Aitana.Costa Blanca,,,,,unknown,60,https://www.lavuelta.es/en/stage-9,https://www.lavuelta.es/en/rankings/stage-9
+10,Alcaraz > Elche de la Sierra,,,,,unknown,60,https://www.lavuelta.es/en/stage-10,https://www.lavuelta.es/en/rankings/stage-10
+11,Cartagena > Lorca,,,,,unknown,60,https://www.lavuelta.es/en/stage-11,https://www.lavuelta.es/en/rankings/stage-11
+12,Vera > Calar Alto,,,,,unknown,60,https://www.lavuelta.es/en/stage-12,https://www.lavuelta.es/en/rankings/stage-12
+13,Almuñécar > Loja,,,,,unknown,60,https://www.lavuelta.es/en/stage-13,https://www.lavuelta.es/en/rankings/stage-13
+14,Jaén > Sierra de La Pandera,,,,,unknown,60,https://www.lavuelta.es/en/stage-14,https://www.lavuelta.es/en/rankings/stage-14
+15,Palma del Río > Córdoba,,,,,unknown,60,https://www.lavuelta.es/en/stage-15,https://www.lavuelta.es/en/rankings/stage-15
+16,Cortegana > La Rábida. Palos de la Frontera,,,,,unknown,60,https://www.lavuelta.es/en/stage-16,https://www.lavuelta.es/en/rankings/stage-16
+17,Dos Hermanas > Sevilla,,,,,unknown,60,https://www.lavuelta.es/en/stage-17,https://www.lavuelta.es/en/rankings/stage-17
+18,El Puerto de Santa María > Jerez de la Frontera,,,,,unknown,60,https://www.lavuelta.es/en/stage-18,https://www.lavuelta.es/en/rankings/stage-18
+19,Vélez-Málaga > Peñas Blancas. Estepona,,,,,unknown,60,https://www.lavuelta.es/en/stage-19,https://www.lavuelta.es/en/rankings/stage-19
+20,La Calahorra > Collado del Alguacil,,,,,unknown,60,https://www.lavuelta.es/en/stage-20,https://www.lavuelta.es/en/rankings/stage-20
+21,Carrefour Granada > Granada,,,,,unknown,60,https://www.lavuelta.es/en/stage-21,https://www.lavuelta.es/en/rankings/stage-21
