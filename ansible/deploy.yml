@@ -102,6 +102,19 @@
         dest: "{{ deployment_dir }}/"
         mode: preserve
 
+    - name: Ensure scraper artifacts are writable by app user
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: "{{ app_user }}"
+        group: "{{ app_user }}"
+        mode: "u=rwX,g=rX,o=rX"
+        recurse: yes
+      loop:
+        - "{{ deployment_dir }}/letour-scraper"
+        - "{{ deployment_dir }}/lavuelta-scraper"
+        - "{{ deployment_dir }}/giro-scraper"
+
     - name: Ensure Tour scraper Python venv support is installed
       apt:
         name: python3-venv

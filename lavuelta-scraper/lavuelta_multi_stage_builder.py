@@ -110,6 +110,21 @@ def parse_route_date(date_text: str | None):
     return None
 
 
+def infer_stage_status(stage_date: str | None, today: datetime | None = None):
+    if not stage_date:
+        return 'scheduled'
+    today = (today or datetime.now()).date()
+    try:
+        parsed_date = datetime.strptime(str(stage_date), '%Y-%m-%d').date()
+    except ValueError:
+        return 'scheduled'
+    if parsed_date < today:
+        return 'completed'
+    if parsed_date == today:
+        return 'in_progress'
+    return 'scheduled'
+
+
 def extract_links(html: str):
     soup = BeautifulSoup(html, 'html.parser')
     teams, riders = [], []
@@ -256,30 +271,28 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
     rankings_path = f'/en/rankings/stage-{stage_number}'
 
     stage_url, stage_html = fetch_html(stage_path)
-    rankings_url, rankings_html = fetch_html(rankings_path)
-
     stage_title = validate_stage_page(stage_html, stage_number, year)
-    rankings_title = validate_stage_page(rankings_html, stage_number, year)
     stage_text = page_text(stage_html)
-
-    ranking_tables = extract_tables(rankings_html)
     teams_stage, riders_stage = extract_links(stage_html)
-    teams_rank, riders_rank = extract_links(rankings_html)
-
-    teams = pd.concat([teams_stage, teams_rank], ignore_index=True).drop_duplicates(subset=['team_url'])
-    riders = pd.concat([riders_stage, riders_rank], ignore_index=True).drop_duplicates(subset=['rider_url'])
 
     route_row = route_row or {}
     stage_name = route_row.get('stage_name') or (stage_title.split(' - ')[1] if ' - ' in stage_title else '')
     if isinstance(stage_name, str) and ' - La Vuelta' in stage_name:
         stage_name = stage_name.split(' - La Vuelta')[0].strip()
+    stage_status = infer_stage_status(route_row.get('date'))
+
+    rankings_url = route_row.get('rankings_url') or f'{BASE}{rankings_path}'
+    rankings_title = route_row.get('rankings_page_title') or f'Official classifications of La Vuelta - Stage {stage_number}'
+    ranking_tables = []
+    teams = teams_stage
+    riders = riders_stage
 
     stage_row = {
         'race': 'La Vuelta',
         'stage_number': stage_number,
         'stage_name': stage_name,
         'date': route_row.get('date'),
-        'status': route_row.get('status') or 'scheduled',
+        'status': stage_status,
         'winner': None,
         'winner_url': None,
         'team': None,
@@ -291,24 +304,21 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
         'cycling_event_label': route_row.get('cycling_event_label') or f'La Vuelta {year} - Stage {stage_number}',
         'cycling_country': route_row.get('cycling_country') or 'Spain',
         'cycling_url': route_row.get('cycling_url') or stage_url,
-        'rankings_url': route_row.get('rankings_url') or rankings_url,
+        'rankings_url': rankings_url,
         'stage_page_title': route_row.get('stage_page_title') or stage_title,
-        'rankings_page_title': route_row.get('rankings_page_title') or rankings_title,
+        'rankings_page_title': rankings_title,
         **parse_stage_schedule(stage_text),
     }
-    stage_date = stage_row.get('date')
-    if stage_date:
-        try:
-            parsed_date = datetime.strptime(str(stage_date), '%Y-%m-%d').date()
-            today = datetime.now().date()
-            if parsed_date < today:
-                stage_row['status'] = 'completed'
-            elif parsed_date == today:
-                stage_row['status'] = 'in_progress'
-            else:
-                stage_row['status'] = 'scheduled'
-        except ValueError:
-            pass
+
+    if stage_status != 'scheduled':
+        rankings_url, rankings_html = fetch_html(rankings_path)
+        rankings_title = validate_stage_page(rankings_html, stage_number, year)
+        ranking_tables = extract_tables(rankings_html)
+        teams_rank, riders_rank = extract_links(rankings_html)
+        teams = pd.concat([teams_stage, teams_rank], ignore_index=True).drop_duplicates(subset=['team_url'])
+        riders = pd.concat([riders_stage, riders_rank], ignore_index=True).drop_duplicates(subset=['rider_url'])
+        stage_row['rankings_url'] = rankings_url
+        stage_row['rankings_page_title'] = rankings_title
 
     class_frames = []
     for idx, df in enumerate(ranking_tables):

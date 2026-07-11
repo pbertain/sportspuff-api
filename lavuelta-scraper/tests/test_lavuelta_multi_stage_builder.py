@@ -67,3 +67,11 @@ def test_parse_route_calendar_reads_full_stage_list():
     assert route.iloc[0]["finish_city"] == "Monaco"
     assert route.iloc[1]["stage_number"] == 2
     assert route.iloc[1]["distance_km"] == "215.2"
+
+
+def test_infer_stage_status_distinguishes_past_today_and_future():
+    reference_now = builder.datetime(2026, 8, 23, 12, 0)
+
+    assert builder.infer_stage_status("2026-08-22", today=reference_now) == "completed"
+    assert builder.infer_stage_status("2026-08-23", today=reference_now) == "in_progress"
+    assert builder.infer_stage_status("2026-08-24", today=reference_now) == "scheduled"
