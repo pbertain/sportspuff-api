@@ -7,3 +7,11 @@ stage_schedule.csv,Scheduling helper for your app
 polling_plan.json,Machine-readable polling guidance
 suggested_cron.txt,Suggested cron entries
 lavuelta_app_bundle.json,App-friendly JSON export
+stages_YYYY.csv,Year-tagged stage calendar archive
+classifications_YYYY.csv,Year-tagged classification archive
+teams_YYYY.csv,Year-tagged team archive
+riders_YYYY.csv,Year-tagged rider archive
+stage_schedule_YYYY.csv,Year-tagged scheduling helper archive
+polling_plan_YYYY.json,Year-tagged polling guidance archive
+suggested_cron_YYYY.txt,Year-tagged cron archive
+lavuelta_app_bundle_YYYY.json,Year-tagged bundle archive

@@ -55,6 +55,7 @@
         - "{{ deployment_dir }}/sports-data-service"
         - "{{ deployment_dir }}/letour-scraper"
         - "{{ deployment_dir }}/lavuelta-scraper"
+        - "{{ deployment_dir }}/giro-scraper"
         - "{{ deployment_dir }}/sports-data-service/src"
         - "{{ deployment_dir }}/sports-data-service/src/collectors"
         - "{{ deployment_dir }}/sports-data-service/src/services"
@@ -95,6 +96,12 @@
         dest: "{{ deployment_dir }}/"
         mode: preserve
 
+    - name: Copy giro-scraper directory
+      copy:
+        src: ../giro-scraper
+        dest: "{{ deployment_dir }}/"
+        mode: preserve
+
     - name: Ensure Tour scraper Python venv support is installed
       apt:
         name: python3-venv
@@ -106,6 +113,20 @@
       pip:
         requirements: "{{ deployment_dir }}/letour-scraper/requirements.txt"
         virtualenv: "{{ deployment_dir }}/letour-scraper/.venv"
+        virtualenv_command: python3 -m venv
+      become_user: "{{ app_user }}"
+
+    - name: Install La Vuelta scraper Python dependencies
+      pip:
+        requirements: "{{ deployment_dir }}/lavuelta-scraper/requirements.txt"
+        virtualenv: "{{ deployment_dir }}/lavuelta-scraper/.venv"
+        virtualenv_command: python3 -m venv
+      become_user: "{{ app_user }}"
+
+    - name: Install Giro scraper Python dependencies
+      pip:
+        requirements: "{{ deployment_dir }}/giro-scraper/requirements.txt"
+        virtualenv: "{{ deployment_dir }}/giro-scraper/.venv"
         virtualenv_command: python3 -m venv
       become_user: "{{ app_user }}"
 
@@ -399,6 +420,14 @@
           dest: "tour-de-france-refresh-{{ deployment_env }}.service"
         - src: templates/tour-de-france-refresh.timer.j2
           dest: "tour-de-france-refresh-{{ deployment_env }}.timer"
+        - src: templates/la-vuelta-refresh.service.j2
+          dest: "la-vuelta-refresh-{{ deployment_env }}.service"
+        - src: templates/la-vuelta-refresh.timer.j2
+          dest: "la-vuelta-refresh-{{ deployment_env }}.timer"
+        - src: templates/giro-d-italia-refresh.service.j2
+          dest: "giro-d-italia-refresh-{{ deployment_env }}.service"
+        - src: templates/giro-d-italia-refresh.timer.j2
+          dest: "giro-d-italia-refresh-{{ deployment_env }}.timer"
     
     - name: Reload systemd daemon
       systemd:
@@ -425,6 +454,18 @@
     - name: Enable and start Tour refresh timer
       systemd:
         name: "tour-de-france-refresh-{{ deployment_env }}.timer"
+        enabled: yes
+        state: started
+
+    - name: Enable and start La Vuelta refresh timer
+      systemd:
+        name: "la-vuelta-refresh-{{ deployment_env }}.timer"
+        enabled: yes
+        state: started
+
+    - name: Enable and start Giro refresh timer
+      systemd:
+        name: "giro-d-italia-refresh-{{ deployment_env }}.timer"
         enabled: yes
         state: started
     

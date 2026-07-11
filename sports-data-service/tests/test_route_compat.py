@@ -538,6 +538,7 @@ def test_la_vuelta_bundle_endpoint_uses_lavuelta_bundle(monkeypatch):
 
     assert payload["race"] == "La Vuelta"
     assert payload["year"] == 2026
+    assert len(payload["stages"]) == 21
     assert payload["stages"]
     assert payload["stages"][0]["stage"]["stage_number"] == 1
     assert payload["meta"]["source_updated_at"]
@@ -566,6 +567,30 @@ def test_la_vuelta_stage_endpoint_returns_stage_results(monkeypatch):
     assert payload["stage_results"][0]["time"] == "04h 09' 12''"
     assert payload["stage_results"][0]["gap"] == "-"
     assert payload["meta"]["source_updated_at"]
+
+
+def test_la_vuelta_2025_bundle_does_not_fall_back_to_2026(monkeypatch):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(
+        api.settings,
+        "la_vuelta_data_dir",
+        str(Path(__file__).resolve().parents[2] / "lavuelta-scraper"),
+    )
+
+    with pytest.raises(api.HTTPException) as exc:
+        api.get_la_vuelta_bundle_api_v1(2025)
+
+    assert exc.value.status_code == 404
+
+
+def test_giro_bundle_endpoint_404s_without_bundle(monkeypatch, tmp_path):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(api.settings, "giro_d_italia_data_dir", str(tmp_path))
+
+    with pytest.raises(api.HTTPException) as exc:
+        api.get_giro_d_italia_bundle_api_v1(2026)
+
+    assert exc.value.status_code == 404
 
 
 def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):

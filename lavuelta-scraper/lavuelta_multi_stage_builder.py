@@ -64,7 +64,7 @@ def extract_tables(html: str):
     return tables
 
 
-def parse_route_calendar(html: str):
+def parse_route_calendar(html: str, year: int):
     tables = extract_tables(html)
     if not tables:
         return pd.DataFrame()
@@ -92,9 +92,9 @@ def parse_route_calendar(html: str):
             'cycling_country': 'Spain',
             'cycling_url': f'{BASE}/en/stage-{stage_number}',
             'rankings_url': f'{BASE}/en/rankings/stage-{stage_number}',
-            'stage_page_title': f'Stage {stage_number} - {start_finish} - La Vuelta 2026' if start_finish else None,
+            'stage_page_title': f'Stage {stage_number} - {start_finish} - La Vuelta {year}' if start_finish else None,
             'rankings_page_title': f'Official classifications of La Vuelta - Stage {stage_number}',
-            'cycling_event_label': f'La Vuelta 2026 - Stage {stage_number}',
+            'cycling_event_label': f'La Vuelta {year} - Stage {stage_number}',
         })
     return pd.DataFrame(rows)
 
@@ -241,6 +241,16 @@ def recommended_poll_minutes(stage_row: dict):
     return 15 if infer_stage_state(stage_row) == 'active_window' else 60
 
 
+def write_versioned_csv(df: pd.DataFrame, outdir: Path, stem: str, year: int):
+    df.to_csv(outdir / f'{stem}.csv', index=False)
+    df.to_csv(outdir / f'{stem}_{year}.csv', index=False)
+
+
+def write_versioned_text(outdir: Path, stem: str, year: int, content: str, suffix: str = '.txt'):
+    (outdir / f'{stem}{suffix}').write_text(content, encoding='utf-8')
+    (outdir / f'{stem}_{year}{suffix}').write_text(content, encoding='utf-8')
+
+
 def build_for_stage(stage_number: int, year: int, route_row: dict | None = None):
     stage_path = f'/en/stage-{stage_number}'
     rankings_path = f'/en/rankings/stage-{stage_number}'
@@ -349,20 +359,22 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
     return pd.DataFrame([stage_row]), classifications, team_dim, rider_dim
 
 
-def write_schedule_artifacts(outdir: Path, stages: pd.DataFrame):
+def write_schedule_artifacts(outdir: Path, year: int, stages: pd.DataFrame):
     cron_lines = [
         '# Hourly catch-all sync for La Vuelta',
-        '7 * * * * python lavuelta_multi_stage_builder.py --year 2026 --start-stage 1 --end-stage 21 --outdir output/lavuelta-prod',
+        f'7 * * * * python lavuelta_multi_stage_builder.py --year {year} --start-stage 1 --end-stage 21 --outdir output/lavuelta-prod',
         '',
         '# During today\'s active stage window, poll every 15 minutes',
         '# Suggested cron ticks: */15 * * * *',
         '# Your app can inspect stages.csv -> poll_state and recommended_poll_minutes to decide whether to fan out a full stage refresh.'
     ]
-    (outdir / 'suggested_cron.txt').write_text('\n'.join(cron_lines), encoding='utf-8')
+    write_versioned_text(outdir, 'suggested_cron', year, '\n'.join(cron_lines))
     keep = ['stage_number','stage_name','stage_start_local','stage_finish_expected_local','stage_first_start_local','stage_last_arrival_local','poll_state','recommended_poll_minutes','cycling_url','rankings_url']
-    stages[[c for c in keep if c in stages.columns]].to_csv(outdir / 'stage_schedule.csv', index=False)
+    schedule = stages[[c for c in keep if c in stages.columns]]
+    write_versioned_csv(schedule, outdir, 'stage_schedule', year)
     payload = {
         'race': 'La Vuelta',
+        'year': year,
         'generated_at': datetime.now().isoformat(),
         'notes': [
             'Use hourly polling outside active race windows.',
@@ -370,7 +382,9 @@ def write_schedule_artifacts(outdir: Path, stages: pd.DataFrame):
             'Treat a stage as effectively finished when the stage window has passed and two consecutive polls return unchanged results.'
         ]
     }
-    (outdir / 'polling_plan.json').write_text(json.dumps(payload, indent=2), encoding='utf-8')
+    text = json.dumps(payload, indent=2)
+    (outdir / 'polling_plan.json').write_text(text, encoding='utf-8')
+    (outdir / f'polling_plan_{year}.json').write_text(text, encoding='utf-8')
 
 
 def write_app_bundle(outdir: Path, year: int, stages: pd.DataFrame, classifications: pd.DataFrame, teams: pd.DataFrame, riders: pd.DataFrame):
@@ -391,7 +405,9 @@ def write_app_bundle(outdir: Path, year: int, stages: pd.DataFrame, classificati
         'riders': riders.fillna('').to_dict(orient='records'),
         'stages': records,
     }
-    (outdir / 'lavuelta_app_bundle.json').write_text(json.dumps(bundle, indent=2, ensure_ascii=False), encoding='utf-8')
+    text = json.dumps(bundle, indent=2, ensure_ascii=False)
+    (outdir / 'lavuelta_app_bundle.json').write_text(text, encoding='utf-8')
+    (outdir / f'lavuelta_app_bundle_{year}.json').write_text(text, encoding='utf-8')
 
 
 def main():
@@ -406,7 +422,7 @@ def main():
     outdir.mkdir(parents=True, exist_ok=True)
 
     _route_url, route_html = fetch_html('/en/overall-route')
-    route_table = parse_route_calendar(route_html)
+    route_table = parse_route_calendar(route_html, args.year)
     route_lookup = {
         int(row['stage_number']): row
         for row in route_table.to_dict(orient='records')
@@ -431,13 +447,13 @@ def main():
         stages['date'] = stages['date'].fillna(pd.NA)
         stages['distance_km'] = stages['distance_km'].fillna(pd.NA)
 
-    stages.to_csv(outdir / 'stages.csv', index=False)
-    classifications.to_csv(outdir / 'classifications.csv', index=False)
-    teams.to_csv(outdir / 'teams.csv', index=False)
-    riders.to_csv(outdir / 'riders.csv', index=False)
-    write_schedule_artifacts(outdir, stages)
+    write_versioned_csv(stages, outdir, 'stages', args.year)
+    write_versioned_csv(classifications, outdir, 'classifications', args.year)
+    write_versioned_csv(teams, outdir, 'teams', args.year)
+    write_versioned_csv(riders, outdir, 'riders', args.year)
+    write_schedule_artifacts(outdir, args.year, stages)
     write_app_bundle(outdir, args.year, stages, classifications, teams, riders)
-    pd.DataFrame([
+    manifest = pd.DataFrame([
         ('stages.csv', 'One row per stage with schedule windows, poll hints, and source URLs'),
         ('classifications.csv', 'Ranking rows per stage with classification types and rider/team links'),
         ('teams.csv', 'Unique teams with lavuelta.es links'),
@@ -446,7 +462,16 @@ def main():
         ('polling_plan.json', 'Machine-readable polling guidance'),
         ('suggested_cron.txt', 'Suggested cron entries'),
         ('lavuelta_app_bundle.json', 'App-friendly JSON export'),
-    ], columns=['file','description']).to_csv(outdir / 'manifest.csv', index=False)
+        ('stages_YYYY.csv', 'Year-tagged stage calendar archive'),
+        ('classifications_YYYY.csv', 'Year-tagged classification archive'),
+        ('teams_YYYY.csv', 'Year-tagged team archive'),
+        ('riders_YYYY.csv', 'Year-tagged rider archive'),
+        ('stage_schedule_YYYY.csv', 'Year-tagged scheduling helper archive'),
+        ('polling_plan_YYYY.json', 'Year-tagged polling guidance archive'),
+        ('suggested_cron_YYYY.txt', 'Year-tagged cron archive'),
+        ('lavuelta_app_bundle_YYYY.json', 'Year-tagged bundle archive'),
+    ], columns=['file','description'])
+    write_versioned_csv(manifest, outdir, 'manifest', args.year)
 
     print(f'Wrote La Vuelta outputs for stages {args.start_stage}..{args.end_stage} to {outdir}')
 

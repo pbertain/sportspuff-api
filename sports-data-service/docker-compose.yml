@@ -33,6 +33,7 @@ services:
       - ./scripts:/app/scripts
       - ../letour-scraper:/app/letour-scraper:ro
       - ../lavuelta-scraper:/app/lavuelta-scraper:ro
+      - ../giro-scraper:/app/giro-scraper:ro
     depends_on:
       postgres:
         condition: service_healthy

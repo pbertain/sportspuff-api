@@ -122,10 +122,28 @@ class TourDeFranceDataService:
 
     def _load_bundle(self, year: int) -> Dict[str, Any]:
         path = self._bundle_path(year)
+        current_year = datetime.now(timezone.utc).year
         if path.exists():
             payload = json.loads(path.read_text(encoding="utf-8"))
-            payload["_bundle_path"] = str(path)
-            return payload
+            payload_year = _safe_int(payload.get("year"))
+            if payload_year is not None and payload_year != year:
+                payload = {}
+            elif payload_year is None and year != current_year and path.name == f"{self.bundle_basename}.json":
+                payload = {}
+            else:
+                payload["_bundle_path"] = str(path)
+                return payload
+        if year != current_year:
+            return {
+                "race": self.default_race,
+                "year": year,
+                "source": f"{self.bundle_basename}-empty",
+                "generated_files": [],
+                "teams": [],
+                "riders": [],
+                "stages": [],
+                "_bundle_path": str(self.data_dir / f"{self.bundle_basename}_{year}.json"),
+            }
 
         stages = _read_csv(self._csv_path("stages.csv"))
         classifications = _read_csv(self._csv_path("classifications.csv"))
@@ -469,4 +487,10 @@ class TourDeFranceDataService:
 class LaVueltaDataService(TourDeFranceDataService):
     bundle_basename = "lavuelta_app_bundle"
     default_race = "La Vuelta"
+    enable_stage_overlay = False
+
+
+class GiroDItaliaDataService(TourDeFranceDataService):
+    bundle_basename = "giro_app_bundle"
+    default_race = "Giro d'Italia"
     enable_stage_overlay = False

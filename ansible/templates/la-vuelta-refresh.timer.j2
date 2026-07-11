@@ -1,0 +1,13 @@
+[Unit]
+Description=La Vuelta Bundle Refresher Timer ({{ deployment_env }})
+
+[Timer]
+Unit=la-vuelta-refresh-{{ deployment_env }}.service
+OnCalendar=*-*-* *:07:00
+OnCalendar=*-*-* *:22:00
+OnCalendar=*-*-* *:37:00
+OnCalendar=*-*-* *:52:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

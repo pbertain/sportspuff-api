@@ -57,7 +57,7 @@ def test_parse_route_calendar_reads_full_stage_list():
     </table>
     """
 
-    route = builder.parse_route_calendar(html)
+    route = builder.parse_route_calendar(html, 2026)
 
     assert len(route) == 2
     assert route.iloc[0]["stage_number"] == 1
