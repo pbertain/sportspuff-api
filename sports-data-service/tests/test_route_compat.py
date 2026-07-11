@@ -949,16 +949,16 @@ def test_world_cup_bracket_maps_observed_upstream_knockout_round_codes(monkeypat
         },
         {
             "idEvent": "2528031",
-            "intMatch": None,
-            "intRound": "150",
+            "intMatch": "98",
+            "intRound": "8",
             "dateEvent": "2026-07-14",
             "strTime": "19:00:00",
-            "strStatus": "NS",
-            "strEvent": "France vs Spain",
-            "strHomeTeam": "France",
-            "strAwayTeam": "Spain",
-            "intHomeScore": None,
-            "intAwayScore": None,
+            "strStatus": "FT",
+            "strEvent": "Spain vs Portugal",
+            "strHomeTeam": "Spain",
+            "strAwayTeam": "Portugal",
+            "intHomeScore": "1",
+            "intAwayScore": "0",
         },
     ]
 
@@ -976,6 +976,105 @@ def test_world_cup_bracket_maps_observed_upstream_knockout_round_codes(monkeypat
     assert semifinals[101]["home_team"] == "France"
     assert semifinals[101]["away_team"] == "Spain"
     assert semifinals[101]["game_status"] == "scheduled"
+    assert semifinals[101]["game_status"] == "scheduled"
+
+
+def test_world_cup_bracket_ignores_stale_scheduled_knockout_participants(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    events = [
+        {
+            "idEvent": "2001",
+            "intMatch": "73",
+            "intRound": "32",
+            "dateEvent": "2026-07-01",
+            "strTime": "12:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 73",
+            "strHomeTeam": "Team A",
+            "strAwayTeam": "Team B",
+            "intHomeScore": "2",
+            "intAwayScore": "1",
+        },
+        {
+            "idEvent": "2002",
+            "intMatch": "74",
+            "intRound": "32",
+            "dateEvent": "2026-07-01",
+            "strTime": "16:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 74",
+            "strHomeTeam": "Team C",
+            "strAwayTeam": "Team D",
+            "intHomeScore": "1",
+            "intAwayScore": "0",
+        },
+        {
+            "idEvent": "2003",
+            "intMatch": "89",
+            "intRound": "16",
+            "dateEvent": "2026-07-05",
+            "strTime": "12:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 89",
+            "strHomeTeam": "Team A",
+            "strAwayTeam": "Team C",
+            "intHomeScore": "2",
+            "intAwayScore": "0",
+        },
+        {
+            "idEvent": "2004",
+            "intMatch": "90",
+            "intRound": "16",
+            "dateEvent": "2026-07-05",
+            "strTime": "16:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 90",
+            "strHomeTeam": "Team E",
+            "strAwayTeam": "Team F",
+            "intHomeScore": "1",
+            "intAwayScore": "0",
+        },
+        {
+            "idEvent": "2005",
+            "intMatch": "97",
+            "intRound": "8",
+            "dateEvent": "2026-07-09",
+            "strTime": "19:00:00",
+            "strStatus": "NS",
+            "strEvent": "WC Match 97",
+            "strHomeTeam": "Brazil",
+            "strAwayTeam": "Portugal",
+            "intHomeScore": None,
+            "intAwayScore": None,
+        },
+        {
+            "idEvent": "2006",
+            "intMatch": "98",
+            "intRound": "8",
+            "dateEvent": "2026-07-09",
+            "strTime": "23:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 98",
+            "strHomeTeam": "Team E",
+            "strAwayTeam": "Team F",
+            "intHomeScore": "1",
+            "intAwayScore": "0",
+        },
+    ]
+
+    monkeypatch.setattr(collector, "_season_events", lambda _season: events)
+    monkeypatch.setattr(collector, "get_team_records", lambda: {})
+
+    bracket = collector.get_knockout_bracket()
+    quarterfinals = {match["match_number"]: match for match in bracket["rounds"][2]["matches"]}
+
+    assert quarterfinals[97]["home_team"] == "Team A"
+    assert quarterfinals[97]["away_team"] == "Team E"
+    assert quarterfinals[97]["game_status"] == "scheduled"
+    assert quarterfinals[97]["winner"] is None
 
 
 def test_world_cup_season_info_includes_knockout_bracket(monkeypatch):

@@ -748,8 +748,13 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         home_record = self._lookup_team_record(home_team, team_records) if home_team else None
         away_record = self._lookup_team_record(away_team, team_records) if away_team else None
 
-        home_game = self._coalesce_knockout_team(actual, "home_team", home_team)
-        away_game = self._coalesce_knockout_team(actual, "visitor_team", away_team)
+        # Only trust upstream participant names once the match is final.
+        # Scheduled or in-progress future fixtures can be stale placeholders,
+        # especially in knockout rounds where upstream publishes bracket slots
+        # before the downstream teams are actually known.
+        trust_actual_teams = bool(actual and actual.get("game_status") == "final")
+        home_game = self._coalesce_knockout_team(actual if trust_actual_teams else None, "home_team", home_team)
+        away_game = self._coalesce_knockout_team(actual if trust_actual_teams else None, "visitor_team", away_team)
         slot_prefix = "Loser" if source_team_mode == "loser" else "Winner"
         home_slot = self._source_slot_label(home_source, prefix=slot_prefix)
         away_slot = self._source_slot_label(away_source, prefix=slot_prefix)

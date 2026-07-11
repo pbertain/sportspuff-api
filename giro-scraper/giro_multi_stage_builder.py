@@ -17,6 +17,10 @@ BASE = "https://www.giroditalia.it"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
 TEAM_RE = re.compile(r"/en/team/[^\"'#?]+")
 RIDER_RE = re.compile(r"/en/rider/[^\"'#?]+")
+RANKINGS_CLASSIFICATION_MAP = {
+    "ORARR": "stage",
+    "CLGEN": "gc",
+}
 
 
 def fetch_html(path: str):
@@ -49,6 +53,16 @@ def _safe_int(value):
         return int(str(value).replace("#", "").strip())
     except (TypeError, ValueError):
         return None
+
+
+def _first_anchor_href(node) -> str | None:
+    if node is None:
+        return None
+    anchor = node.find("a", href=True)
+    if not anchor:
+        return None
+    href = anchor.get("href") or ""
+    return urljoin(BASE, href) if href else None
 
 
 def parse_route_date(date_text: str | None, year: int):
@@ -110,12 +124,61 @@ def _table_headers(table) -> list[str]:
     return headers
 
 
+def _parse_archive_stage_items(html: str, year: int) -> pd.DataFrame:
+    soup = BeautifulSoup(html, "html.parser")
+    rows = []
+    for item in soup.select(".stage-item[data-stage]"):
+        stage_number = _safe_int(item.get("data-stage"))
+        if stage_number is None:
+            continue
+        anchor = item.find_parent("a", href=True)
+        href = anchor["href"] if anchor and anchor.has_attr("href") else None
+        stage_name = _clean(item.get("data-nometappa"))
+        if not stage_name:
+            stage_name = _clean(item.get_text(" ", strip=True))
+        stage_name = re.sub(rf"^Stage\s*{stage_number}\s*", "", stage_name, flags=re.I).strip()
+        date_text = _clean(item.select_one(".stage-data .label-4").get_text(" ", strip=True) if item.select_one(".stage-data .label-4") else "")
+        if not date_text:
+            date_text = _clean(item.get_text(" ", strip=True))
+        rows.append(
+            {
+                "race": "Giro d'Italia",
+                "stage_number": stage_number,
+                "stage_name": stage_name or None,
+                "date": parse_route_date(date_text, year),
+                "status": "scheduled",
+                "winner": None,
+                "winner_url": None,
+                "team": None,
+                "team_url": None,
+                "distance_km": None,
+                "race_type": None,
+                "start_city": _split_start_finish(stage_name)[0],
+                "finish_city": _split_start_finish(stage_name)[1],
+                "cycling_event_label": f"Giro d'Italia {year} - Stage {stage_number}",
+                "cycling_country": None,
+                "cycling_url": href or f"{BASE}/en/classifiche/di-tappa/{stage_number}",
+                "rankings_url": f"{BASE}/en/classifiche/di-tappa/{stage_number}",
+                "stage_page_title": f"Stage {stage_number} - {stage_name} - Giro d'Italia {year}" if stage_name else None,
+                "rankings_page_title": f"Rankings of the Giro d'Italia {year}",
+            }
+        )
+    if rows:
+        return pd.DataFrame(rows)
+
+    return pd.DataFrame()
+
+
 def _parse_route_table_html(html: str, year: int) -> pd.DataFrame:
     soup = BeautifulSoup(html, "html.parser")
-    for table in soup.find_all("table"):
-        headers = _table_headers(table)
-        header_text = " | ".join(headers)
-        if "stage" not in header_text or "type" not in header_text or "date" not in header_text:
+    tables = []
+    try:
+        tables = soup.find_all("table")
+    except Exception:
+        tables = []
+    for table in tables:
+        headers = [_clean(th.get_text(" ", strip=True)).lower() for th in table.find_all("th")]
+        if not headers or "stage" not in headers[0]:
             continue
         rows = []
         for tr in table.find_all("tr"):
@@ -132,15 +195,13 @@ def _parse_route_table_html(html: str, year: int) -> pd.DataFrame:
             date_text = texts[2] if len(texts) > 2 else None
             start_finish = texts[3] if len(texts) > 3 else None
             distance_text = texts[4] if len(texts) > 4 else None
-            details_url = _first_anchor_href(cells[-1]) or _first_anchor_href(tr)
-            if not details_url:
-                details_url = f"{BASE}/en/archivio-{year}/"
+            details_url = _first_anchor_href(cells[-1]) or f"{BASE}/en/archivio-{year}/"
             start_city, finish_city = _split_start_finish(start_finish)
             rows.append(
                 {
                     "race": "Giro d'Italia",
                     "stage_number": stage_number,
-                    "stage_name": start_finish,
+                    "stage_name": _clean(start_finish) or None,
                     "date": parse_route_date(date_text, year),
                     "status": "scheduled",
                     "winner": None,
@@ -162,56 +223,57 @@ def _parse_route_table_html(html: str, year: int) -> pd.DataFrame:
         if rows:
             return pd.DataFrame(rows)
 
-    tables = []
-    try:
-        tables = pd.read_html(StringIO(html))
-    except ValueError:
-        tables = []
-    for df in tables:
-        if df.empty:
-            continue
-        df.columns = [_clean(c).lower() for c in df.columns]
-        if not {"stage", "type", "date"}.issubset(set(df.columns)):
-            continue
-        rows = []
-        for _, row in df.iterrows():
-            stage_number = _safe_int(row.get("stage"))
-            if stage_number is None:
-                continue
-            start_finish = row.get("start and finish") or row.get("start & finish") or row.get("start finish")
-            details_url = f"{BASE}/en/archivio-{year}/"
-            start_city, finish_city = _split_start_finish(start_finish)
-            rows.append(
-                {
-                    "race": "Giro d'Italia",
-                    "stage_number": stage_number,
-                    "stage_name": _clean(start_finish) or None,
-                    "date": parse_route_date(row.get("date"), year),
-                    "status": "scheduled",
-                    "winner": None,
-                    "winner_url": None,
-                    "team": None,
-                    "team_url": None,
-                    "distance_km": _clean(row.get("distance")).removesuffix("KM").removesuffix("km").strip() or None,
-                    "race_type": _normalise_stage_type(row.get("type")),
-                    "start_city": start_city,
-                    "finish_city": finish_city,
-                    "cycling_event_label": f"Giro d'Italia {year} - Stage {stage_number}",
-                    "cycling_country": None,
-                    "cycling_url": details_url,
-                    "rankings_url": details_url,
-                    "stage_page_title": f"Stage {stage_number} - {start_finish} - Giro d'Italia {year}" if start_finish else None,
-                    "rankings_page_title": f"Official classifications of Giro d'Italia {year} - Stage {stage_number}",
-                }
-            )
-        if rows:
-            return pd.DataFrame(rows)
-
     return pd.DataFrame()
 
 
 def parse_route_calendar(html: str, year: int):
+    rows = _parse_archive_stage_items(html, year)
+    if not rows.empty:
+        return rows
     return _parse_route_table_html(html, year)
+
+
+def _parse_ranking_rows(section, *, classification_type: str, stage_number: int | None, source_url: str) -> pd.DataFrame:
+    if section is None:
+        return pd.DataFrame()
+    rows = []
+    for row in section.select(".line-table"):
+        cells = row.find_all(recursive=False)
+        if not cells:
+            continue
+        rider_cell = next((cell for cell in cells if "corridore" in (cell.get("class") or [])), None)
+        team_cell = next((cell for cell in cells if "team" in (cell.get("class") or [])), None)
+        time_cell = next((cell for cell in cells if "tempo" in (cell.get("class") or [])), None)
+        bonus_cell = next((cell for cell in cells if "abbuono" in (cell.get("class") or [])), None)
+        gap_cell = next((cell for cell in cells if "distacco" in (cell.get("class") or [])), None)
+        rank_text = _clean(rider_cell.get_text(" ", strip=True)) if rider_cell else ""
+        m = re.match(r"(\d+)\s+(.*)", rank_text)
+        rank = _safe_int(m.group(1)) if m else _safe_int(rank_text.split()[0] if rank_text.split() else None)
+        rider_name = m.group(2).strip() if m else rank_text
+        rider_url = _first_anchor_href(rider_cell)
+        team_name = _clean(team_cell.get_text(" ", strip=True)) if team_cell else None
+        team_url = _first_anchor_href(team_cell)
+        rows.append(
+            {
+                "race": "Giro d'Italia",
+                "stage_number": stage_number,
+                "classification_type": classification_type,
+                "rank": rank,
+                "rider_name": rider_name or None,
+                "rider_slug": None,
+                "rider_url": rider_url,
+                "bib": None,
+                "team_name": team_name or None,
+                "team_slug": None,
+                "team_url": team_url,
+                "time": _clean(time_cell.get_text(" ", strip=True)) if time_cell else None,
+                "gap": _clean(gap_cell.get_text(" ", strip=True)) if gap_cell else None,
+                "points": None,
+                "bonus": _clean(bonus_cell.get_text(" ", strip=True)) if bonus_cell else None,
+                "source_url": source_url,
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 def extract_links(html: str):
@@ -369,23 +431,65 @@ def main():
     route_url = args.route_url or f"/en/archivio-{args.year}/"
     _route_url, route_html = fetch_html(route_url)
     route_table = parse_route_calendar(route_html, args.year)
-    route_lookup = {
-        int(row["stage_number"]): row
-        for row in route_table.to_dict(orient="records")
-        if row.get("stage_number") is not None
-    }
+    route_lookup = {int(row["stage_number"]): row for row in route_table.to_dict(orient="records") if row.get("stage_number") is not None}
+
+    overall_url = f"{BASE}/en/classifiche/?classifica=CLGEN"
+    overall_html = fetch_html(overall_url)[1]
+    overall_soup = BeautifulSoup(overall_html, "html.parser")
+    overall_section = overall_soup.select_one(".js-tab-classifica-CLGEN") or overall_soup
 
     stages_all, class_all, teams_all, riders_all = [], [], [], []
+    stage_records = []
     for stage_number in range(args.start_stage, args.end_stage + 1):
-        route_row = route_lookup.get(stage_number, {})
+        route_row = dict(route_lookup.get(stage_number, {}))
         stage_row = dict(route_row)
+        stage_row["stage_number"] = stage_number
         stage_row["status"] = infer_stage_status(stage_row)
         stage_row["poll_state"] = "in_progress" if stage_row["status"] == "in_progress" else ("post_stage" if stage_row["status"] == "final" else "pre_stage")
         stage_row["recommended_poll_minutes"] = recommended_poll_minutes(stage_row)
         stage_row["cycling_event_label"] = stage_row.get("cycling_event_label") or f"Giro d'Italia {args.year} - Stage {stage_number}"
-        stage_row["rankings_page_title"] = stage_row.get("rankings_page_title") or f"Official classifications of Giro d'Italia {args.year} - Stage {stage_number}"
+        stage_row["rankings_page_title"] = stage_row.get("rankings_page_title") or f"Rankings of the Giro d'Italia {args.year}"
+        stage_row["rankings_url"] = stage_row.get("rankings_url") or f"{BASE}/en/classifiche/di-tappa/{stage_number}"
+        stage_row["cycling_url"] = stage_row.get("cycling_url") or stage_row["rankings_url"]
+        stage_row["stage_page_title"] = stage_row.get("stage_page_title") or f"Stage {stage_number} - Giro d'Italia {args.year}"
+        stage_records.append(stage_row)
+
+    latest_completed_stage = max(
+        (row["stage_number"] for row in stage_records if row.get("status") in ("final", "in_progress")),
+        default=None,
+    )
+
+    overall_gc_rows = _parse_ranking_rows(
+        overall_section,
+        classification_type="gc",
+        stage_number=latest_completed_stage,
+        source_url=overall_url,
+    )
+    overall_teams, overall_riders = extract_links(overall_html)
+
+    for stage_row in stage_records:
+        stage_number = stage_row["stage_number"]
         stage_df = pd.DataFrame([stage_row])
-        class_df = pd.DataFrame(columns=["race", "stage_number", "classification_type", "rank", "rider_name", "rider_slug", "rider_url", "bib", "team_name", "team_slug", "team_url", "time", "gap", "points", "bonus", "source_url"])
+        stage_rows = []
+        if stage_row.get("status") == "final":
+            rankings_url = stage_row.get("rankings_url") or f"{BASE}/en/classifiche/di-tappa/{stage_number}"
+            rankings_html = fetch_html(rankings_url)[1]
+            rankings_soup = BeautifulSoup(rankings_html, "html.parser")
+            stage_section = rankings_soup.select_one(".js-tab-classifica-ORARR") or rankings_soup
+            stage_results = _parse_ranking_rows(
+                stage_section,
+                classification_type="stage",
+                stage_number=stage_number,
+                source_url=rankings_url,
+            )
+            stage_teams, stage_riders = extract_links(rankings_html)
+            teams_all.append(stage_teams)
+            riders_all.append(stage_riders)
+            if not stage_results.empty:
+                stage_rows.append(stage_results)
+        if latest_completed_stage is not None and stage_number == latest_completed_stage and not overall_gc_rows.empty:
+            stage_rows.append(overall_gc_rows)
+        class_df = pd.concat(stage_rows, ignore_index=True) if stage_rows else pd.DataFrame(columns=["race", "stage_number", "classification_type", "rank", "rider_name", "rider_slug", "rider_url", "bib", "team_name", "team_slug", "team_url", "time", "gap", "points", "bonus", "source_url"])
         team_df = pd.DataFrame(columns=["team_name", "team_slug", "team_url"])
         rider_df = pd.DataFrame(columns=["rider_name", "rider_slug", "rider_url"])
         stages_all.append(stage_df)
@@ -395,6 +499,8 @@ def main():
 
     stages = pd.concat(stages_all, ignore_index=True) if stages_all else pd.DataFrame()
     classifications = pd.concat(class_all, ignore_index=True) if class_all else pd.DataFrame()
+    teams_all.append(overall_teams)
+    riders_all.append(overall_riders)
     teams = pd.concat(teams_all, ignore_index=True).drop_duplicates(subset=["team_url"]) if teams_all else pd.DataFrame()
     riders = pd.concat(riders_all, ignore_index=True).drop_duplicates(subset=["rider_url"]) if riders_all else pd.DataFrame()
 
