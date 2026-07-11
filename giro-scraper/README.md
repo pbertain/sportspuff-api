@@ -1,8 +1,8 @@
-# Giro d'Italia scaffold
+# Giro d'Italia scraper
 
-This directory is a placeholder for the Giro d'Italia scraper and bundle artifacts.
+This directory now contains the Giro d'Italia route scraper and bundle artifacts.
 
-Expected future outputs:
+Expected outputs:
 
 - `giro_app_bundle.json`
 - `giro_app_bundle_YYYY.json`
@@ -14,4 +14,6 @@ Expected future outputs:
 - `polling_plan.json`
 - `suggested_cron.txt`
 
-The Sports Data Service already has API and loader support for `giro-d-italia`, so once the scraper lands here the same stage-card flow used for Tour and La Vuelta will work.
+The Sports Data Service already has API and loader support for `giro-d-italia`, so the same stage-card flow used for Tour and La Vuelta can consume this bundle once it is populated.
+
+The current builder reads the official Giro route calendar page and normalizes it into the same bundle shape used by the other grand tours.

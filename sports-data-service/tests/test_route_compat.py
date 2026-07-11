@@ -1,3 +1,4 @@
+import json
 from starlette.requests import Request
 from types import SimpleNamespace
 from datetime import date
@@ -591,6 +592,72 @@ def test_giro_bundle_endpoint_404s_without_bundle(monkeypatch, tmp_path):
         api.get_giro_d_italia_bundle_api_v1(2026)
 
     assert exc.value.status_code == 404
+
+
+def test_giro_bundle_endpoint_uses_giro_bundle(monkeypatch, tmp_path):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(api.settings, "giro_d_italia_data_dir", str(tmp_path))
+
+    bundle = {
+        "race": "Giro d'Italia",
+        "year": 2026,
+        "source": "giroditalia.it",
+        "generated_at": "2026-07-11T19:00:00Z",
+        "source_updated_at": "2026-07-11T19:00:00Z",
+        "generated_files": ["stages.csv"],
+        "teams": [],
+        "riders": [],
+        "stages": [
+            {
+                "stage": {
+                    "race": "Giro d'Italia",
+                    "stage_number": 1,
+                    "stage_name": "Monaco > Monaco",
+                    "date": "2026-08-22",
+                    "status": "scheduled",
+                    "winner": None,
+                    "winner_url": None,
+                    "team": None,
+                    "team_url": None,
+                    "distance_km": "9",
+                    "race_type": "Individual Time-Trial",
+                    "start_city": "Monaco",
+                    "finish_city": "Monaco",
+                    "cycling_event_label": "Giro d'Italia 2026 - Stage 1",
+                    "cycling_country": None,
+                    "cycling_url": "https://www.giroditalia.it/en/stage-1",
+                    "rankings_url": "https://www.giroditalia.it/en/stage-1",
+                    "stage_page_title": "Stage 1 - Monaco > Monaco - Giro d'Italia 2026",
+                    "rankings_page_title": "Official classifications of Giro d'Italia 2026 - Stage 1",
+                    "poll_state": "pre_stage",
+                    "recommended_poll_minutes": 60,
+                },
+                "schedule": [
+                    {
+                        "stage_number": 1,
+                        "stage_name": "Monaco > Monaco",
+                        "cycling_url": "https://www.giroditalia.it/en/stage-1",
+                        "rankings_url": "https://www.giroditalia.it/en/stage-1",
+                        "stage_start_local": None,
+                        "stage_finish_expected_local": None,
+                        "stage_first_start_local": None,
+                        "stage_last_arrival_local": None,
+                        "poll_state": "pre_stage",
+                        "recommended_poll_minutes": 60,
+                    }
+                ],
+                "classifications": [],
+            }
+        ],
+    }
+    (tmp_path / "giro_app_bundle_2026.json").write_text(json.dumps(bundle), encoding="utf-8")
+
+    payload = api.get_giro_d_italia_bundle_api_v1(2026)
+
+    assert payload["race"] == "Giro d'Italia"
+    assert payload["year"] == 2026
+    assert payload["stages"][0]["stage"]["stage_number"] == 1
+    assert payload["stages"][0]["stage"]["stage_name"] == "Monaco > Monaco"
 
 
 def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):
