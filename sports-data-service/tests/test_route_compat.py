@@ -776,6 +776,65 @@ def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
     assert finals[0]["away_slot"] == "Winner Match 102"
 
 
+def test_world_cup_bracket_uses_match_numbers_when_upstream_round_labels_are_wrong(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    events = [
+        {
+            "idEvent": "1089",
+            "intMatch": "89",
+            "intRound": "99",
+            "dateEvent": "2026-07-05",
+            "strTime": "12:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 89",
+            "strHomeTeam": "Canada",
+            "strAwayTeam": "Morocco",
+            "intHomeScore": "0",
+            "intAwayScore": "1",
+        },
+        {
+            "idEvent": "1090",
+            "intMatch": "90",
+            "intRound": "99",
+            "dateEvent": "2026-07-05",
+            "strTime": "16:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 90",
+            "strHomeTeam": "Paraguay",
+            "strAwayTeam": "France",
+            "intHomeScore": "0",
+            "intAwayScore": "2",
+        },
+        {
+            "idEvent": "1097",
+            "intMatch": "97",
+            "intRound": "16",
+            "dateEvent": "2026-07-09",
+            "strTime": "19:00:00",
+            "strStatus": "FT",
+            "strEvent": "WC Match 97",
+            "strHomeTeam": "Morocco",
+            "strAwayTeam": "France",
+            "intHomeScore": "0",
+            "intAwayScore": "2",
+        },
+    ]
+
+    monkeypatch.setattr(collector, "_season_events", lambda _season: events)
+    monkeypatch.setattr(collector, "get_team_records", lambda: {})
+
+    bracket = collector.get_knockout_bracket()
+    quarterfinals = {match["match_number"]: match for match in bracket["rounds"][2]["matches"]}
+
+    assert quarterfinals[97]["home_team"] == "Morocco"
+    assert quarterfinals[97]["away_team"] == "France"
+    assert quarterfinals[97]["game_status"] == "final"
+    assert quarterfinals[97]["winner"] == "France"
+
+
 def test_world_cup_season_info_includes_knockout_bracket(monkeypatch):
     class FakeWCCollector:
         def get_season_info(self):

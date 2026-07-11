@@ -216,6 +216,23 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             logger.error("WorldCup parse error: %s", e)
             return None
 
+    @classmethod
+    def _round_label_from_match_number(cls, raw: Dict[str, Any]) -> Optional[str]:
+        match_number = cls._parse_int(raw.get("intMatch") or raw.get("intEvent") or raw.get("idEvent"), default=0)
+        if match_number in {slot[0] for slot in cls.ROUND_OF_32_SLOTS}:
+            return "round_of_32"
+        if match_number in cls.ROUND_OF_16_MATCHES:
+            return "round_of_16"
+        if match_number in cls.QUARTERFINAL_MATCHES:
+            return "quarterfinal"
+        if match_number in cls.SEMIFINAL_MATCHES:
+            return "semifinal"
+        if match_number == cls.THIRD_PLACE_MATCH:
+            return "third_place"
+        if match_number == cls.FINAL_MATCH:
+            return "final"
+        return None
+
     @staticmethod
     def _round_label(raw: Dict[str, Any]) -> str:
         """Map intRound to a human-readable phase. TheSportsDB uses 1/2/3
@@ -234,6 +251,9 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             return "semifinal"
         if "final" in event_name and "semi" not in event_name and "quarter" not in event_name and "round of 16" not in event_name and "round of 32" not in event_name:
             return "final"
+        match_number_label = WorldCupTheSportsDBCollector._round_label_from_match_number(raw)
+        if match_number_label:
+            return match_number_label
         try:
             r = int(raw.get("intRound") or 0)
         except Exception:
