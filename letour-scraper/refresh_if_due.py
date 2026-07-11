@@ -5,7 +5,6 @@ import argparse
 import json
 import subprocess
 import sys
-import time
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -51,10 +50,31 @@ def _recommended_interval_minutes(bundle_path: Path) -> int:
     return 60
 
 
-def _is_due(bundle_path: Path, interval_minutes: int) -> bool:
+def _bundle_generated_at(bundle_path: Path) -> datetime | None:
     if not bundle_path.exists():
+        return None
+    try:
+        payload = json.loads(bundle_path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+    generated_at = payload.get("generated_at")
+    if not generated_at:
+        return None
+    try:
+        return datetime.fromisoformat(str(generated_at).replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def _is_due(bundle_path: Path, interval_minutes: int, now: datetime | None = None) -> bool:
+    generated_at = _bundle_generated_at(bundle_path)
+    if generated_at is None:
         return True
-    age_seconds = max(0, time.time() - bundle_path.stat().st_mtime)
+    now = now or datetime.now(TOUR_TIMEZONE)
+    if generated_at.tzinfo is None:
+        generated_at = generated_at.replace(tzinfo=TOUR_TIMEZONE)
+    age_seconds = max(0, (now.astimezone(generated_at.tzinfo) - generated_at).total_seconds())
     return age_seconds >= interval_minutes * 60
 
 
@@ -68,7 +88,8 @@ def main() -> int:
     bundle_path = _bundle_path(outdir, year)
     interval_minutes = _recommended_interval_minutes(bundle_path)
     if not _is_due(bundle_path, interval_minutes):
-        print(f"Skipping refresh: {bundle_path.name} is newer than {interval_minutes} minutes")
+        generated_at = _bundle_generated_at(bundle_path)
+        print(f"Skipping refresh: {bundle_path.name} generated at {generated_at.isoformat() if generated_at else 'unknown'} is newer than {interval_minutes} minutes")
         return 0
 
     cmd = [
