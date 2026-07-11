@@ -268,6 +268,12 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             return "quarterfinal"
         if r in (4,):
             return "semifinal"
+        # TheSportsDB's 2026 World Cup feed uses nonstandard knockout codes
+        # for later rounds even when intMatch is omitted.
+        if r in (125,):
+            return "quarterfinal"
+        if r in (150,):
+            return "semifinal"
         if r in (2, 1):
             return "final"
         return "knockout"

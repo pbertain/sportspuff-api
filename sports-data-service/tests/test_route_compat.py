@@ -835,6 +835,82 @@ def test_world_cup_bracket_uses_match_numbers_when_upstream_round_labels_are_wro
     assert quarterfinals[97]["winner"] == "France"
 
 
+def test_world_cup_bracket_maps_observed_upstream_knockout_round_codes(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    events = [
+        {
+            "idEvent": "2505183",
+            "intMatch": None,
+            "intRound": "16",
+            "dateEvent": "2026-07-04",
+            "strTime": "17:00:00",
+            "strStatus": "FT",
+            "strEvent": "Canada vs Morocco",
+            "strHomeTeam": "Canada",
+            "strAwayTeam": "Morocco",
+            "intHomeScore": "0",
+            "intAwayScore": "3",
+        },
+        {
+            "idEvent": "2505624",
+            "intMatch": None,
+            "intRound": "16",
+            "dateEvent": "2026-07-04",
+            "strTime": "21:00:00",
+            "strStatus": "FT",
+            "strEvent": "Paraguay vs France",
+            "strHomeTeam": "Paraguay",
+            "strAwayTeam": "France",
+            "intHomeScore": "0",
+            "intAwayScore": "1",
+        },
+        {
+            "idEvent": "2515305",
+            "intMatch": None,
+            "intRound": "125",
+            "dateEvent": "2026-07-09",
+            "strTime": "20:00:00",
+            "strStatus": "FT",
+            "strEvent": "France vs Morocco",
+            "strHomeTeam": "France",
+            "strAwayTeam": "Morocco",
+            "intHomeScore": "2",
+            "intAwayScore": "0",
+        },
+        {
+            "idEvent": "2528031",
+            "intMatch": None,
+            "intRound": "150",
+            "dateEvent": "2026-07-14",
+            "strTime": "19:00:00",
+            "strStatus": "NS",
+            "strEvent": "France vs Spain",
+            "strHomeTeam": "France",
+            "strAwayTeam": "Spain",
+            "intHomeScore": None,
+            "intAwayScore": None,
+        },
+    ]
+
+    monkeypatch.setattr(collector, "_season_events", lambda _season: events)
+    monkeypatch.setattr(collector, "get_team_records", lambda: {})
+
+    bracket = collector.get_knockout_bracket()
+    quarterfinals = {match["match_number"]: match for match in bracket["rounds"][2]["matches"]}
+    semifinals = {match["match_number"]: match for match in bracket["rounds"][3]["matches"]}
+
+    assert quarterfinals[97]["home_team"] == "France"
+    assert quarterfinals[97]["away_team"] == "Morocco"
+    assert quarterfinals[97]["game_status"] == "final"
+    assert quarterfinals[97]["winner"] == "France"
+    assert semifinals[101]["home_team"] == "France"
+    assert semifinals[101]["away_team"] == "Spain"
+    assert semifinals[101]["game_status"] == "scheduled"
+
+
 def test_world_cup_season_info_includes_knockout_bracket(monkeypatch):
     class FakeWCCollector:
         def get_season_info(self):
