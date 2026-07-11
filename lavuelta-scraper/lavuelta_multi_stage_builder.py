@@ -398,6 +398,8 @@ def write_schedule_artifacts(outdir: Path, year: int, stages: pd.DataFrame):
 
 
 def write_app_bundle(outdir: Path, year: int, stages: pd.DataFrame, classifications: pd.DataFrame, teams: pd.DataFrame, riders: pd.DataFrame):
+    if 'stage_number' not in classifications.columns:
+        classifications = pd.DataFrame(columns=['stage_number'])
     records = []
     for _, s in stages.iterrows():
         stage_no = int(s['stage_number']) if pd.notna(s['stage_number']) else None

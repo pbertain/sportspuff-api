@@ -75,3 +75,24 @@ def test_infer_stage_status_distinguishes_past_today_and_future():
     assert builder.infer_stage_status("2026-08-22", today=reference_now) == "completed"
     assert builder.infer_stage_status("2026-08-23", today=reference_now) == "in_progress"
     assert builder.infer_stage_status("2026-08-24", today=reference_now) == "scheduled"
+
+
+def test_write_app_bundle_handles_empty_classifications_without_stage_number(tmp_path):
+    stages = pd.DataFrame(
+        [
+            {
+                "stage_number": 1,
+                "stage_name": "Monaco > Monaco",
+                "date": "2026-08-22",
+                "status": "scheduled",
+            }
+        ]
+    )
+    empty_classifications = pd.DataFrame()
+    empty_teams = pd.DataFrame()
+    empty_riders = pd.DataFrame()
+
+    builder.write_app_bundle(tmp_path, 2026, stages, empty_classifications, empty_teams, empty_riders)
+
+    payload = (tmp_path / "lavuelta_app_bundle_2026.json").read_text(encoding="utf-8")
+    assert '"classifications": []' in payload
