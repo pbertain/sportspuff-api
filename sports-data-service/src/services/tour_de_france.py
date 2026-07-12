@@ -3,10 +3,16 @@ from __future__ import annotations
 import csv
 import json
 import re
+import logging
+import subprocess
+import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
+
+
+logger = logging.getLogger(__name__)
 
 
 def _iso_utc_from_epoch(epoch: float) -> str:
@@ -124,6 +130,22 @@ class TourDeFranceDataService:
     def _csv_path(self, name: str) -> Path:
         return self.data_dir / name
 
+    def _refresh_bundle_if_due(self, year: int) -> None:
+        if year != datetime.now(timezone.utc).year:
+            return
+        script = self.data_dir / "refresh_if_due.py"
+        if not script.exists():
+            return
+        try:
+            subprocess.run(
+                [sys.executable, str(script), "--outdir", str(self.data_dir)],
+                check=False,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except Exception as exc:
+            logger.debug("cycling bundle refresh failed for %s: %s", self.bundle_basename, exc)
+
     def _source_updated_at(self, path: Path, payload: Optional[Dict[str, Any]] = None) -> Optional[str]:
         if payload:
             generated_at = payload.get("generated_at")
@@ -143,6 +165,8 @@ class TourDeFranceDataService:
     def _load_bundle(self, year: int) -> Dict[str, Any]:
         path = self._bundle_path(year)
         current_year = datetime.now(timezone.utc).year
+        self._refresh_bundle_if_due(year)
+        path = self._bundle_path(year)
         if path.exists():
             payload = json.loads(path.read_text(encoding="utf-8"))
             payload_year = _safe_int(payload.get("year"))

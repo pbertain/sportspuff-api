@@ -539,6 +539,122 @@ def test_tour_de_france_stage_payload_has_no_nan_or_merge_helpers(monkeypatch):
     walk(payload)
 
 
+def test_cycling_bundle_merges_rider_country_fields(monkeypatch):
+    import pandas as pd
+    from letour_multi_stage_builder import build_for_stage
+
+    def fake_fetch_html(path):
+        if "rankings" in path:
+            return path, "<html><body>Official classifications of Tour de France 2026 - Stage 1 Stage 1 - 07/04 -</body></html>"
+        return path, "<html><head><title>Stage 1 - Demo - Tour de France 2026</title></head><body>Stage 1 - 07/04 -</body></html>"
+
+    monkeypatch.setattr("letour_multi_stage_builder.fetch_html", fake_fetch_html)
+    monkeypatch.setattr("letour_multi_stage_builder.validate_stage_page", lambda html, stage_number, year: "Stage 1 - Demo > Demo - Tour de France 2026")
+    monkeypatch.setattr("letour_multi_stage_builder.page_text", lambda html: "Stage 1 - 07/04 -")
+    monkeypatch.setattr("letour_multi_stage_builder.parse_stage_metrics", lambda html: {"distance_km": "19.6", "race_type": "Team Time-Trial"})
+    monkeypatch.setattr(
+        "letour_multi_stage_builder.extract_links",
+        lambda html: (
+            pd.DataFrame([{"team_name": "UAE TEAM EMIRATES XRG", "team_slug": "uae-team-emirates-xrg", "team_url": "https://example.com/team"}]),
+            pd.DataFrame([{"rider_name": "T. POGACAR", "rider_slug": "tadej-pogacar", "rider_url": "https://example.com/rider", "rider_country_code": "SLO", "rider_country_flag": "slo"}]),
+        ),
+    )
+    monkeypatch.setattr(
+        "letour_multi_stage_builder.build_stage_classifications",
+        lambda stage_number, rankings_html: pd.DataFrame(
+            [
+                {
+                    "race": "Tour de France",
+                    "stage_number": stage_number,
+                    "classification_type": "stage",
+                    "rank": 1,
+                    "rider_name": "T. POGACAR",
+                    "rider_slug": "tadej-pogacar",
+                    "rider_url": "https://example.com/rider",
+                    "bib": 1,
+                    "team_name": "UAE TEAM EMIRATES XRG",
+                    "team_slug": "uae-team-emirates-xrg",
+                    "team_url": "https://example.com/team",
+                    "time": "3:21:08",
+                    "gap": None,
+                    "points": None,
+                    "bonus": None,
+                    "source_url": "https://example.com/stage-1",
+                }
+            ]
+        ),
+    )
+
+    stage_df, classifications, _, riders = build_for_stage(1, 2026)
+
+    assert stage_df.iloc[0]["winner"] == "T. POGACAR"
+    assert classifications.iloc[0]["rider_country_code"] == "SLO"
+    assert classifications.iloc[0]["rider_country_flag"] == "slo"
+    assert riders.iloc[0]["rider_country_code"] == "SLO"
+
+
+def test_giro_bundle_refreshes_missing_current_year_bundle(tmp_path, monkeypatch):
+    (tmp_path / "refresh_if_due.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+
+    def fake_run(cmd, check=False, stdout=None, stderr=None):
+        bundle_path = tmp_path / "giro_app_bundle_2026.json"
+        bundle_path.write_text(
+            json.dumps(
+                {
+                    "race": "Giro d'Italia",
+                    "year": 2026,
+                    "generated_at": "2026-07-12T12:00:00Z",
+                    "generated_files": [],
+                    "teams": [],
+                    "riders": [],
+                    "stages": [
+                        {
+                            "stage": {
+                                "race": "Giro d'Italia",
+                                "stage_number": 1,
+                                "stage_name": "Stage 1",
+                                "date": "2026-05-09",
+                                "status": "scheduled",
+                                "winner": None,
+                                "winner_url": None,
+                                "team": None,
+                                "team_url": None,
+                                "distance_km": None,
+                                "race_type": None,
+                                "start_city": None,
+                                "finish_city": None,
+                                "cycling_event_label": "Giro d'Italia 2026 - Stage 1",
+                                "cycling_country": None,
+                                "cycling_url": "https://example.com/stage-1",
+                                "rankings_url": "https://example.com/rankings-1",
+                                "stage_page_title": "Stage 1",
+                                "rankings_page_title": "Rankings",
+                                "poll_state": "pre_stage",
+                                "recommended_poll_minutes": 60,
+                            },
+                            "schedule": {},
+                            "classifications": [],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr("src.services.tour_de_france.subprocess.run", fake_run)
+
+    service = GiroDItaliaDataService(str(tmp_path))
+    payload = service.get_bundle(2026)
+
+    assert payload["race"] == "Giro d'Italia"
+    assert payload["stages"]
+
+
 def test_tour_de_france_stage_endpoint_404s_for_unknown_stage(monkeypatch):
     api._tour_de_france_cache.clear()
     monkeypatch.setattr(

@@ -499,6 +499,12 @@ def build_for_stage(stage_number: int, year: int):
         for col in ["rider_slug", "rider_url", "rider_country_code", "rider_country_flag", "team_slug", "team_url"]:
             if col not in classifications.columns:
                 classifications[col] = None
+            lk_col = f"{col}_lk"
+            if lk_col in classifications.columns:
+                classifications[col] = classifications[lk_col].where(
+                    classifications[lk_col].notna() & (classifications[lk_col].astype(str).str.strip() != ""),
+                    classifications[col],
+                )
 
     stage_name = stage_title.split(" - ")[1] if " - " in stage_title else ""
     if " - Tour de France" in stage_name:

@@ -606,6 +606,12 @@ def main():
         for col in ["rider_slug", "rider_url", "rider_country_code", "rider_country_flag", "team_slug", "team_url"]:
             if col not in classifications.columns:
                 classifications[col] = None
+            lk_col = f"{col}_lk"
+            if lk_col in classifications.columns:
+                classifications[col] = classifications[lk_col].where(
+                    classifications[lk_col].notna() & (classifications[lk_col].astype(str).str.strip() != ""),
+                    classifications[col],
+                )
         keep = [
             "race",
             "stage_number",
