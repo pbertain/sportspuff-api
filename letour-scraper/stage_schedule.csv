@@ -5,10 +5,10 @@ stage_number,stage_name,cycling_url,rankings_url,stage_start_local,stage_finish_
 4,Carcassonne > Foix,https://www.letour.fr/en/stage-4,https://www.letour.fr/en/rankings/stage-4,13:10,17:23,,,post_stage,60
 5,Lannemezan > Pau,https://www.letour.fr/en/stage-5,https://www.letour.fr/en/rankings/stage-5,14:05,17:37,,,post_stage,60
 6,Pau > Gavarnie-Gèdre,https://www.letour.fr/en/stage-6,https://www.letour.fr/en/rankings/stage-6,12:25,17:29,,,post_stage,60
-7,Hagetmau > Bordeaux,https://www.letour.fr/en/stage-7,https://www.letour.fr/en/rankings/stage-7,13:15,17:13,,,pre_stage,60
-8,Périgueux > Bergerac,https://www.letour.fr/en/stage-8,https://www.letour.fr/en/rankings/stage-8,13:15,17:20,,,pre_stage,60
-9,Malemort > Ussel,https://www.letour.fr/en/stage-9,https://www.letour.fr/en/rankings/stage-9,13:35,17:47,,,pre_stage,60
-10,Aurillac > Le Lioran,https://www.letour.fr/en/stage-10,https://www.letour.fr/en/rankings/stage-10,13:10,17:12,,,pre_stage,60
+7,Hagetmau > Bordeaux,https://www.letour.fr/en/stage-7,https://www.letour.fr/en/rankings/stage-7,13:15,17:13,,,post_stage,60
+8,Périgueux > Bergerac,https://www.letour.fr/en/stage-8,https://www.letour.fr/en/rankings/stage-8,13:15,17:20,,,post_stage,60
+9,Malemort > Ussel,https://www.letour.fr/en/stage-9,https://www.letour.fr/en/rankings/stage-9,13:45,17:22,,,active_window,15
+10,Aurillac > Le Lioran,https://www.letour.fr/en/stage-10,https://www.letour.fr/en/rankings/stage-10,13:00,17:02,,,pre_stage,60
 11,Vichy > Nevers,https://www.letour.fr/en/stage-11,https://www.letour.fr/en/rankings/stage-11,13:50,17:31,,,pre_stage,60
 12,Circuit Nevers Magny-Cours > Chalon-sur-Saône,https://www.letour.fr/en/stage-12,https://www.letour.fr/en/rankings/stage-12,13:30,17:29,,,pre_stage,60
 13,Dole > Belfort,https://www.letour.fr/en/stage-13,https://www.letour.fr/en/rankings/stage-13,13:00,17:46,,,pre_stage,60

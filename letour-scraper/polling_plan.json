@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-07-09T17:45:51Z",
+  "generated_at": "2026-07-12T15:21:25Z",
   "notes": [
     "Use hourly polling outside active race windows.",
     "Use 15-minute polling from 30 minutes before start until 60 minutes after expected finish or last arrival.",

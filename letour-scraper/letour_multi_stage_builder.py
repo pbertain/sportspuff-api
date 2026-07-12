@@ -455,11 +455,19 @@ def build_for_stage(stage_number: int, year: int):
 
     teams = pd.concat([teams_stage, teams_rank], ignore_index=True).drop_duplicates(subset=["team_url"])
     riders = pd.concat([riders_stage, riders_rank], ignore_index=True).drop_duplicates(subset=["rider_url"])
+    if "rider_country_code" not in riders.columns:
+        riders["rider_country_code"] = None
+    if "rider_country_flag" not in riders.columns:
+        riders["rider_country_flag"] = None
     if not classifications.empty:
         rider_rows = classifications[["rider_name", "rider_slug", "rider_url"]].dropna(subset=["rider_url"])
         team_rows = classifications[["team_name", "team_slug", "team_url"]].dropna(subset=["team_url"])
         riders = pd.concat([riders, rider_rows], ignore_index=True).drop_duplicates(subset=["rider_url"])
         teams = pd.concat([teams, team_rows], ignore_index=True).drop_duplicates(subset=["team_url"])
+        if "rider_country_code" not in riders.columns:
+            riders["rider_country_code"] = None
+        if "rider_country_flag" not in riders.columns:
+            riders["rider_country_flag"] = None
         riders["norm_name"] = riders["rider_name"].map(norm)
         teams["norm_team"] = teams["team_name"].map(norm)
         classifications["norm_name"] = classifications["rider_name"].map(norm)
