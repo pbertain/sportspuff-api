@@ -426,7 +426,20 @@ def parse_classification_rows(html: str, stage_number: int, source_url: str, cla
 def build_stage_classifications(stage_number: int, rankings_html: str):
     ranking_tabs = extract_ranking_tab_urls(rankings_html)
     rows = []
+    visible_stage_rows = parse_classification_rows(
+        rankings_html,
+        stage_number,
+        f"{BASE}/en/rankings/stage-{stage_number}",
+        "stage",
+    )
+    if visible_stage_rows:
+        rows.extend(visible_stage_rows)
+    elif ranking_tabs.get("ite"):
+        source_url, html = fetch_html(ranking_tabs["ite"])
+        rows.extend(parse_classification_rows(html, stage_number, source_url, "stage"))
     for tab_code, classification_type in CLASSIFICATION_TYPE_BY_TAB.items():
+        if classification_type == "stage":
+            continue
         ajax_url = ranking_tabs.get(tab_code)
         if not ajax_url:
             continue
@@ -547,7 +560,9 @@ def build_for_stage(stage_number: int, year: int):
     stage_row["poll_state"] = infer_stage_state(stage_row)
     stage_row["recommended_poll_minutes"] = recommended_poll_minutes(stage_row)
     stage_row["status"] = stage_status(stage_row, has_results=not classifications.empty)
-    if not winner["winner"] and stage_row["status"] == "final":
+    if not stage_class.empty and stage_row["status"] == "final":
+        stage_row.update(winner)
+    elif not winner["winner"] and stage_row["status"] == "final":
         winner = extract_stage_winner(stage_html)
         stage_row.update(winner)
 

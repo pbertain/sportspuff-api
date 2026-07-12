@@ -145,3 +145,67 @@ def test_parse_stage_metrics_scopes_to_main_stage_header():
 
     assert metrics["distance_km"] == "168.5"
     assert metrics["race_type"] == "Hilly"
+
+
+def test_build_for_stage_prefers_stage_ranking_table_over_banner(monkeypatch):
+    stage_html = """
+    <html>
+      <head><title>Stage 9 - Malemort > Ussel - Tour de France 2026</title></head>
+      <body>
+        <h3>Stage Winner Continental</h3>
+        <div>
+          <a href="/en/rider/121/uno-x-mobility/tobias-halland-johannessen">T. JOHANNESSEN</a>
+          <a href="/en/team/UXM/uno-x-mobility">UNO-X MOBILITY</a>
+        </div>
+      </body>
+    </html>
+    """
+    rankings_html = """
+    <html>
+      <head><title>Official classifications of Tour de France 2026 - Stage 9</title></head>
+      <body>
+        <div>Stage ranking</div>
+        <table>
+          <thead>
+            <tr>
+              <th>Rank</th><th>Rider</th><th>Rider No.</th><th>Team</th><th>Times</th><th>Gap</th><th>B</th><th>P</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>1</td>
+              <td><a href="/en/rider/101/alpecin-premier-tech/mathieu-van-der-poel">M. VAN DER POEL</a></td>
+              <td>101</td>
+              <td><a href="/en/team/APT/alpecin-premier-tech">ALPECIN-PREMIER TECH</a></td>
+              <td>03h 27' 51''</td>
+              <td>-</td>
+              <td>B : 10''</td>
+              <td>-</td>
+            </tr>
+          </tbody>
+        </table>
+      </body>
+    </html>
+    """
+
+    def fake_fetch_html(path):
+        if path == "/en/stage-9":
+            return f"https://www.letour.fr{path}", stage_html
+        if path == "/en/rankings/stage-9":
+            return f"https://www.letour.fr{path}", rankings_html
+        raise AssertionError(path)
+
+    monkeypatch.setattr(builder, "fetch_html", fake_fetch_html)
+    monkeypatch.setattr(builder, "validate_stage_page", lambda html, stage_number, year: f"Stage {stage_number} - Malemort > Ussel - Tour de France {year}")
+    monkeypatch.setattr(builder, "page_text", lambda html: "Stage 9 - 07/12 - Malemort > Ussel")
+    monkeypatch.setattr(builder, "parse_stage_metrics", lambda html: {"distance_km": "154.6", "race_type": "Hilly"})
+    monkeypatch.setattr(builder, "parse_stage_schedule", lambda text: {"stage_start_local": "13:45", "stage_finish_expected_local": "17:22", "stage_first_start_local": None, "stage_last_arrival_local": None})
+    monkeypatch.setattr(builder, "extract_links", lambda html: (builder.pd.DataFrame(), builder.pd.DataFrame()))
+
+    stage_df, classifications, _, _ = builder.build_for_stage(9, 2026)
+
+    assert stage_df.iloc[0]["winner"] == "M. VAN DER POEL"
+    assert stage_df.iloc[0]["winner_url"].endswith("/mathieu-van-der-poel")
+    assert not classifications.empty
+    assert classifications.iloc[0]["classification_type"] == "stage"
+    assert classifications.iloc[0]["rider_name"] == "M. VAN DER POEL"
