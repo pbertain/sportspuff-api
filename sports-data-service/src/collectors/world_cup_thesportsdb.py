@@ -142,11 +142,16 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         (82, "Winner Group D", "3rd Group B/E/F/I/J"),
         (87, "Winner Group J", "Runner-up Group H"),
     )
-    ROUND_OF_16_MATCHES = tuple(range(89, 97))
-    QUARTERFINAL_MATCHES = tuple(range(97, 101))
+    # Knockout rounds keep the FIFA visual bracket order, not the numeric
+    # match-number order.
+    ROUND_OF_16_MATCHES = (89, 91, 90, 92, 93, 95, 94, 96)
+    QUARTERFINAL_MATCHES = (97, 99, 98, 100)
     SEMIFINAL_MATCHES = tuple(range(101, 103))
     THIRD_PLACE_MATCH = 103
     FINAL_MATCH = 104
+    ROUND_OF_16_SOURCE_PAIRS = ((0, 2), (1, 3), (4, 6), (5, 7), (8, 10), (9, 11), (12, 14), (13, 15))
+    QUARTERFINAL_SOURCE_PAIRS = ((0, 2), (1, 3), (4, 6), (5, 7))
+    SEMIFINAL_SOURCE_PAIRS = ((0, 2), (1, 3))
 
     def __init__(self):
         super().__init__("WC")
@@ -739,25 +744,32 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             match_numbers=self.ROUND_OF_16_MATCHES,
             source_round=round_of_32,
             by_round=by_round,
+            by_match=by_match,
             team_records=team_records,
+            source_pairs=self.ROUND_OF_16_SOURCE_PAIRS,
         )
         quarterfinal = self._build_knockout_round(
             round_name="quarterfinal",
             match_numbers=self.QUARTERFINAL_MATCHES,
             source_round=round_of_16,
             by_round=by_round,
+            by_match=by_match,
             team_records=team_records,
+            source_pairs=self.QUARTERFINAL_SOURCE_PAIRS,
         )
         semifinal = self._build_knockout_round(
             round_name="semifinal",
             match_numbers=self.SEMIFINAL_MATCHES,
             source_round=quarterfinal,
             by_round=by_round,
+            by_match=by_match,
             team_records=team_records,
+            source_pairs=self.SEMIFINAL_SOURCE_PAIRS,
         )
         third_place = self._build_third_place_match(
             source_round=semifinal,
             by_round=by_round,
+            by_match=by_match,
             team_records=team_records,
         )
         final = self._build_knockout_round(
@@ -765,7 +777,9 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             match_numbers=(self.FINAL_MATCH,),
             source_round=semifinal,
             by_round=by_round,
+            by_match=by_match,
             team_records=team_records,
+            source_pairs=((0, 1),),
         )
 
         return {
@@ -824,15 +838,23 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         match_numbers: Tuple[int, ...],
         source_round: List[Dict[str, Any]],
         by_round: Dict[str, List[Dict[str, Any]]],
+        by_match: Dict[int, Dict[str, Any]],
         team_records: Dict[str, Dict[str, Any]],
+        source_pairs: Optional[Tuple[Tuple[int, int], ...]] = None,
     ) -> List[Dict[str, Any]]:
         actuals = sorted(by_round.get(round_name, []), key=lambda g: ((g.get("game_date") or ""), (g.get("game_time") or "")))
         matches: List[Dict[str, Any]] = []
         for index, match_number in enumerate(match_numbers):
-            source_index = index * 2
-            home_source = source_round[source_index] if source_index < len(source_round) else None
-            away_source = source_round[source_index + 1] if source_index + 1 < len(source_round) else None
-            actual = actuals[index] if index < len(actuals) else None
+            if source_pairs and index < len(source_pairs):
+                home_source_index, away_source_index = source_pairs[index]
+            else:
+                home_source_index = index * 2
+                away_source_index = home_source_index + 1
+            home_source = source_round[home_source_index] if home_source_index < len(source_round) else None
+            away_source = source_round[away_source_index] if away_source_index < len(source_round) else None
+            actual = by_match.get(match_number)
+            if not actual and index < len(actuals):
+                actual = actuals[index]
             matches.append(self._build_knockout_match(
                 match_number=match_number,
                 round_name=round_name,
@@ -847,10 +869,11 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
         self,
         source_round: List[Dict[str, Any]],
         by_round: Dict[str, List[Dict[str, Any]]],
+        by_match: Dict[int, Dict[str, Any]],
         team_records: Dict[str, Dict[str, Any]],
     ) -> Optional[Dict[str, Any]]:
         actuals = sorted(by_round.get("third_place", []), key=lambda g: ((g.get("game_date") or ""), (g.get("game_time") or "")))
-        actual = actuals[0] if actuals else None
+        actual = by_match.get(self.THIRD_PLACE_MATCH) or (actuals[0] if actuals else None)
         home_source = source_round[0] if len(source_round) > 0 else None
         away_source = source_round[1] if len(source_round) > 1 else None
         return self._build_knockout_match(

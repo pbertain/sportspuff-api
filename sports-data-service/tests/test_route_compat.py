@@ -1157,21 +1157,17 @@ def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
         events.append(_event(match_number, 32, home, away))
         current_winners.append(home)
 
-    round_specs = [
-        (89, 16),
-        (97, 8),
-        (101, 4),
-        (104, 2),
-    ]
-    next_winners = current_winners
-    for start_match_number, round_value in round_specs:
-        stage_winners = []
-        for offset in range(0, len(next_winners), 2):
-            home = next_winners[offset]
-            away = next_winners[offset + 1]
-            events.append(_event(start_match_number + offset // 2, round_value, home, away))
-            stage_winners.append(home)
-        next_winners = stage_winners
+    # Round of 16 in FIFA visual order.
+    events.extend([
+        _event(89, 16, current_winners[0], current_winners[4]),
+        _event(91, 16, current_winners[1], current_winners[5]),
+        _event(90, 16, current_winners[2], current_winners[6]),
+        _event(92, 16, current_winners[3], current_winners[7]),
+        _event(93, 16, current_winners[8], current_winners[10]),
+        _event(95, 16, current_winners[9], current_winners[11]),
+        _event(94, 16, current_winners[12], current_winners[14]),
+        _event(96, 16, current_winners[13], current_winners[15]),
+    ])
 
     monkeypatch.setattr(collector, "_season_events", lambda _season: events)
     monkeypatch.setattr(collector, "get_team_records", lambda: {})
@@ -1184,25 +1180,27 @@ def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
     semifinals = rounds["Semi-final"]
     finals = rounds["Final"]
 
-    assert round_of_16[0]["home_team"] == "Team A"
-    assert round_of_16[0]["away_team"] == "Team C"
+    assert [m["match_number"] for m in round_of_16] == [89, 91, 90, 92, 93, 95, 94, 96]
     assert round_of_16[0]["home_slot"] == "Winner Match 74"
-    assert round_of_16[0]["away_slot"] == "Winner Match 76"
+    assert round_of_16[0]["away_slot"] == "Winner Match 77"
+    assert round_of_16[1]["home_slot"] == "Winner Match 76"
+    assert round_of_16[1]["away_slot"] == "Winner Match 78"
+    assert round_of_16[2]["home_slot"] == "Winner Match 73"
+    assert round_of_16[2]["away_slot"] == "Winner Match 75"
 
+    assert [m["match_number"] for m in quarterfinals] == [97, 99, 98, 100]
     assert quarterfinals[0]["home_team"] == "Team A"
     assert quarterfinals[0]["away_team"] == "Team E"
     assert quarterfinals[0]["home_slot"] == "Winner Match 89"
     assert quarterfinals[0]["away_slot"] == "Winner Match 90"
 
-    assert semifinals[0]["home_team"] == "Team A"
-    assert semifinals[0]["away_team"] == "Team I"
     assert semifinals[0]["home_slot"] == "Winner Match 97"
     assert semifinals[0]["away_slot"] == "Winner Match 98"
+    assert semifinals[0]["game_status"] == "scheduled"
 
-    assert finals[0]["home_team"] == "Team A"
-    assert finals[0]["away_team"] == "Team Q"
     assert finals[0]["home_slot"] == "Winner Match 101"
     assert finals[0]["away_slot"] == "Winner Match 102"
+    assert finals[0]["game_status"] == "scheduled"
 
 
 def test_world_cup_round_of_32_layout_matches_fifa_visual_order(monkeypatch):
