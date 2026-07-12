@@ -514,6 +514,31 @@ def test_tour_de_france_stage_endpoint_returns_stage_detail(monkeypatch):
     assert payload["meta"]["source_updated_at"]
 
 
+def test_tour_de_france_stage_payload_has_no_nan_or_merge_helpers(monkeypatch):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(
+        api.settings,
+        "tour_de_france_data_dir",
+        str(Path(__file__).resolve().parents[2] / "letour-scraper"),
+    )
+
+    payload = api.get_tour_de_france_stage_api_v1(2026, 7)
+
+    def walk(obj):
+        if isinstance(obj, dict):
+            for key, value in obj.items():
+                assert not key.endswith("_lk")
+                walk(value)
+        elif isinstance(obj, list):
+            for value in obj:
+                walk(value)
+        elif isinstance(obj, float):
+            assert obj == obj
+            assert obj not in (float("inf"), float("-inf"))
+
+    walk(payload)
+
+
 def test_tour_de_france_stage_endpoint_404s_for_unknown_stage(monkeypatch):
     api._tour_de_france_cache.clear()
     monkeypatch.setattr(

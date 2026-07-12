@@ -24,6 +24,26 @@ def _looks_time_value(value: Any) -> bool:
     return bool(re.search(r"\d{1,2}h\s+\d{2}'\s+\d{2}''", text))
 
 
+def _sanitize_value(value: Any) -> Any:
+    try:
+        if pd.isna(value):
+            return None
+    except Exception:
+        pass
+    if isinstance(value, float) and (value != value or value in (float("inf"), float("-inf"))):
+        return None
+    return value
+
+
+def _sanitize_record(raw: Dict[str, Any]) -> Dict[str, Any]:
+    cleaned: Dict[str, Any] = {}
+    for key, value in raw.items():
+        if key.endswith("_lk"):
+            continue
+        cleaned[key] = _sanitize_value(value)
+    return cleaned
+
+
 def _safe_int(value: Any) -> Optional[int]:
     try:
         if value in (None, ""):
@@ -230,7 +250,7 @@ class TourDeFranceDataService:
                 stage["cycling_country"] = overlay.get("cycling_country")
 
     def _normalize_stage(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        stage = dict(raw)
+        stage = _sanitize_record(dict(raw))
         stage["stage_number"] = _safe_int(stage.get("stage_number"))
         stage["recommended_poll_minutes"] = _safe_int(stage.get("recommended_poll_minutes"))
         stage["date"] = _parse_date(stage.get("date")) or _clean(stage.get("date")) or None
@@ -276,7 +296,7 @@ class TourDeFranceDataService:
             raw = raw[0] if raw else {}
         elif not isinstance(raw, dict):
             raw = {}
-        schedule = dict(raw)
+        schedule = _sanitize_record(dict(raw))
         schedule["stage_number"] = _safe_int(schedule.get("stage_number"))
         schedule["recommended_poll_minutes"] = _safe_int(schedule.get("recommended_poll_minutes"))
         return schedule
@@ -307,7 +327,7 @@ class TourDeFranceDataService:
             schedule[utc_field] = utc_value
 
     def _normalize_classification_row(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        row = dict(raw)
+        row = _sanitize_record(dict(raw))
         row["stage_number"] = _safe_int(row.get("stage_number"))
         row["rank"] = _safe_int(row.get("rank"))
         row["bib"] = _safe_int(row.get("bib"))
@@ -342,6 +362,7 @@ class TourDeFranceDataService:
             row["time"] = row.get("gap")
             row["gap"] = row.get("points")
             row["points"] = None
+        row = _sanitize_record(row)
         return row
 
     def _classification_boards(self, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
