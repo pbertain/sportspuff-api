@@ -9,6 +9,7 @@ import pytest
 from src import api
 from src.collectors.tennis_thesportsdb import TennisTheSportsDBCollector
 from src.services import tennis_scores
+from src.services.tour_de_france import GiroDItaliaDataService, LaVueltaDataService, TourDeFranceDataService
 
 
 def _request(path: str) -> Request:
@@ -660,6 +661,130 @@ def test_giro_bundle_endpoint_uses_giro_bundle(monkeypatch, tmp_path):
     assert payload["stages"][0]["stage"]["stage_name"] == "Monaco > Monaco"
 
 
+def test_cycling_bundle_contract_preserves_country_fields(tmp_path):
+    bundle_template = {
+        "year": 2026,
+        "source": "example",
+        "generated_at": "2026-07-11T19:00:00Z",
+        "source_updated_at": "2026-07-11T19:00:00Z",
+        "generated_files": [],
+        "teams": [{"team_name": "Test Team", "team_slug": "test-team", "team_url": "https://example.com/team"}],
+        "riders": [
+            {
+                "rider_name": "Test Rider",
+                "rider_slug": "test-rider",
+                "rider_url": "https://example.com/rider",
+                "rider_country_code": "ITA",
+                "rider_country_flag": "ita",
+            }
+        ],
+        "stages": [
+            {
+                "stage": {
+                    "race": "placeholder",
+                    "stage_number": 1,
+                    "stage_name": "Test Stage",
+                    "date": "2026-07-11",
+                    "status": "final",
+                    "winner": "Test Rider",
+                    "winner_url": "https://example.com/rider",
+                    "winner_country_code": "ITA",
+                    "winner_country_flag": "ita",
+                    "team": "Test Team",
+                    "team_url": "https://example.com/team",
+                    "distance_km": "10",
+                    "race_type": "Hilly",
+                    "start_city": "A",
+                    "finish_city": "B",
+                    "cycling_event_label": "Stage 1",
+                    "cycling_country": "France",
+                    "cycling_url": "https://example.com/stage-1",
+                    "rankings_url": "https://example.com/stage-1",
+                    "stage_page_title": "Stage 1",
+                    "rankings_page_title": "Rankings",
+                    "poll_state": "post_stage",
+                    "recommended_poll_minutes": 60,
+                },
+                "schedule": [
+                    {
+                        "stage_number": 1,
+                        "stage_name": "Test Stage",
+                        "cycling_url": "https://example.com/stage-1",
+                        "rankings_url": "https://example.com/stage-1",
+                        "stage_start_local": None,
+                        "stage_finish_expected_local": None,
+                        "stage_first_start_local": None,
+                        "stage_last_arrival_local": None,
+                        "poll_state": "post_stage",
+                        "recommended_poll_minutes": 60,
+                    }
+                ],
+                "classifications": [
+                    {
+                        "race": "placeholder",
+                        "stage_number": 1,
+                        "classification_type": "stage",
+                        "rank": 1,
+                        "rider_name": "Test Rider",
+                        "rider_slug": "test-rider",
+                        "rider_url": "https://example.com/rider",
+                        "rider_country_code": "ITA",
+                        "rider_country_flag": "ita",
+                        "bib": 7,
+                        "team_name": "Test Team",
+                        "team_slug": "test-team",
+                        "team_url": "https://example.com/team",
+                        "time": "3:00:00",
+                        "gap": "0:00",
+                        "points": None,
+                        "bonus": None,
+                        "source_url": "https://example.com/stage-1",
+                    }
+                ],
+            }
+        ],
+    }
+
+    services = [
+        (TourDeFranceDataService, "letour_app_bundle.json"),
+        (LaVueltaDataService, "lavuelta_app_bundle.json"),
+        (GiroDItaliaDataService, "giro_app_bundle.json"),
+    ]
+
+    for service_cls, filename in services:
+        data_dir = tmp_path / filename.replace(".json", "")
+        data_dir.mkdir()
+        payload = dict(bundle_template)
+        payload["race"] = service_cls.default_race
+        payload["source"] = service_cls.bundle_basename
+        payload["stages"] = [
+            {
+                **bundle_template["stages"][0],
+                "stage": {
+                    **bundle_template["stages"][0]["stage"],
+                    "race": service_cls.default_race,
+                },
+                "classifications": [
+                    {
+                        **bundle_template["stages"][0]["classifications"][0],
+                        "race": service_cls.default_race,
+                    }
+                ],
+            }
+        ]
+        (data_dir / filename).write_text(json.dumps(payload), encoding="utf-8")
+
+        service = service_cls(str(data_dir))
+        result = service.get_bundle(2026)
+        stage = result["stages"][0]["stage"]
+        row = result["stages"][0]["classification_rows"][0]
+
+        assert stage["winner_country_code"] == "ITA"
+        assert stage["winner_country_flag"] == "ita"
+        assert row["rider_country_code"] == "ITA"
+        assert row["rider_country_flag"] == "ita"
+
+
 def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):
     from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
 
@@ -696,7 +821,7 @@ def test_world_cup_round_of_32_matches_keep_shootout_winners(monkeypatch):
     bracket = collector.get_knockout_bracket()
     match = bracket["rounds"][0]["matches"][0]
 
-    assert match["match_number"] == 73
+    assert match["match_number"] == 74
     assert match["home_team"] == "Egypt"
     assert match["away_team"] == "Australia"
     assert match["home_score"] == 1

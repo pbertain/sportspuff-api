@@ -27,6 +27,7 @@ For each cycling entry in the scores payload, use:
 - `cycling_stage_number`
 - `cycling_event_label`
 - `cycling_winner`
+- `winner_country_code` / `winner_country_flag` when present on stage details
 - `cycling_rank`
 - `game_status`
 - `game_date`
@@ -38,6 +39,7 @@ Recommended frontend behavior:
 - Show the race name as the header, e.g. `Tour de France`.
 - Show the stage label when present, e.g. `Stage 1`.
 - Show `cycling_winner` when a stage is final or a winner is known.
+- If `winner_country_code` is present, render the matching small flag next to the winner.
 - Show `cycling_rank` when present. This is the individual stage ranking or GC placement surfaced by the API.
 - Use `meta.source_updated_at` or `meta.fetched_at` to label freshness if you show a timestamp.
 
@@ -78,6 +80,19 @@ Frontend guidance:
 - Race header: `current_phase`
 - Stage card: `cycling_stage_label`, `game_status`, `cycling_winner`
 - Live leaderboard: `/api/v1/standings/cycling`
+
+### Rider flags
+
+The cycling rider and classification payloads can also include:
+
+- `rider_country_code`
+- `rider_country_flag`
+
+Use the code to render a small flag next to each rider name. Key the asset off the lower-case flag code.
+
+### Winner contrast
+
+The color metric you want for the Tour winner label is the WCAG contrast ratio based on relative luminance. Use that to pick a blue that is still blue-ish but stays readable against the card background.
 
 ## 2. World Cup: knockout bracket
 

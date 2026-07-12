@@ -96,3 +96,14 @@ def test_write_app_bundle_handles_empty_classifications_without_stage_number(tmp
 
     payload = (tmp_path / "lavuelta_app_bundle_2026.json").read_text(encoding="utf-8")
     assert '"classifications": []' in payload
+
+
+def test_country_code_from_html_reads_rider_flag_markup():
+    html = """
+    <div class="riderInfos__country">
+      <span class="flag js-display-lazy" data-class="flag--ita"></span>
+      <span class="riderInfos__country__name">(ita)</span>
+    </div>
+    """
+
+    assert builder._country_code_from_html(html) == "ITA"

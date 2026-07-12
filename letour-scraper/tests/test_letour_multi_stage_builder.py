@@ -60,6 +60,17 @@ def test_parse_classification_rows_parses_rider_table():
     assert rows[0]["bonus"] == "B : 16''"
 
 
+def test_country_code_from_html_reads_rider_flag_markup():
+    html = """
+    <div class="riderInfos__country">
+      <span class="flag js-display-lazy" data-class="flag--esp"></span>
+      <span class="riderInfos__country__name">(esp)</span>
+    </div>
+    """
+
+    assert builder._country_code_from_html(html) == "ESP"
+
+
 def test_parse_classification_rows_parses_team_table():
     html = """
     <table>

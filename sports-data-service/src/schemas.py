@@ -318,6 +318,8 @@ class CyclingClassificationRow(BaseModel):
     rider_name: Optional[str] = None
     rider_slug: Optional[str] = None
     rider_url: Optional[str] = None
+    rider_country_code: Optional[str] = None
+    rider_country_flag: Optional[str] = None
     bib: Optional[int] = None
     team_name: Optional[str] = None
     team_slug: Optional[str] = None
@@ -364,6 +366,8 @@ class CyclingStageSummary(BaseModel):
     status: Optional[str] = None
     winner: Optional[str] = None
     winner_url: Optional[str] = None
+    winner_country_code: Optional[str] = None
+    winner_country_flag: Optional[str] = None
     team: Optional[str] = None
     team_url: Optional[str] = None
     distance_km: Optional[str] = None

@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -42,6 +44,23 @@ def _is_due(bundle_path: Path, now: datetime, freshness_minutes: int = 60) -> bo
     return (now.astimezone(timezone.utc) - generated_at).total_seconds() >= freshness_minutes * 60
 
 
+def _run_builder(outdir: Path, year: int) -> int:
+    cmd = [
+        sys.executable,
+        str((Path(__file__).resolve().parent / "giro_multi_stage_builder.py")),
+        "--year",
+        str(year),
+        "--start-stage",
+        "1",
+        "--end-stage",
+        "21",
+        "--outdir",
+        str(outdir),
+    ]
+    print(f"Refreshing Giro bundle for {year} into {outdir}")
+    return subprocess.run(cmd, check=False).returncode
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Giro d'Italia refresh hook.")
     parser.add_argument("--outdir", default=".", help="Directory containing Giro bundle artifacts.")
@@ -51,22 +70,17 @@ def main() -> int:
     year = datetime.now(RACE_TIMEZONE).year
     bundle_path = _bundle_path(outdir, year)
     now = datetime.now(timezone.utc)
-    if not bundle_path.exists():
-        print(f"Giro bundle not present yet for {year}; skipping refresh")
-        return 0
-
     generated_at = _bundle_generated_at(bundle_path)
-    if generated_at is None:
+    if generated_at is None and bundle_path.exists():
         print(f"Giro bundle exists but is unreadable: {bundle_path}")
         return 0
 
-    if not _is_due(bundle_path, now):
+    if generated_at is not None and not _is_due(bundle_path, now):
         age_seconds = max(0, int((now - generated_at).total_seconds()))
         print(f"Skipping refresh: {bundle_path.name} generated_at is newer than 60 minutes (age={age_seconds}s)")
         return 0
 
-    print(f"Giro bundle present for {year}; generated_at={generated_at.astimezone(RACE_TIMEZONE).isoformat()}")
-    return 0
+    return _run_builder(outdir, year)
 
 
 if __name__ == "__main__":

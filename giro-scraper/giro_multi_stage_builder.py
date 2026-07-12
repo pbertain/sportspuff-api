@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+from functools import lru_cache
 from datetime import UTC, date, datetime
 from io import StringIO
 from pathlib import Path
@@ -21,6 +22,7 @@ RANKINGS_CLASSIFICATION_MAP = {
     "ORARR": "stage",
     "CLGEN": "gc",
 }
+COUNTRY_CODE_RE = re.compile(r"flag--([a-z]{2,3})", re.IGNORECASE)
 
 
 def fetch_html(path: str):
@@ -97,6 +99,71 @@ def _split_start_finish(value: str | None):
 def _normalise_stage_type(value: str | None):
     text = _clean(value)
     return text or None
+
+
+def _country_code_from_value(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        value = " ".join(str(item) for item in value)
+    text = _clean(value)
+    if not text:
+        return None
+    match = re.search(r"(?:nationality|country)\s*[:\-]?\s*([a-z]{2,3})", text, re.IGNORECASE)
+    if match:
+        code = match.group(1).strip().lower()
+        if code and code != "en":
+            return code.upper()
+    match = COUNTRY_CODE_RE.search(text)
+    if match:
+        code = match.group(1).strip().lower()
+        if code and code != "en":
+            return code.upper()
+    match = re.search(r"\(([a-z]{2,3})\)", text, re.IGNORECASE)
+    if match:
+        code = match.group(1).strip().lower()
+        if code and code != "en":
+            return code.upper()
+    if re.fullmatch(r"[a-z]{2,3}", text, re.IGNORECASE) and text.lower() != "en":
+        return text.upper()
+    return None
+
+
+def _country_code_from_html(html: str) -> str | None:
+    soup = BeautifulSoup(html, "html.parser")
+    for selector in (".riderInfos__country", ".athleteInfos__country", ".athlete__country"):
+        for node in soup.select(selector):
+            for candidate in [node, *node.find_all(True)]:
+                for attr in ("data-class", "data-country", "data-country-code"):
+                    code = _country_code_from_value(candidate.get(attr))
+                    if code:
+                        return code
+                code = _country_code_from_value(candidate.get("class"))
+                if code:
+                    return code
+                code = _country_code_from_value(candidate.get_text(" ", strip=True))
+                if code:
+                    return code
+    for node in soup.find_all(True):
+        code = _country_code_from_value(node.get("data-class"))
+        if code:
+            return code
+    code = _country_code_from_value(soup.get_text(" ", strip=True))
+    if code:
+        return code
+    return None
+
+
+@lru_cache(maxsize=2048)
+def _rider_country_fields(rider_url: str) -> dict[str, str | None]:
+    try:
+        _, html = fetch_html(rider_url)
+    except Exception:
+        return {"rider_country_code": None, "rider_country_flag": None}
+    code = _country_code_from_html(html)
+    if not code:
+        return {"rider_country_code": None, "rider_country_flag": None}
+    return {"rider_country_code": code, "rider_country_flag": code.lower()}
 
 
 def _first_anchor_href(cell) -> str | None:
@@ -291,7 +358,12 @@ def extract_links(html: str):
         if RIDER_RE.search(href) and full not in seen_r:
             seen_r.add(full)
             slug = href.rstrip("/").split("/")[-1]
-            riders.append({"rider_name": label or slug.replace("-", " ").title(), "rider_slug": slug, "rider_url": full})
+            riders.append({
+                "rider_name": label or slug.replace("-", " ").title(),
+                "rider_slug": slug,
+                "rider_url": full,
+                **_rider_country_fields(full),
+            })
     return pd.DataFrame(teams), pd.DataFrame(riders)
 
 
@@ -490,12 +562,8 @@ def main():
         if latest_completed_stage is not None and stage_number == latest_completed_stage and not overall_gc_rows.empty:
             stage_rows.append(overall_gc_rows)
         class_df = pd.concat(stage_rows, ignore_index=True) if stage_rows else pd.DataFrame(columns=["race", "stage_number", "classification_type", "rank", "rider_name", "rider_slug", "rider_url", "bib", "team_name", "team_slug", "team_url", "time", "gap", "points", "bonus", "source_url"])
-        team_df = pd.DataFrame(columns=["team_name", "team_slug", "team_url"])
-        rider_df = pd.DataFrame(columns=["rider_name", "rider_slug", "rider_url"])
         stages_all.append(stage_df)
         class_all.append(class_df)
-        teams_all.append(team_df)
-        riders_all.append(rider_df)
 
     stages = pd.concat(stages_all, ignore_index=True) if stages_all else pd.DataFrame()
     classifications = pd.concat(class_all, ignore_index=True) if class_all else pd.DataFrame()
@@ -503,6 +571,75 @@ def main():
     riders_all.append(overall_riders)
     teams = pd.concat(teams_all, ignore_index=True).drop_duplicates(subset=["team_url"]) if teams_all else pd.DataFrame()
     riders = pd.concat(riders_all, ignore_index=True).drop_duplicates(subset=["rider_url"]) if riders_all else pd.DataFrame()
+
+    if not riders.empty:
+        riders["norm_name"] = riders["rider_name"].map(lambda value: _clean(value).lower() if pd.notna(value) else "")
+    if not teams.empty:
+        teams["norm_team"] = teams["team_name"].map(lambda value: _clean(value).lower() if pd.notna(value) else "")
+    if not classifications.empty:
+        classifications["norm_name"] = classifications["rider_name"].map(lambda value: _clean(value).lower() if pd.notna(value) else "")
+        classifications["norm_team"] = classifications["team_name"].map(lambda value: _clean(value).lower() if pd.notna(value) else "")
+        if not riders.empty:
+            classifications = classifications.merge(
+                riders[[
+                    "rider_name",
+                    "rider_slug",
+                    "rider_url",
+                    "rider_country_code",
+                    "rider_country_flag",
+                    "norm_name",
+                ]].drop_duplicates("norm_name"),
+                on="norm_name",
+                how="left",
+                suffixes=("", "_lk"),
+            )
+        if not teams.empty:
+            classifications = classifications.merge(
+                teams[["team_name", "team_slug", "team_url", "norm_team"]].drop_duplicates("norm_team"),
+                on="norm_team",
+                how="left",
+                suffixes=("", "_lk"),
+            )
+        classifications = classifications.rename(columns={"rider_name": "rider_name_scraped", "team_name": "team_name_scraped"})
+        classifications["rider_name"] = classifications.get("rider_name_lk", classifications["rider_name_scraped"])
+        classifications["team_name"] = classifications.get("team_name_lk", classifications["team_name_scraped"])
+        for col in ["rider_slug", "rider_url", "rider_country_code", "rider_country_flag", "team_slug", "team_url"]:
+            if col not in classifications.columns:
+                classifications[col] = None
+        keep = [
+            "race",
+            "stage_number",
+            "classification_type",
+            "rank",
+            "rider_name",
+            "rider_slug",
+            "rider_url",
+            "rider_country_code",
+            "rider_country_flag",
+            "bib",
+            "team_name",
+            "team_slug",
+            "team_url",
+            "time",
+            "gap",
+            "points",
+            "bonus",
+            "source_url",
+        ]
+        classifications = classifications[[col for col in keep if col in classifications.columns]]
+
+    if not stages.empty and not classifications.empty:
+        stage_class = classifications[classifications["classification_type"] == "stage"]
+        if not stage_class.empty:
+            top = stage_class.head(1).iloc[0]
+            mask = stages["stage_number"] == top.get("stage_number")
+            if mask.any():
+                stages.loc[mask, "winner"] = top.get("rider_name")
+                stages.loc[mask, "winner_url"] = top.get("rider_url")
+                stages.loc[mask, "team"] = top.get("team_name")
+                stages.loc[mask, "team_url"] = top.get("team_url")
+                stages.loc[mask, "winner_country_code"] = top.get("rider_country_code")
+                stages.loc[mask, "winner_country_flag"] = str(top.get("rider_country_code")).lower() if top.get("rider_country_code") else None
 
     write_versioned_csv(stages, outdir, "stages", args.year)
     write_versioned_csv(classifications, outdir, "classifications", args.year)

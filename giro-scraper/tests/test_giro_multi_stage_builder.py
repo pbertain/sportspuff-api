@@ -2,11 +2,20 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from importlib.util import module_from_spec, spec_from_file_location
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 
-from giro_multi_stage_builder import _parse_ranking_rows, parse_route_calendar
-from refresh_if_due import _is_due
+from giro_multi_stage_builder import _country_code_from_html, _parse_ranking_rows, parse_route_calendar
+
+
+MODULE_PATH = Path(__file__).resolve().parents[1] / "refresh_if_due.py"
+SPEC = spec_from_file_location("giro_refresh_if_due", MODULE_PATH)
+refresh = module_from_spec(SPEC)
+assert SPEC and SPEC.loader
+SPEC.loader.exec_module(refresh)
+_is_due = refresh._is_due
 
 
 def test_parse_route_calendar_extracts_rows_and_links():
@@ -157,3 +166,35 @@ def test_refresh_if_due_uses_generated_at(tmp_path):
     recent_now = datetime(2026, 7, 11, 19, 30, tzinfo=timezone.utc)
 
     assert not _is_due(bundle, recent_now)
+
+
+def test_refresh_if_due_bootstraps_missing_bundle(tmp_path, monkeypatch):
+    captured = {}
+
+    def fake_run(cmd, check=False):
+        captured["cmd"] = cmd
+
+        class Result:
+            returncode = 0
+
+        return Result()
+
+    monkeypatch.setattr(refresh.subprocess, "run", fake_run)
+
+    bundle_dir = tmp_path
+    result = refresh._run_builder(bundle_dir, 2026)
+
+    assert result == 0
+    assert captured["cmd"][0] == refresh.sys.executable
+    assert captured["cmd"][1].endswith("giro_multi_stage_builder.py")
+    assert "--year" in captured["cmd"]
+
+
+def test_country_code_from_html_reads_nationality_text():
+    html = """
+    <div class="rider-details">
+      <p>Nationality: DEN</p>
+    </div>
+    """
+
+    assert _country_code_from_html(html) == "DEN"

@@ -2,6 +2,7 @@
 import argparse
 import json
 import re
+from functools import lru_cache
 from datetime import datetime, timedelta
 from io import StringIO
 from pathlib import Path
@@ -15,6 +16,7 @@ BASE = 'https://www.lavuelta.es'
 HEADERS = {'User-Agent': 'Mozilla/5.0'}
 TEAM_RE = re.compile(r"/en/team/[^\"'#?]+")
 RIDER_RE = re.compile(r"/en/rider/[^\"'#?]+")
+COUNTRY_CODE_RE = re.compile(r"flag--([a-z]{2,3})", re.IGNORECASE)
 
 
 def fetch_html(path: str):
@@ -34,6 +36,10 @@ def page_title(html: str) -> str:
 def page_text(html: str) -> str:
     soup = BeautifulSoup(html, 'html.parser')
     return ' '.join(soup.get_text(' ', strip=True).split())
+
+
+def _clean(value):
+    return '' if value is None else ' '.join(str(value).split()).strip()
 
 
 def validate_stage_page(html: str, stage_number: int, year: int):
@@ -140,8 +146,74 @@ def extract_links(html: str):
         if RIDER_RE.search(href) and full not in seen_r:
             seen_r.add(full)
             slug = href.rstrip('/').split('/')[-1]
-            riders.append({'rider_name': label or slug.replace('-', ' ').title(), 'rider_slug': slug, 'rider_url': full})
+            rider_name = label or slug.replace('-', ' ').title()
+            riders.append({'rider_name': rider_name, 'rider_slug': slug, 'rider_url': full, **_rider_country_fields(full)})
     return pd.DataFrame(teams), pd.DataFrame(riders)
+
+
+def _country_code_from_value(value: object) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        value = ' '.join(str(item) for item in value)
+    text = _clean(value)
+    if not text:
+        return None
+    match = re.search(r'(?:nationality|country)\s*[:\-]?\s*([a-z]{2,3})', text, re.IGNORECASE)
+    if match:
+        code = match.group(1).strip().lower()
+        if code and code != 'en':
+            return code.upper()
+    match = COUNTRY_CODE_RE.search(text)
+    if match:
+        code = match.group(1).strip().lower()
+        if code and code != 'en':
+            return code.upper()
+    match = re.search(r'\(([a-z]{2,3})\)', text, re.IGNORECASE)
+    if match:
+        code = match.group(1).strip().lower()
+        if code and code != 'en':
+            return code.upper()
+    if re.fullmatch(r'[a-z]{2,3}', text, re.IGNORECASE) and text.lower() != 'en':
+        return text.upper()
+    return None
+
+
+def _country_code_from_html(html: str) -> str | None:
+    soup = BeautifulSoup(html, 'html.parser')
+    for selector in ('.riderInfos__country', '.athleteInfos__country', '.athlete__country'):
+        for node in soup.select(selector):
+            for candidate in [node, *node.find_all(True)]:
+                for attr in ('data-class', 'data-country', 'data-country-code'):
+                    code = _country_code_from_value(candidate.get(attr))
+                    if code:
+                        return code
+                code = _country_code_from_value(candidate.get('class'))
+                if code:
+                    return code
+                code = _country_code_from_value(candidate.get_text(' ', strip=True))
+                if code:
+                    return code
+    for node in soup.find_all(True):
+        code = _country_code_from_value(node.get('data-class'))
+        if code:
+            return code
+    code = _country_code_from_value(soup.get_text(' ', strip=True))
+    if code:
+        return code
+    return None
+
+
+@lru_cache(maxsize=2048)
+def _rider_country_fields(rider_url: str) -> dict[str, str | None]:
+    try:
+        _, html = fetch_html(rider_url)
+    except Exception:
+        return {'rider_country_code': None, 'rider_country_flag': None}
+    code = _country_code_from_html(html)
+    if not code:
+        return {'rider_country_code': None, 'rider_country_flag': None}
+    return {'rider_country_code': code, 'rider_country_flag': code.lower()}
 
 
 def norm(s):
@@ -335,7 +407,7 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
         classifications['norm_team'] = classifications['team_name'].map(norm)
         if not riders.empty:
             classifications = classifications.merge(
-                riders[['rider_name','rider_slug','rider_url','norm_name']].drop_duplicates('norm_name'),
+                riders[['rider_name','rider_slug','rider_url','rider_country_code','rider_country_flag','norm_name']].drop_duplicates('norm_name'),
                 on='norm_name', how='left', suffixes=('','_lk')
             )
         if not teams.empty:
@@ -346,13 +418,13 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
         classifications = classifications.rename(columns={'rider_name':'rider_name_scraped','team_name':'team_name_scraped'})
         classifications['rider_name'] = classifications.get('rider_name_lk', classifications['rider_name_scraped'])
         classifications['team_name'] = classifications.get('team_name_lk', classifications['team_name_scraped'])
-        for col in ['rider_slug','rider_url','team_slug','team_url']:
+        for col in ['rider_slug','rider_url','rider_country_code','rider_country_flag','team_slug','team_url']:
             if col not in classifications.columns:
                 classifications[col] = None
-        keep = ['race','stage_number','classification_type','rank','rider_name','rider_slug','rider_url','bib','team_name','team_slug','team_url','time','gap','points','bonus','source_url']
+        keep = ['race','stage_number','classification_type','rank','rider_name','rider_slug','rider_url','rider_country_code','rider_country_flag','bib','team_name','team_slug','team_url','time','gap','points','bonus','source_url']
         classifications = classifications[keep]
 
-    rider_dim = riders[['rider_name','rider_slug','rider_url']].drop_duplicates().sort_values(['rider_name','rider_url']) if not riders.empty else pd.DataFrame(columns=['rider_name','rider_slug','rider_url'])
+    rider_dim = riders[['rider_name','rider_slug','rider_url','rider_country_code','rider_country_flag']].drop_duplicates().sort_values(['rider_name','rider_url']) if not riders.empty else pd.DataFrame(columns=['rider_name','rider_slug','rider_url','rider_country_code','rider_country_flag'])
     team_dim = teams[['team_name','team_slug','team_url']].drop_duplicates().sort_values(['team_name','team_url']) if not teams.empty else pd.DataFrame(columns=['team_name','team_slug','team_url'])
 
     stage_class = classifications[classifications['classification_type'] == 'stage'] if not classifications.empty else pd.DataFrame()
@@ -362,6 +434,8 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
         stage_row['winner_url'] = top.get('rider_url')
         stage_row['team'] = top.get('team_name')
         stage_row['team_url'] = top.get('team_url')
+        stage_row['winner_country_code'] = top.get('rider_country_code')
+        stage_row['winner_country_flag'] = str(top.get('rider_country_code')).lower() if top.get('rider_country_code') else None
 
     stage_row['poll_state'] = infer_stage_state(stage_row)
     stage_row['recommended_poll_minutes'] = recommended_poll_minutes(stage_row)
