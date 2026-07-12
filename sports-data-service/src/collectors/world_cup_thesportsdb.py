@@ -1,5 +1,6 @@
 """
-FIFA World Cup collector backed by TheSportsDB (league_id 4429).
+FIFA World Cup collector backed by FIFA's official JSON feeds first, with
+TheSportsDB as a fallback.
 
 Soccer / football scoring (3 points for a win, 1 for a draw). Group-stage
 standings derived from completed matches. TheSportsDB does not expose group
@@ -20,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytz
+import requests
 
 from .thesportsdb import TheSportsDBCollector
 
@@ -115,26 +117,30 @@ WC_2026_GROUP_ALIASES: Dict[str, str] = {
 
 
 class WorldCupTheSportsDBCollector(TheSportsDBCollector):
+    FIFA_SEASON_ID = "285023"
+    FIFA_BASE_URL = "https://api.fifa.com/api/v3"
     LEAGUE_ID = 4429
     SPORTSPUFF_CODE = "WC"
     GROUP_LABELS = tuple("ABCDEFGHIJKL")
     ROUND_OF_32_SLOTS = (
-        (73, "Runner-up Group A", "Runner-up Group B"),
+        # FIFA's bracket layout is not ordered by match number.
+        # This sequence matches the visual card order on the FIFA bracket page.
         (74, "Winner Group C", "Runner-up Group F"),
-        (75, "Winner Group E", "3rd Group A/B/C/D/F"),
         (76, "Winner Group F", "Runner-up Group C"),
         (77, "Runner-up Group E", "Runner-up Group I"),
         (78, "Winner Group I", "3rd Group C/D/F/G/H"),
+        (73, "Runner-up Group A", "Runner-up Group B"),
         (79, "Winner Group A", "3rd Group C/E/F/H/I"),
+        (75, "Winner Group E", "3rd Group A/B/C/D/F"),
         (80, "Winner Group L", "3rd Group E/H/I/J/K"),
-        (81, "Winner Group G", "3rd Group A/E/H/I/J"),
-        (82, "Winner Group D", "3rd Group B/E/F/I/J"),
         (83, "Winner Group H", "Runner-up Group J"),
-        (84, "Runner-up Group K", "Runner-up Group L"),
-        (85, "Winner Group B", "3rd Group E/F/G/I/J"),
         (86, "Runner-up Group D", "Runner-up Group G"),
-        (87, "Winner Group J", "Runner-up Group H"),
+        (84, "Runner-up Group K", "Runner-up Group L"),
         (88, "Winner Group K", "3rd Group D/E/I/J/L"),
+        (81, "Winner Group G", "3rd Group A/E/H/I/J"),
+        (85, "Winner Group B", "3rd Group E/F/G/I/J"),
+        (82, "Winner Group D", "3rd Group B/E/F/I/J"),
+        (87, "Winner Group J", "Runner-up Group H"),
     )
     ROUND_OF_16_MATCHES = tuple(range(89, 97))
     QUARTERFINAL_MATCHES = tuple(range(97, 101))
@@ -145,6 +151,7 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
     def __init__(self):
         super().__init__("WC")
         self.timezone = pytz.timezone("US/Pacific")
+        self._fifa_source_updated_at: Optional[str] = None
 
     def current_season(self) -> str:
         """FIFA World Cup runs every 4 years. Use the most recent year that
@@ -161,6 +168,133 @@ class WorldCupTheSportsDBCollector(TheSportsDBCollector):
             return str(n.year)
         past = [y for y in wc_years if y <= n.year]
         return str(max(past)) if past else "2026"
+
+    def get_source_updated_at(self, context: Optional[str] = None) -> Optional[str]:
+        if self._fifa_source_updated_at:
+            return self._fifa_source_updated_at
+        return super().get_source_updated_at(context)
+
+    def _fifa_get_json(self, path: str) -> Dict[str, Any]:
+        url = f"{self.FIFA_BASE_URL}{path}"
+        response = requests.get(url, timeout=30, headers={"User-Agent": "sportspuff-api/1.0"})
+        response.raise_for_status()
+        return response.json()
+
+    @staticmethod
+    def _fifa_localized_text(node: Any) -> str:
+        if isinstance(node, list):
+            for entry in node:
+                if isinstance(entry, dict) and entry.get("Description"):
+                    return str(entry.get("Description") or "")
+        if isinstance(node, dict):
+            return str(node.get("Description") or "")
+        return str(node or "")
+
+    @classmethod
+    def _fifa_team_payload(cls, side: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        side = side or {}
+        return {
+            "name": cls._fifa_localized_text(side.get("TeamName")),
+            "abbrev": str(side.get("Abbreviation") or side.get("IdCountry") or ""),
+            "id": str(side.get("IdTeam") or ""),
+        }
+
+    @staticmethod
+    def _fifa_match_status(match: Dict[str, Any]) -> str:
+        if int(match.get("MatchTimeStatus") or 0) == 10:
+            return "final"
+        if match.get("Winner"):
+            return "final"
+        return "scheduled"
+
+    @classmethod
+    def _fifa_match_to_event(
+        cls,
+        match: Dict[str, Any],
+        *,
+        int_round: int,
+        match_number: Optional[int] = None,
+        stage_name: Optional[str] = None,
+        group_name: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        home = cls._fifa_team_payload(match.get("HomeTeam") or match.get("Home"))
+        away = cls._fifa_team_payload(match.get("AwayTeam") or match.get("Away"))
+        home_score = match.get("HomeTeamScore")
+        away_score = match.get("AwayTeamScore")
+        match_time = str(match.get("Date") or "")
+        date_event = match_time[:10] if len(match_time) >= 10 else ""
+        status = cls._fifa_match_status(match)
+        winner_id = str(match.get("Winner") or "")
+        winner = None
+        if winner_id:
+            if winner_id == home["id"]:
+                winner = home["name"]
+            elif winner_id == away["id"]:
+                winner = away["name"]
+        if not winner and status == "final" and home_score is not None and away_score is not None and home_score != away_score:
+            winner = home["name"] if int(home_score) > int(away_score) else away["name"]
+        return {
+            "league": "WC",
+            "game_id": str(match.get("IdMatch") or ""),
+            "game_date": date_event,
+            "game_time": match_time,
+            "strTimestamp": match_time,
+            "dateEvent": date_event,
+            "strTime": match_time[11:19] if len(match_time) >= 19 else "",
+            "strStatus": "FT" if status == "final" else "NS",
+            "strEvent": f"{home['name']} vs {away['name']}",
+            "strHomeTeam": home["name"],
+            "strAwayTeam": away["name"],
+            "strHomeTeamShort": home["abbrev"],
+            "strAwayTeamShort": away["abbrev"],
+            "idHomeTeam": home["id"],
+            "idAwayTeam": away["id"],
+            "intHomeScore": str(home_score) if home_score is not None else None,
+            "intAwayScore": str(away_score) if away_score is not None else None,
+            "game_status": status,
+            "wc_winner": winner,
+            "intRound": str(int_round),
+            "intMatch": str(match_number) if match_number is not None else None,
+            "strVenue": cls._fifa_localized_text((match.get("Stadium") or {}).get("Name")),
+            "fifa_stage_name": stage_name or "",
+            "fifa_group_name": group_name or "",
+        }
+
+    def _fifa_season_events(self, season: str) -> List[Dict[str, Any]]:
+        if str(season) != "2026":
+            return []
+        payload = self._fifa_get_json(f"/seasonbracket/season/{self.FIFA_SEASON_ID}?language=en")
+        self._fifa_source_updated_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        events: List[Dict[str, Any]] = []
+        for group_stage in payload.get("GroupsStages") or []:
+            stage_name = self._fifa_localized_text(group_stage.get("Name"))
+            for group in group_stage.get("Groups") or []:
+                group_name = self._fifa_localized_text(group.get("Name"))
+                for match in group.get("Matches") or []:
+                    events.append(self._fifa_match_to_event(match, int_round=1, stage_name=stage_name, group_name=group_name))
+        for knockout_stage in payload.get("KnockoutStages") or []:
+            stage_name = self._fifa_localized_text(knockout_stage.get("Name"))
+            stage_order = int(knockout_stage.get("SequenceOrder") or 0)
+            int_round = {2: 32, 3: 16, 4: 8, 5: 4, 6: 2}.get(stage_order, 8)
+            for match in knockout_stage.get("Matches") or []:
+                events.append(
+                    self._fifa_match_to_event(
+                        match,
+                        int_round=int_round,
+                        match_number=self._parse_int(match.get("MatchNumber"), default=0) or None,
+                        stage_name=stage_name,
+                    )
+                )
+        return events
+
+    def _season_events(self, season: str) -> List[Dict[str, Any]]:
+        try:
+            fifa_events = self._fifa_season_events(season)
+            if fifa_events:
+                return fifa_events
+        except Exception as e:
+            logger.warning("FIFA season feed unavailable for %s: %s", season, e)
+        return super()._season_events(season)
 
     def _parse_event(self, raw: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:

@@ -756,6 +756,102 @@ def test_world_cup_later_round_matches_keep_shootout_winners(monkeypatch):
     assert match["wc_winner"] == "Switzerland"
 
 
+def test_world_cup_prefers_fifa_seasonbracket_payload(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    payload = {
+        "GroupsStages": [
+            {
+                "Name": [{"Locale": "en-GB", "Description": "First Stage"}],
+                "Groups": [
+                    {
+                        "Name": [{"Locale": "en-GB", "Description": "Group A"}],
+                        "Matches": [
+                            {
+                                "IdMatch": "400021443",
+                                "Date": "2026-06-11T19:00:00Z",
+                                "Stadium": {
+                                    "Name": [{"Locale": "en-GB", "Description": "Mexico City Stadium"}],
+                                },
+                                "HomeTeam": {
+                                    "IdTeam": "43911",
+                                    "TeamName": [{"Locale": "en-GB", "Description": "Mexico"}],
+                                    "Abbreviation": "MEX",
+                                },
+                                "AwayTeam": {
+                                    "IdTeam": "43929",
+                                    "TeamName": [{"Locale": "en-GB", "Description": "South Africa"}],
+                                    "Abbreviation": "RSA",
+                                },
+                                "HomeTeamScore": 2,
+                                "AwayTeamScore": 0,
+                                "MatchTimeStatus": 10,
+                                "Winner": "43911",
+                            }
+                        ],
+                    }
+                ],
+            }
+        ],
+        "KnockoutStages": [
+            {
+                "SequenceOrder": 4,
+                "Name": [{"Locale": "en-GB", "Description": "Quarter-final"}],
+                "Matches": [
+                    {
+                        "IdMatch": "2517651",
+                        "MatchNumber": 99,
+                        "Date": "2026-07-11T21:00:00Z",
+                        "Stadium": {
+                            "Name": [{"Locale": "en-GB", "Description": "AT&T Stadium"}],
+                        },
+                        "HomeTeam": {
+                            "IdTeam": "43967",
+                            "TeamName": [{"Locale": "en-GB", "Description": "Norway"}],
+                            "Abbreviation": "NOR",
+                        },
+                        "AwayTeam": {
+                            "IdTeam": "43942",
+                            "TeamName": [{"Locale": "en-GB", "Description": "England"}],
+                            "Abbreviation": "ENG",
+                        },
+                        "HomeTeamScore": 1,
+                        "AwayTeamScore": 2,
+                        "MatchTimeStatus": 10,
+                        "Winner": "43942",
+                    }
+                ],
+            }
+        ],
+    }
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return payload
+
+    def fake_get(url, timeout=30, headers=None):
+        assert url == "https://api.fifa.com/api/v3/seasonbracket/season/285023?language=en"
+        return FakeResponse()
+
+    monkeypatch.setattr("src.collectors.world_cup_thesportsdb.requests.get", fake_get)
+
+    events = collector._season_events("2026")
+    assert len(events) == 2
+
+    knockout = next(event for event in events if event.get("intMatch") == "99")
+    parsed = collector._parse_event(knockout)
+
+    assert parsed["home_team"] == "Norway"
+    assert parsed["visitor_team"] == "England"
+    assert parsed["game_status"] == "final"
+    assert parsed["wc_winner"] == "England"
+
+
 def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
     from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
 
@@ -824,8 +920,8 @@ def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
 
     assert round_of_16[0]["home_team"] == "Team A"
     assert round_of_16[0]["away_team"] == "Team C"
-    assert round_of_16[0]["home_slot"] == "Winner Match 73"
-    assert round_of_16[0]["away_slot"] == "Winner Match 74"
+    assert round_of_16[0]["home_slot"] == "Winner Match 74"
+    assert round_of_16[0]["away_slot"] == "Winner Match 76"
 
     assert quarterfinals[0]["home_team"] == "Team A"
     assert quarterfinals[0]["away_team"] == "Team E"
@@ -841,6 +937,41 @@ def test_world_cup_bracket_propagates_winners_through_later_rounds(monkeypatch):
     assert finals[0]["away_team"] == "Team Q"
     assert finals[0]["home_slot"] == "Winner Match 101"
     assert finals[0]["away_slot"] == "Winner Match 102"
+
+
+def test_world_cup_round_of_32_layout_matches_fifa_visual_order(monkeypatch):
+    from src.collectors.world_cup_thesportsdb import WorldCupTheSportsDBCollector
+
+    collector = WorldCupTheSportsDBCollector()
+
+    def _event(match_number: int, home: str, away: str):
+        return {
+            "idEvent": str(2000 + match_number),
+            "intMatch": str(match_number),
+            "intRound": "32",
+            "dateEvent": "2026-07-01",
+            "strTime": "12:00:00",
+            "strStatus": "FT",
+            "strEvent": f"WC Match {match_number}",
+            "strHomeTeam": home,
+            "strAwayTeam": away,
+            "intHomeScore": "2",
+            "intAwayScore": "1",
+        }
+
+    events = []
+    for match_number in range(73, 89):
+        events.append(_event(match_number, f"Team {match_number}A", f"Team {match_number}B"))
+
+    monkeypatch.setattr(collector, "_season_events", lambda _season: events)
+    monkeypatch.setattr(collector, "get_team_records", lambda: {})
+
+    bracket = collector.get_knockout_bracket()
+    round_of_32 = bracket["rounds"][0]["matches"]
+
+    assert [m["match_number"] for m in round_of_32] == [74, 76, 77, 78, 73, 79, 75, 80, 83, 86, 84, 88, 81, 85, 82, 87]
+    assert round_of_32[0]["match_number"] == 74
+    assert round_of_32[1]["match_number"] == 76
 
 
 def test_world_cup_bracket_uses_match_numbers_when_upstream_round_labels_are_wrong(monkeypatch):

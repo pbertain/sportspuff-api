@@ -35,7 +35,7 @@ _COLLECTOR_CACHE_TTL = 300  # 5 minutes
 _standings_cache: Dict[str, Any] = {}
 _STANDINGS_CACHE_TTL = 1800  # 30 minutes
 _wc_bracket_cache: Dict[str, Any] = {}
-_WC_BRACKET_TTL = 1800  # 30 minutes
+_WC_BRACKET_TTL = 300  # 5 minutes
 _tour_de_france_cache: Dict[str, Any] = {}
 _TOUR_DE_FRANCE_TTL = 300  # 5 minutes
 
@@ -4388,6 +4388,7 @@ def get_season_info_v1(
 # Season info cache: {league: {'data': ..., 'timestamp': float}}
 _season_info_cache: Dict[str, Any] = {}
 _SEASON_INFO_TTL = 86400  # 24 hours
+_WC_SEASON_INFO_TTL = 300  # 5 minutes
 
 
 def _get_season_info_from_db(league: str) -> Optional[Dict[str, Any]]:
@@ -4655,14 +4656,14 @@ def get_season_info(
     payload, cache_snapshot = _get_cached_payload(
         _season_info_cache,
         league_upper,
-        _SEASON_INFO_TTL,
+        _WC_SEASON_INFO_TTL if league_upper == "WC" else _SEASON_INFO_TTL,
         _fetch_season_info,
     )
     return {
         **payload,
         "meta": _build_endpoint_meta(
             cache_snapshot,
-            _SEASON_INFO_TTL,
+            _WC_SEASON_INFO_TTL if league_upper == "WC" else _SEASON_INFO_TTL,
             source_updated_at=cache_snapshot.get("source_updated_at"),
             empty_state=cache_snapshot.get("empty_state"),
         ),
