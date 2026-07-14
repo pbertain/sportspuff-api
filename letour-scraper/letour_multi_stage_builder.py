@@ -77,6 +77,15 @@ def _clean(value):
     return " ".join(str(value).split()).strip()
 
 
+def _has_value(value):
+    if value is None:
+        return False
+    try:
+        return bool(str(value).strip()) and not pd.isna(value)
+    except Exception:
+        return bool(str(value).strip())
+
+
 def _safe_int(value):
     try:
         if value in (None, ""):
@@ -423,6 +432,22 @@ def parse_classification_rows(html: str, stage_number: int, source_url: str, cla
     return rows
 
 
+def _best_rider_dimension_rows(riders: pd.DataFrame) -> pd.DataFrame:
+    if riders.empty:
+        return riders
+    ranked = riders.copy()
+    ranked["has_country_code"] = ranked["rider_country_code"].map(_has_value)
+    ranked["has_country_flag"] = ranked["rider_country_flag"].map(_has_value)
+    ranked["has_rider_slug"] = ranked["rider_slug"].map(_has_value)
+    ranked["has_rider_url"] = ranked["rider_url"].map(_has_value)
+    ranked = ranked.sort_values(
+        ["norm_name", "has_country_code", "has_country_flag", "has_rider_slug", "has_rider_url"],
+        ascending=[True, False, False, False, False],
+        kind="stable",
+    )
+    return ranked.drop_duplicates("norm_name")
+
+
 def build_stage_classifications(stage_number: int, rankings_html: str):
     ranking_tabs = extract_ranking_tab_urls(rankings_html)
     rows = []
@@ -486,7 +511,7 @@ def build_for_stage(stage_number: int, year: int):
         classifications["norm_name"] = classifications["rider_name"].map(norm)
         classifications["norm_team"] = classifications["team_name"].map(norm)
         if not riders.empty:
-            classifications = classifications.merge(
+            rider_lookup = _best_rider_dimension_rows(
                 riders[[
                     "rider_name",
                     "rider_slug",
@@ -494,7 +519,10 @@ def build_for_stage(stage_number: int, year: int):
                     "rider_country_code",
                     "rider_country_flag",
                     "norm_name",
-                ]].drop_duplicates("norm_name"),
+                ]]
+            )
+            classifications = classifications.merge(
+                rider_lookup,
                 on="norm_name",
                 how="left",
                 suffixes=("", "_lk"),

@@ -100,6 +100,35 @@ def test_parse_classification_rows_parses_team_table():
     assert rows[0]["time"] == "14h 16' 27''"
 
 
+def test_best_rider_dimension_rows_prefers_country_enriched_duplicate():
+    riders = builder.pd.DataFrame(
+        [
+            {
+                "rider_name": "T. POGACAR",
+                "rider_slug": "tadej-pogacar",
+                "rider_url": "https://www.letour.fr/en/rider/1/uae-team-emirates-xrg/tadej-pogacar",
+                "rider_country_code": None,
+                "rider_country_flag": None,
+                "norm_name": "t. pogacar",
+            },
+            {
+                "rider_name": "T. POGACAR",
+                "rider_slug": "tadej-pogacar",
+                "rider_url": "https://www.letour.fr/en/rider/1/uae-team-emirates-xrg/tadej-pogacar",
+                "rider_country_code": "SLO",
+                "rider_country_flag": "slo",
+                "norm_name": "t. pogacar",
+            },
+        ]
+    )
+
+    selected = builder._best_rider_dimension_rows(riders)
+
+    assert len(selected) == 1
+    assert selected.iloc[0]["rider_country_code"] == "SLO"
+    assert selected.iloc[0]["rider_country_flag"] == "slo"
+
+
 def test_stage_date_and_state_use_stage_day_not_today():
     stage_row = {
         "date": builder.parse_stage_date("Stage 3 - 07/06 - Granollers > Les Angles", 2026),
