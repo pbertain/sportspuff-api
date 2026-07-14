@@ -448,6 +448,47 @@ def _best_rider_dimension_rows(riders: pd.DataFrame) -> pd.DataFrame:
     return ranked.drop_duplicates("norm_name")
 
 
+def _backfill_classification_rider_countries(classifications: pd.DataFrame, riders: pd.DataFrame) -> pd.DataFrame:
+    if classifications.empty or "rider_url" not in classifications.columns:
+        return classifications
+
+    country_by_url = {}
+    if not riders.empty and "rider_url" in riders.columns:
+        rider_rows = riders[["rider_url", "rider_country_code", "rider_country_flag"]].dropna(subset=["rider_url"]).copy()
+        for row in rider_rows.to_dict(orient="records"):
+            rider_url = row.get("rider_url")
+            if not rider_url:
+                continue
+            if rider_url not in country_by_url:
+                country_by_url[rider_url] = {
+                    "rider_country_code": row.get("rider_country_code"),
+                    "rider_country_flag": row.get("rider_country_flag"),
+                }
+            if _has_value(row.get("rider_country_code")):
+                country_by_url[rider_url] = {
+                    "rider_country_code": row.get("rider_country_code"),
+                    "rider_country_flag": row.get("rider_country_flag"),
+                }
+
+    result = classifications.copy()
+    for idx, row in result.iterrows():
+        rider_url = row.get("rider_url")
+        if not _has_value(rider_url):
+            continue
+        if _has_value(row.get("rider_country_code")):
+            continue
+
+        country = country_by_url.get(rider_url)
+        if not country or not _has_value(country.get("rider_country_code")):
+            country = _rider_country_fields(str(rider_url))
+            country_by_url[rider_url] = country
+        if _has_value(country.get("rider_country_code")):
+            result.at[idx, "rider_country_code"] = country.get("rider_country_code")
+            result.at[idx, "rider_country_flag"] = country.get("rider_country_flag")
+
+    return result
+
+
 def build_stage_classifications(stage_number: int, rankings_html: str):
     ranking_tabs = extract_ranking_tab_urls(rankings_html)
     rows = []
@@ -546,6 +587,7 @@ def build_for_stage(stage_number: int, year: int):
                     classifications[lk_col].notna() & (classifications[lk_col].astype(str).str.strip() != ""),
                     classifications[col],
                 )
+        classifications = _backfill_classification_rider_countries(classifications, riders)
 
     stage_name = stage_title.split(" - ")[1] if " - " in stage_title else ""
     if " - Tour de France" in stage_name:

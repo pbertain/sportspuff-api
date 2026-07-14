@@ -129,6 +129,42 @@ def test_best_rider_dimension_rows_prefers_country_enriched_duplicate():
     assert selected.iloc[0]["rider_country_flag"] == "slo"
 
 
+def test_backfill_classification_rider_countries_uses_rider_url(monkeypatch):
+    classifications = builder.pd.DataFrame(
+        [
+            {
+                "rider_name": None,
+                "rider_slug": "juan-ayuso-pesquera",
+                "rider_url": "https://www.letour.fr/en/rider/31/lidl-trek/juan-ayuso-pesquera",
+                "rider_country_code": None,
+                "rider_country_flag": None,
+            }
+        ]
+    )
+    riders = builder.pd.DataFrame(
+        [
+            {
+                "rider_name": None,
+                "rider_slug": "juan-ayuso-pesquera",
+                "rider_url": "https://www.letour.fr/en/rider/31/lidl-trek/juan-ayuso-pesquera",
+                "rider_country_code": None,
+                "rider_country_flag": None,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        builder,
+        "_rider_country_fields",
+        lambda rider_url: {"rider_country_code": "ESP", "rider_country_flag": "esp"},
+    )
+
+    enriched = builder._backfill_classification_rider_countries(classifications, riders)
+
+    assert enriched.iloc[0]["rider_country_code"] == "ESP"
+    assert enriched.iloc[0]["rider_country_flag"] == "esp"
+
+
 def test_stage_date_and_state_use_stage_day_not_today():
     stage_row = {
         "date": builder.parse_stage_date("Stage 3 - 07/06 - Granollers > Les Angles", 2026),
