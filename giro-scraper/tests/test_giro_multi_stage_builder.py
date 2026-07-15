@@ -7,6 +7,9 @@ from pathlib import Path
 
 from bs4 import BeautifulSoup
 
+import pandas as pd
+
+import giro_multi_stage_builder as builder
 from giro_multi_stage_builder import _country_code_from_html, _parse_ranking_rows, parse_route_calendar
 
 
@@ -198,3 +201,43 @@ def test_country_code_from_html_reads_nationality_text():
     """
 
     assert _country_code_from_html(html) == "DEN"
+
+
+def test_backfill_classification_rider_countries_uses_rider_url(monkeypatch):
+    classifications = pd.DataFrame(
+        [
+            {
+                "race": "Giro d'Italia",
+                "stage_number": 1,
+                "classification_type": "gc",
+                "rank": 1,
+                "rider_name": None,
+                "rider_slug": "juan-ayuso-pesquera",
+                "rider_url": "https://www.giroditalia.it/en/rider/juan-ayuso-pesquera/",
+                "rider_country_code": None,
+                "rider_country_flag": None,
+            }
+        ]
+    )
+    riders = pd.DataFrame(
+        [
+            {
+                "rider_name": "Juan AYUSO",
+                "rider_slug": "juan-ayuso-pesquera",
+                "rider_url": "https://www.giroditalia.it/en/rider/juan-ayuso-pesquera/",
+                "rider_country_code": None,
+                "rider_country_flag": None,
+            }
+        ]
+    )
+
+    monkeypatch.setattr(
+        builder,
+        "_rider_country_fields",
+        lambda rider_url: {"rider_country_code": "ESP", "rider_country_flag": "esp"},
+    )
+
+    enriched = builder._backfill_classification_rider_countries(classifications, riders)
+
+    assert enriched.iloc[0]["rider_country_code"] == "ESP"
+    assert enriched.iloc[0]["rider_country_flag"] == "esp"

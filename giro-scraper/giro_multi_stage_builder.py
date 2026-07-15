@@ -48,6 +48,15 @@ def _clean(value):
     return "" if value is None else " ".join(str(value).split()).strip()
 
 
+def _has_value(value):
+    if value is None:
+        return False
+    try:
+        return bool(str(value).strip()) and not pd.isna(value)
+    except Exception:
+        return bool(str(value).strip())
+
+
 def _safe_int(value):
     try:
         if value in (None, ""):
@@ -343,6 +352,47 @@ def _parse_ranking_rows(section, *, classification_type: str, stage_number: int 
     return pd.DataFrame(rows)
 
 
+def _backfill_classification_rider_countries(classifications: pd.DataFrame, riders: pd.DataFrame) -> pd.DataFrame:
+    if classifications.empty or "rider_url" not in classifications.columns:
+        return classifications
+
+    country_by_url = {}
+    if not riders.empty and "rider_url" in riders.columns:
+        rider_rows = riders[["rider_url", "rider_country_code", "rider_country_flag"]].dropna(subset=["rider_url"]).copy()
+        for row in rider_rows.to_dict(orient="records"):
+            rider_url = row.get("rider_url")
+            if not rider_url:
+                continue
+            if rider_url not in country_by_url:
+                country_by_url[rider_url] = {
+                    "rider_country_code": row.get("rider_country_code"),
+                    "rider_country_flag": row.get("rider_country_flag"),
+                }
+            if _has_value(row.get("rider_country_code")):
+                country_by_url[rider_url] = {
+                    "rider_country_code": row.get("rider_country_code"),
+                    "rider_country_flag": row.get("rider_country_flag"),
+                }
+
+    result = classifications.copy()
+    for idx, row in result.iterrows():
+        rider_url = row.get("rider_url")
+        if not _has_value(rider_url):
+            continue
+        if _has_value(row.get("rider_country_code")):
+            continue
+
+        country = country_by_url.get(rider_url)
+        if not country or not _has_value(country.get("rider_country_code")):
+            country = _rider_country_fields(str(rider_url))
+            country_by_url[rider_url] = country
+        if _has_value(country.get("rider_country_code")):
+            result.at[idx, "rider_country_code"] = country.get("rider_country_code")
+            result.at[idx, "rider_country_flag"] = country.get("rider_country_flag")
+
+    return result
+
+
 def extract_links(html: str):
     soup = BeautifulSoup(html, "html.parser")
     teams, riders = [], []
@@ -633,6 +683,7 @@ def main():
             "source_url",
         ]
         classifications = classifications[[col for col in keep if col in classifications.columns]]
+        classifications = _backfill_classification_rider_countries(classifications, riders)
 
     if not stages.empty and not classifications.empty:
         stage_class = classifications[classifications["classification_type"] == "stage"]

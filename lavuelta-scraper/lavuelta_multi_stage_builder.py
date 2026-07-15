@@ -42,6 +42,15 @@ def _clean(value):
     return '' if value is None else ' '.join(str(value).split()).strip()
 
 
+def _has_value(value):
+    if value is None:
+        return False
+    try:
+        return bool(str(value).strip()) and not pd.isna(value)
+    except Exception:
+        return bool(str(value).strip())
+
+
 def validate_stage_page(html: str, stage_number: int, year: int):
     title = page_title(html)
     body = page_text(html)
@@ -223,6 +232,47 @@ def norm(s):
 def looks_time_value(value) -> bool:
     text = ' '.join(str(value or '').split()).strip()
     return bool(re.search(r"\d{1,2}h\s+\d{2}'\s+\d{2}''", text))
+
+
+def _backfill_classification_rider_countries(classifications: pd.DataFrame, riders: pd.DataFrame) -> pd.DataFrame:
+    if classifications.empty or 'rider_url' not in classifications.columns:
+        return classifications
+
+    country_by_url = {}
+    if not riders.empty and 'rider_url' in riders.columns:
+        rider_rows = riders[['rider_url', 'rider_country_code', 'rider_country_flag']].dropna(subset=['rider_url']).copy()
+        for row in rider_rows.to_dict(orient='records'):
+            rider_url = row.get('rider_url')
+            if not rider_url:
+                continue
+            if rider_url not in country_by_url:
+                country_by_url[rider_url] = {
+                    'rider_country_code': row.get('rider_country_code'),
+                    'rider_country_flag': row.get('rider_country_flag'),
+                }
+            if _has_value(row.get('rider_country_code')):
+                country_by_url[rider_url] = {
+                    'rider_country_code': row.get('rider_country_code'),
+                    'rider_country_flag': row.get('rider_country_flag'),
+                }
+
+    result = classifications.copy()
+    for idx, row in result.iterrows():
+        rider_url = row.get('rider_url')
+        if not _has_value(rider_url):
+            continue
+        if _has_value(row.get('rider_country_code')):
+            continue
+
+        country = country_by_url.get(rider_url)
+        if not country or not _has_value(country.get('rider_country_code')):
+            country = _rider_country_fields(str(rider_url))
+            country_by_url[rider_url] = country
+        if _has_value(country.get('rider_country_code')):
+            result.at[idx, 'rider_country_code'] = country.get('rider_country_code')
+            result.at[idx, 'rider_country_flag'] = country.get('rider_country_flag')
+
+    return result
 
 
 def parse_stage_schedule(text: str):
@@ -429,6 +479,7 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
                 )
         keep = ['race','stage_number','classification_type','rank','rider_name','rider_slug','rider_url','rider_country_code','rider_country_flag','bib','team_name','team_slug','team_url','time','gap','points','bonus','source_url']
         classifications = classifications[keep]
+        classifications = _backfill_classification_rider_countries(classifications, riders)
 
     rider_dim = riders[['rider_name','rider_slug','rider_url','rider_country_code','rider_country_flag']].drop_duplicates().sort_values(['rider_name','rider_url']) if not riders.empty else pd.DataFrame(columns=['rider_name','rider_slug','rider_url','rider_country_code','rider_country_flag'])
     team_dim = teams[['team_name','team_slug','team_url']].drop_duplicates().sort_values(['team_name','team_url']) if not teams.empty else pd.DataFrame(columns=['team_name','team_slug','team_url'])
