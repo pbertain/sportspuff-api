@@ -16,8 +16,8 @@ from bs4 import BeautifulSoup
 
 BASE = "https://www.giroditalia.it"
 HEADERS = {"User-Agent": "Mozilla/5.0"}
-TEAM_RE = re.compile(r"/en/team/[^\"'#?]+")
-RIDER_RE = re.compile(r"/en/rider/[^\"'#?]+")
+TEAM_RE = re.compile(r"/en/(?:team|squadre)/[^\"'#?]+")
+RIDER_RE = re.compile(r"/en/(?:rider|atleti)/[^\"'#?]+")
 RANKINGS_CLASSIFICATION_MAP = {
     "ORARR": "stage",
     "CLGEN": "gc",

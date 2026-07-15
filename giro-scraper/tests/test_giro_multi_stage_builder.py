@@ -10,7 +10,7 @@ from bs4 import BeautifulSoup
 import pandas as pd
 
 import giro_multi_stage_builder as builder
-from giro_multi_stage_builder import _country_code_from_html, _parse_ranking_rows, parse_route_calendar
+from giro_multi_stage_builder import _country_code_from_html, _parse_ranking_rows, extract_links, parse_route_calendar
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "refresh_if_due.py"
@@ -157,6 +157,31 @@ def test_parse_ranking_rows_extracts_stage_and_gc_tables():
     assert gc_rows[0]["rank"] == 1
     assert gc_rows[0]["rider_name"] == "Jonas VINGEGAARD"
     assert gc_rows[0]["gap"] == "0:00"
+
+
+def test_extract_links_reads_giro_atleti_and_squadre_urls(monkeypatch):
+    monkeypatch.setattr(
+        builder,
+        "_rider_country_fields",
+        lambda rider_url: {"rider_country_code": "FRA", "rider_country_flag": "fra"},
+    )
+
+    html = """
+    <html>
+      <body>
+        <a href="/en/atleti/magnier-paul/">Paul MAGNIER</a>
+        <a href="/en/squadre/soudal-quick-step/">SOUDAL QUICK-STEP</a>
+      </body>
+    </html>
+    """
+
+    teams, riders = extract_links(html)
+
+    assert len(teams) == 1
+    assert teams.iloc[0]["team_slug"] == "soudal-quick-step"
+    assert len(riders) == 1
+    assert riders.iloc[0]["rider_slug"] == "magnier-paul"
+    assert riders.iloc[0]["rider_country_code"] == "FRA"
 
 
 def test_refresh_if_due_uses_generated_at(tmp_path):
