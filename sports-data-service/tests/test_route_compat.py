@@ -595,8 +595,13 @@ def test_cycling_bundle_merges_rider_country_fields(monkeypatch):
 
 def test_giro_bundle_refreshes_missing_current_year_bundle(tmp_path, monkeypatch):
     (tmp_path / "refresh_if_due.py").write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+    venv_python = tmp_path / ".venv" / "bin" / "python"
+    venv_python.parent.mkdir(parents=True, exist_ok=True)
+    venv_python.write_text("", encoding="utf-8")
+    captured: dict[str, object] = {}
 
     def fake_run(cmd, check=False, stdout=None, stderr=None):
+        captured["cmd"] = cmd
         bundle_path = tmp_path / "giro_app_bundle_2026.json"
         bundle_path.write_text(
             json.dumps(
@@ -653,6 +658,7 @@ def test_giro_bundle_refreshes_missing_current_year_bundle(tmp_path, monkeypatch
 
     assert payload["race"] == "Giro d'Italia"
     assert payload["stages"]
+    assert captured["cmd"][0] == str(venv_python)
 
 
 def test_tour_de_france_stage_endpoint_404s_for_unknown_stage(monkeypatch):

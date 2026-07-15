@@ -130,6 +130,12 @@ class TourDeFranceDataService:
     def _csv_path(self, name: str) -> Path:
         return self.data_dir / name
 
+    def _refresh_python(self) -> str:
+        venv_python = self.data_dir / ".venv" / "bin" / "python"
+        if venv_python.exists():
+            return str(venv_python)
+        return sys.executable
+
     def _refresh_bundle_if_due(self, year: int) -> None:
         if year != datetime.now(timezone.utc).year:
             return
@@ -138,7 +144,7 @@ class TourDeFranceDataService:
             return
         try:
             subprocess.run(
-                [sys.executable, str(script), "--outdir", str(self.data_dir)],
+                [self._refresh_python(), str(script), "--outdir", str(self.data_dir)],
                 check=False,
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
