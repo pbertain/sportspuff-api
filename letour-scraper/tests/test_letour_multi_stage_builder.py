@@ -60,6 +60,58 @@ def test_parse_classification_rows_parses_rider_table():
     assert rows[0]["bonus"] == "B : 16''"
 
 
+def test_parse_classification_rows_selects_matching_stage_table_when_multiple_exist():
+    html = """
+    <div>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th><th>Rider</th><th>Rider No.</th><th>Team</th><th>Times</th><th>Gap</th><th>B</th><th>P</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><a data-xtclick="rankingTable::ITG" href="/en/rider/9/visma-lease-a-bike/jonas-vingegaard">J. VINGEGAARD</a></td>
+            <td>9</td>
+            <td><a data-xtclick="rankingTable::ITG" href="/en/team/VLB/visma-lease-a-bike">VISMA | LEASE A BIKE</a></td>
+            <td>32h 10' 00''</td>
+            <td>-</td>
+            <td>-</td>
+            <td>-</td>
+          </tr>
+        </tbody>
+      </table>
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th><th>Rider</th><th>Rider No.</th><th>Team</th><th>Times</th><th>Gap</th><th>B</th><th>P</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>1</td>
+            <td><a data-xtclick="rankingTable::ITE" href="/en/rider/1/uae-team-emirates-xrg/tadej-pogacar">T. POGACAR</a></td>
+            <td>1</td>
+            <td><a data-xtclick="rankingTable::ITE" href="/en/team/UEX/uae-team-emirates-xrg">UAE TEAM EMIRATES XRG</a></td>
+            <td>04h 45' 12''</td>
+            <td>-</td>
+            <td>B : 10''</td>
+            <td>-</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    """
+
+    rows = builder.parse_classification_rows(html, 10, "https://www.letour.fr/example", "stage")
+
+    assert rows[0]["classification_type"] == "stage"
+    assert rows[0]["rider_name"] == "T. POGACAR"
+    assert rows[0]["team_slug"] == "uae-team-emirates-xrg"
+    assert rows[0]["time"] == "04h 45' 12''"
+
+
 def test_country_code_from_html_reads_rider_flag_markup():
     html = """
     <div class="riderInfos__country">

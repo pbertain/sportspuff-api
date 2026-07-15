@@ -28,6 +28,7 @@ CLASSIFICATION_TYPE_BY_TAB = {
     "etg": "teams",
     "icg": "combative",
 }
+TAB_CODE_BY_CLASSIFICATION_TYPE = {value: key.upper() for key, value in CLASSIFICATION_TYPE_BY_TAB.items()}
 
 
 def _now_tour_local_naive():
@@ -367,9 +368,27 @@ def _table_headers(table):
     return headers
 
 
+def _select_classification_table(soup: BeautifulSoup, classification_type: str):
+    tables = soup.select("table")
+    if not tables:
+        return None
+
+    expected_tab_code = TAB_CODE_BY_CLASSIFICATION_TYPE.get(classification_type)
+    if not expected_tab_code:
+        return tables[0]
+
+    for table in tables:
+        for anchor in table.select("a[data-xtclick]"):
+            xtclick = _clean(anchor.get("data-xtclick"))
+            if xtclick.upper().endswith(f"::{expected_tab_code}"):
+                return table
+
+    return tables[0]
+
+
 def parse_classification_rows(html: str, stage_number: int, source_url: str, classification_type: str):
     soup = BeautifulSoup(html, "html.parser")
-    table = soup.select_one("table")
+    table = _select_classification_table(soup, classification_type)
     if table is None:
         return []
 
