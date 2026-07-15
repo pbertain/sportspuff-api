@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Dict, List, Optional
 
 import pytz
@@ -141,6 +141,21 @@ class CyclingTheSportsDBCollector(TheSportsDBCollector):
         except Exception as e:
             logger.error("Cycling parse error: %s", e)
             return None
+
+    def _local_date(self, raw: Dict[str, Any]) -> Optional[date]:
+        """Cycling stages should stay on the race's published calendar date.
+
+        TheSportsDB sometimes provides midnight-ish UTC timestamps that shift
+        a stage into the prior US date. For cycling schedule views we want the
+        source stage date, not the request-timezone date derived from kickoff.
+        """
+        date_text = (raw.get("dateEvent") or "")[:10]
+        if date_text:
+            try:
+                return datetime.strptime(date_text, "%Y-%m-%d").date()
+            except ValueError:
+                pass
+        return super()._local_date(raw)
 
     def get_standings(self) -> List[Dict[str, Any]]:
         return []

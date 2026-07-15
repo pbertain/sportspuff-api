@@ -1,12 +1,13 @@
 import json
 from starlette.requests import Request
 from types import SimpleNamespace
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from src import api
+from src.collectors.cycling_thesportsdb import CyclingTheSportsDBCollector
 from src.collectors.tennis_thesportsdb import TennisTheSportsDBCollector
 from src.services import tennis_scores
 from src.services.tour_de_france import GiroDItaliaDataService, LaVueltaDataService, TourDeFranceDataService
@@ -158,6 +159,64 @@ def test_cycling_uses_bundled_template_overlay_by_default(monkeypatch):
     assert rows[0]["cycling_race"] == "Tour de France"
     assert rows[0]["cycling_stage_label"] == "Stage 1"
     assert rows[0]["cycling_url"] == "https://www.letour.fr/en/stage-1"
+
+
+def test_cycling_schedule_uses_source_stage_date_not_timezone_shift():
+    collector = CyclingTheSportsDBCollector()
+    raw = {
+        "strEvent": "Tour de France Stage 13",
+        "dateEvent": "2026-07-17",
+        "strTimestamp": "2026-07-17T00:05:00",
+    }
+
+    parsed = collector.parse_game_data(raw)
+
+    assert parsed["game_date"] == "2026-07-17"
+
+
+def test_tour_bundle_normalizes_past_scheduled_stage_to_final(tmp_path):
+    service = TourDeFranceDataService(str(tmp_path))
+    bundle = {
+        "race": "Tour de France",
+        "year": 2026,
+        "source": "letour.fr",
+        "generated_at": "2026-07-15T12:00:00Z",
+        "source_updated_at": "2026-07-15T12:00:00Z",
+        "stages": [
+            {
+                "stage": {
+                    "race": "Tour de France",
+                    "stage_number": 10,
+                    "stage_name": "Past stage",
+                    "date": "2026-07-14",
+                    "status": "scheduled",
+                    "poll_state": "pre_stage",
+                },
+                "schedule": {},
+                "classifications": [],
+            }
+        ],
+        "teams": [],
+        "riders": [],
+    }
+    (tmp_path / "letour_app_bundle_2026.json").write_text(json.dumps(bundle), encoding="utf-8")
+
+    from src.services import tour_de_france as tour_module
+    real_date = tour_module.date
+
+    class _FakeDate(real_date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 7, 15)
+
+    original_date = tour_module.date
+    tour_module.date = _FakeDate
+    try:
+        payload = service.get_bundle(2026)
+    finally:
+        tour_module.date = original_date
+
+    assert payload["stages"][0]["stage"]["status"] == "final"
 
 
 def test_tennis_schedule_falls_back_to_espn_rows(monkeypatch):

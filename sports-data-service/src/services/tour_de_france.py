@@ -318,6 +318,18 @@ class TourDeFranceDataService:
             status = "in_progress"
         elif not status:
             status = "scheduled"
+        try:
+            stage_day = date.fromisoformat(stage["date"]) if stage.get("date") else None
+        except ValueError:
+            stage_day = None
+        today = date.today()
+        poll_state = stage.get("poll_state")
+        if poll_state == "post_stage":
+            status = "final"
+        elif stage_day and stage_day < today and status == "scheduled":
+            status = "final"
+        elif poll_state == "active_window" and status == "scheduled":
+            status = "in_progress"
         stage["status"] = status
         return stage
 
