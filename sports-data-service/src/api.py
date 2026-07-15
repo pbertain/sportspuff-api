@@ -60,6 +60,14 @@ def _cache_snapshot(timestamp: Optional[float] = None, *, cache_hit: bool = Fals
     }
 
 
+def _set_no_store(response: Response | None) -> None:
+    if response is None:
+        return
+    response.headers["Cache-Control"] = "no-store, no-cache, max-age=0, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+
+
 def _iso_utc_from_timestamp(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp, tz=pytz.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
@@ -4691,7 +4699,8 @@ def get_world_cup_bracket_api_v1():
 
 
 @app.get("/api/v1/cycling/tour-de-france", response_model=schemas.CyclingTourBundleResponse)
-def get_tour_de_france_current_api_v1():
+def get_tour_de_france_current_api_v1(response: Response = None):
+    _set_no_store(response)
     year = datetime.now().year
     return get_tour_de_france_bundle_api_v1(year)
 
@@ -4699,7 +4708,9 @@ def get_tour_de_france_current_api_v1():
 @app.get("/api/v1/cycling/tour-de-france/{year}", response_model=schemas.CyclingTourBundleResponse)
 def get_tour_de_france_bundle_api_v1(
     year: int = Path(..., description="Tour de France season year"),
+    response: Response = None,
 ):
+    _set_no_store(response)
     payload, cache_snapshot = _get_cached_payload(
         _tour_de_france_cache,
         f"tour-de-france:{year}",
@@ -4721,7 +4732,9 @@ def get_tour_de_france_bundle_api_v1(
 def get_tour_de_france_stage_api_v1(
     year: int = Path(..., description="Tour de France season year"),
     stage_number: int = Path(..., ge=1, description="Tour de France stage number"),
+    response: Response = None,
 ):
+    _set_no_store(response)
     payload, cache_snapshot = _get_cached_payload(
         _tour_de_france_cache,
         f"tour-de-france:{year}:stage:{stage_number}",
@@ -4740,7 +4753,8 @@ def get_tour_de_france_stage_api_v1(
 
 
 @app.get("/api/v1/cycling/la-vuelta", response_model=schemas.CyclingTourBundleResponse)
-def get_la_vuelta_current_api_v1():
+def get_la_vuelta_current_api_v1(response: Response = None):
+    _set_no_store(response)
     year = datetime.now().year
     return get_la_vuelta_bundle_api_v1(year)
 
@@ -4748,7 +4762,9 @@ def get_la_vuelta_current_api_v1():
 @app.get("/api/v1/cycling/la-vuelta/{year}", response_model=schemas.CyclingTourBundleResponse)
 def get_la_vuelta_bundle_api_v1(
     year: int = Path(..., description="La Vuelta season year"),
+    response: Response = None,
 ):
+    _set_no_store(response)
     payload, cache_snapshot = _get_cached_payload(
         _tour_de_france_cache,
         f"la-vuelta:{year}",
@@ -4770,7 +4786,9 @@ def get_la_vuelta_bundle_api_v1(
 def get_la_vuelta_stage_api_v1(
     year: int = Path(..., description="La Vuelta season year"),
     stage_number: int = Path(..., ge=1, description="La Vuelta stage number"),
+    response: Response = None,
 ):
+    _set_no_store(response)
     payload, cache_snapshot = _get_cached_payload(
         _tour_de_france_cache,
         f"la-vuelta:{year}:stage:{stage_number}",
@@ -4789,7 +4807,8 @@ def get_la_vuelta_stage_api_v1(
 
 
 @app.get("/api/v1/cycling/giro-d-italia", response_model=schemas.CyclingTourBundleResponse)
-def get_giro_d_italia_current_api_v1():
+def get_giro_d_italia_current_api_v1(response: Response = None):
+    _set_no_store(response)
     year = datetime.now().year
     return get_giro_d_italia_bundle_api_v1(year)
 
@@ -4797,7 +4816,9 @@ def get_giro_d_italia_current_api_v1():
 @app.get("/api/v1/cycling/giro-d-italia/{year}", response_model=schemas.CyclingTourBundleResponse)
 def get_giro_d_italia_bundle_api_v1(
     year: int = Path(..., description="Giro d'Italia season year"),
+    response: Response = None,
 ):
+    _set_no_store(response)
     payload, cache_snapshot = _get_cached_payload(
         _tour_de_france_cache,
         f"giro-d-italia:{year}",
@@ -4819,7 +4840,9 @@ def get_giro_d_italia_bundle_api_v1(
 def get_giro_d_italia_stage_api_v1(
     year: int = Path(..., description="Giro d'Italia season year"),
     stage_number: int = Path(..., ge=1, description="Giro d'Italia stage number"),
+    response: Response = None,
 ):
+    _set_no_store(response)
     payload, cache_snapshot = _get_cached_payload(
         _tour_de_france_cache,
         f"giro-d-italia:{year}:stage:{stage_number}",
