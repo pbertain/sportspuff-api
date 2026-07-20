@@ -35,16 +35,27 @@ def signal_handler(signum, frame):
         poller.stop_polling()
 
 
+def _resolve_leagues(args, poller):
+    """Resolve the league list from --league/--exclude-leagues, or None for all."""
+    if args.league:
+        return [args.league]
+    if args.exclude_leagues:
+        excluded = {league.strip().upper() for league in args.exclude_leagues.split(',')}
+        return [league for league in poller.collectors.keys() if league not in excluded]
+    return None
+
+
 def main():
     """Main function for live score poller."""
     global poller
     
     parser = argparse.ArgumentParser(description='Poll live sports scores')
     parser.add_argument('--league', help='Specific league to poll (NBA, MLB, NHL, NFL, WNBA)')
+    parser.add_argument('--exclude-leagues', help='Comma-separated leagues to skip (e.g. WNBA)')
     parser.add_argument('--once', action='store_true', help='Poll once and exit')
     parser.add_argument('--status', action='store_true', help='Show polling status')
     parser.add_argument('--force', action='store_true', help='Force update all active games')
-    
+
     args = parser.parse_args()
     
     # Set up signal handlers
@@ -100,7 +111,7 @@ def main():
         
         elif args.once:
             # Poll once and exit
-            leagues = [args.league] if args.league else None
+            leagues = _resolve_leagues(args, poller)
             logger.info("Polling live scores once")
             
             results = poller.poll_once(leagues)
@@ -117,7 +128,7 @@ def main():
         
         else:
             # Continuous polling
-            leagues = [args.league] if args.league else None
+            leagues = _resolve_leagues(args, poller)
             logger.info("Starting continuous live score polling")
             
             try:

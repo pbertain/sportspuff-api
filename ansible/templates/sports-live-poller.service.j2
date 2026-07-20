@@ -6,7 +6,7 @@ Requires=docker.service
 [Service]
 Type=oneshot
 User=ansible
-ExecStart=/usr/local/bin/docker-compose -p sports-data-{{ deployment_env }} -f {{ deployment_dir }}/sports-data-service/docker-compose.yml -f {{ deployment_dir }}/sports-data-service/docker-compose.override.yml exec -T sports-service python scripts/poll_live_scores.py --once
+ExecStart=/usr/local/bin/docker-compose -p sports-data-{{ deployment_env }} -f {{ deployment_dir }}/sports-data-service/docker-compose.yml -f {{ deployment_dir }}/sports-data-service/docker-compose.override.yml exec -T sports-service python scripts/poll_live_scores.py --once{{ ' --exclude-leagues WNBA' if deployment_env == 'dev' else '' }}
 WorkingDirectory={{ deployment_dir }}/sports-data-service
 Restart=on-failure
 StandardOutput=journal

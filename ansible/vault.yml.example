@@ -10,7 +10,8 @@
 # Required GitHub Secrets:
 #   POSTGRES_PASSWORD     -> vault_postgres_password
 #   CRICAPI_KEY           -> vault_cricapi_key
-#   WNBA_API_KEY          -> vault_wnba_api_key
+#   WNBA_API_DEV_KEY      -> vault_wnba_api_key (dev deploys; Basic/free RapidAPI tier)
+#   WNBA_API_PROD_KEY     -> vault_wnba_api_key (prod deploys; Pro RapidAPI tier)
 #   THESPORTSDB_KEY       -> vault_thesportsdb_key
 
 vault_postgres_password: your-secure-password-here
