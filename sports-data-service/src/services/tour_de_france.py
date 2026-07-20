@@ -253,6 +253,63 @@ class TourDeFranceDataService:
                 return rows
         return []
 
+    @staticmethod
+    def _is_rest_day_row(raw: Dict[str, Any]) -> bool:
+        stage_number_raw = _clean(raw.get("stage_number"))
+        race_type = _clean(raw.get("race_type"))
+        return race_type.lower() == "rest day" or stage_number_raw.upper().startswith("R")
+
+    def _rest_day_entries(self) -> List[Dict[str, Any]]:
+        entries: List[Dict[str, Any]] = []
+        ordinal = 0
+        for raw in self._overlay_stage_rows():
+            if not self._is_rest_day_row(raw):
+                continue
+            ordinal += 1
+            stage_name = _clean(raw.get("stage_name")) or f"Rest Day {ordinal}"
+            entries.append({
+                "stage": {
+                    "race": raw.get("race") or self.default_race,
+                    "stage_name": stage_name,
+                    "date": raw.get("date"),
+                    "status": raw.get("status") or "scheduled",
+                    "race_type": "Rest Day",
+                    "start_city": raw.get("start_city"),
+                    "finish_city": raw.get("finish_city"),
+                    "cycling_event_label": raw.get("cycling_event_label"),
+                    "cycling_country": raw.get("cycling_country"),
+                    "cycling_url": raw.get("cycling_url"),
+                    "is_rest_day": True,
+                },
+                "schedule": {},
+                "classifications": [],
+            })
+        return entries
+
+    def _merge_rest_days(self, stages: List[Dict[str, Any]], year: int) -> List[Dict[str, Any]]:
+        if not stages:
+            return stages
+        rest_entries = self._rest_day_entries()
+        if not rest_entries:
+            return stages
+        existing_dates = {
+            _parse_date((entry.get("stage") or {}).get("date"))
+            for entry in stages
+        }
+        merged = list(stages)
+        for entry in rest_entries:
+            rest_date = _parse_date(entry["stage"].get("date"))
+            if not rest_date or not rest_date.startswith(f"{year}-"):
+                continue
+            if rest_date in existing_dates:
+                continue
+            merged.append(entry)
+        merged.sort(key=lambda entry: (
+            _parse_date((entry.get("stage") or {}).get("date")) or "",
+            0 if (entry.get("stage") or {}).get("is_rest_day") else 1,
+        ))
+        return merged
+
     def _overlay_stage_dates(self, stages: List[Dict[str, Any]]) -> None:
         rows = self._overlay_stage_rows()
         by_stage = {}
@@ -498,6 +555,7 @@ class TourDeFranceDataService:
         source_updated_at = self._source_updated_at(Path(payload.get("_bundle_path", "")), payload)
         stages = payload.get("stages") or []
         self._overlay_stage_dates(stages)
+        stages = self._merge_rest_days(stages, year)
 
         normalized_stages = []
         for entry in stages:
