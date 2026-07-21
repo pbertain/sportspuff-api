@@ -6,7 +6,7 @@ import re
 import logging
 import subprocess
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from zoneinfo import ZoneInfo
@@ -297,24 +297,75 @@ class TourDeFranceDataService:
             })
         return entries
 
+    def _derive_rest_days_from_gaps(self, stages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        dated_numbered = []
+        for entry in stages:
+            stage = entry.get("stage") or {}
+            stage_number = _safe_int(stage.get("stage_number"))
+            stage_date = _parse_date(stage.get("date"))
+            if stage_number is None or not stage_date:
+                continue
+            dated_numbered.append((stage_number, stage_date))
+        dated_numbered.sort(key=lambda item: item[0])
+
+        entries: List[Dict[str, Any]] = []
+        for (num_a, date_a), (num_b, date_b) in zip(dated_numbered, dated_numbered[1:]):
+            if num_b != num_a + 1:
+                continue
+            gap_days = (date.fromisoformat(date_b) - date.fromisoformat(date_a)).days
+            if gap_days <= 1 or gap_days > 6:
+                continue
+            for offset in range(1, gap_days):
+                rest_date = (date.fromisoformat(date_a) + timedelta(days=offset)).isoformat()
+                entries.append({
+                    "stage": {
+                        "race": self.default_race,
+                        "stage_name": None,
+                        "date": rest_date,
+                        "status": "scheduled",
+                        "race_type": "Rest Day",
+                        "is_rest_day": True,
+                    },
+                    "schedule": {},
+                    "classifications": [],
+                })
+        return entries
+
     def _merge_rest_days(self, stages: List[Dict[str, Any]], year: int) -> List[Dict[str, Any]]:
         if not stages:
-            return stages
-        rest_entries = self._rest_day_entries()
-        if not rest_entries:
             return stages
         existing_dates = {
             _parse_date((entry.get("stage") or {}).get("date"))
             for entry in stages
         }
-        merged = list(stages)
-        for entry in rest_entries:
+
+        candidates: List[tuple] = []
+        for entry in self._rest_day_entries():
             rest_date = _parse_date(entry["stage"].get("date"))
             if not rest_date or not rest_date.startswith(f"{year}-"):
                 continue
             if rest_date in existing_dates:
                 continue
-            merged.append(entry)
+            candidates.append((rest_date, entry))
+
+        explicit_dates = {rest_date for rest_date, _ in candidates}
+        for entry in self._derive_rest_days_from_gaps(stages):
+            rest_date = _parse_date(entry["stage"].get("date"))
+            if not rest_date or rest_date in existing_dates or rest_date in explicit_dates:
+                continue
+            candidates.append((rest_date, entry))
+
+        if not candidates:
+            return stages
+
+        candidates.sort(key=lambda item: item[0])
+        ordinal = 0
+        for _, entry in candidates:
+            ordinal += 1
+            if not entry["stage"].get("stage_name"):
+                entry["stage"]["stage_name"] = f"Rest {ordinal}"
+
+        merged = list(stages) + [entry for _, entry in candidates]
         merged.sort(key=lambda entry: (
             _parse_date((entry.get("stage") or {}).get("date")) or "",
             0 if (entry.get("stage") or {}).get("is_rest_day") else 1,

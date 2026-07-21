@@ -746,7 +746,11 @@ def test_la_vuelta_bundle_endpoint_uses_lavuelta_bundle(monkeypatch):
 
     assert payload["race"] == "La Vuelta"
     assert payload["year"] == 2026
-    assert len(payload["stages"]) == 21
+    assert len(payload["stages"]) == 23
+    numbered_stages = [s for s in payload["stages"] if s["stage"]["stage_number"] is not None]
+    rest_days = [s for s in payload["stages"] if s["stage"].get("is_rest_day")]
+    assert len(numbered_stages) == 21
+    assert len(rest_days) == 2
     assert payload["stages"]
     assert payload["stages"][0]["stage"]["stage_number"] == 1
     assert payload["meta"]["source_updated_at"]
@@ -865,6 +869,48 @@ def test_giro_bundle_endpoint_uses_giro_bundle(monkeypatch, tmp_path):
     assert payload["year"] == 2026
     assert payload["stages"][0]["stage"]["stage_number"] == 1
     assert payload["stages"][0]["stage"]["stage_name"] == "Monaco > Monaco"
+
+
+def test_giro_bundle_endpoint_derives_rest_days_from_stage_date_gaps(monkeypatch, tmp_path):
+    api._tour_de_france_cache.clear()
+    monkeypatch.setattr(api.settings, "giro_d_italia_data_dir", str(tmp_path))
+
+    def _stage(stage_number, stage_date):
+        return {
+            "stage": {
+                "race": "Giro d'Italia",
+                "stage_number": stage_number,
+                "stage_name": f"Stage {stage_number}",
+                "date": stage_date,
+                "status": "final",
+            },
+            "schedule": {},
+            "classifications": [],
+        }
+
+    bundle = {
+        "race": "Giro d'Italia",
+        "year": 2026,
+        "source": "giroditalia.it",
+        "generated_at": "2026-05-01T00:00:00Z",
+        "teams": [],
+        "riders": [],
+        "stages": [
+            _stage(1, "2026-05-08"),
+            _stage(2, "2026-05-09"),
+            _stage(3, "2026-05-10"),
+            _stage(4, "2026-05-12"),
+        ],
+    }
+    (tmp_path / "giro_app_bundle_2026.json").write_text(json.dumps(bundle), encoding="utf-8")
+
+    payload = api.get_giro_d_italia_bundle_api_v1(2026)
+
+    rest_days = [s for s in payload["stages"] if s["stage"].get("is_rest_day")]
+    assert len(rest_days) == 1
+    assert rest_days[0]["stage"]["date"] == "2026-05-11"
+    assert rest_days[0]["stage"]["stage_name"] == "Rest 1"
+    assert len(payload["stages"]) == 5
 
 
 def test_cycling_bundle_contract_preserves_country_fields(tmp_path):
