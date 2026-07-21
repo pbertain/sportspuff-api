@@ -1,21 +1,23 @@
 # SPv6 cycling rest-days and stage-points handoff
 
-This note is the short integration guide for two additions to the cycling bundle/stage endpoints:
+This note is the short integration guide for two additions to the cycling bundle/stage endpoints, both covering **all three races** — Tour de France, La Vuelta, and Giro d'Italia:
 
-- Rest days now appear in the Tour de France stage list. **Tour de France only** — see below.
-- KOM and Points-jersey classification rows now carry a `points_earned` field (points scored in that specific stage, not the cumulative jersey total). **All three races** — Tour de France, La Vuelta, and Giro d'Italia.
+- Rest days now appear in each race's stage list.
+- KOM and Points-jersey classification rows now carry a `points_earned` field (points scored in that specific stage, not the cumulative jersey total).
 
 Applies to:
 
-- `GET /api/v1/cycling/tour-de-france/{year}` and its stage route — both additions
-- `GET /api/v1/cycling/la-vuelta/{year}` and its stage route — `points_earned` only
-- `GET /api/v1/cycling/giro-d-italia/{year}` and its stage route — `points_earned` only
+- `GET /api/v1/cycling/tour-de-france/{year}` and its stage route
+- `GET /api/v1/cycling/la-vuelta/{year}` and its stage route
+- `GET /api/v1/cycling/giro-d-italia/{year}` and its stage route
 
 No endpoint paths or existing fields changed. Both additions are new fields on the existing response shape, so old clients keep working unmodified.
 
-## Data-freshness caveat (Vuelta and Giro)
+## Data-freshness caveat (Vuelta and Giro `points_earned` only)
 
 Each race's bundle data is cached and auto-refreshed on the backend: a request triggers a re-scrape only when the existing bundle is older than a freshness window (60 minutes for Giro, a dynamic interval based on stage timing for Vuelta and the Tour). If you test against Vuelta or Giro and don't see `kom`/`points` rows or `points_earned` yet, it means the last scrape predates this backend change and hasn't hit its refresh window — it'll pick up the new fields on the next auto-refresh, no client-side action needed. Tour de France should show the new fields immediately since scraping worked correctly there before this change too.
+
+This caveat does not apply to rest days: rest-day derivation only needs each stage's date, which was already being scraped correctly before this change, so Vuelta and Giro rest days should be visible immediately, even on a cached/stale bundle.
 
 ## Points earned per stage (KOM and Points jerseys) — Tour de France, La Vuelta, Giro d'Italia
 
@@ -45,9 +47,9 @@ This is on every KOM/points row in `classification_rows` and inside the matching
 
 **What to render:** a "+N pts today" style badge next to a rider's cumulative jersey points, using `points_earned`. If the field is `0` or absent on a row, that rider scored nothing new that stage — don't show a badge, don't treat it as an error.
 
-## Rest days — Tour de France only
+## Rest days — Tour de France, La Vuelta, Giro d'Italia
 
-The Tour's `stages[]` list now includes rest-day entries alongside numbered stages, sorted chronologically by date. A rest-day entry looks like a stage entry but has no `stage_number`:
+Each race's `stages[]` list now includes rest-day entries alongside numbered stages, sorted chronologically by date. A rest-day entry looks like a stage entry but has no `stage_number`:
 
 ```json
 {
@@ -73,25 +75,34 @@ The Tour's `stages[]` list now includes rest-day entries alongside numbered stag
 
 **Not affected:** the stage-specific route (`/stages/{stage_number}`) is unaffected — a rest day has no `stage_number`, so it's never reachable there and never returned by that endpoint. Rest days only show up in the bundle's `stages[]` array.
 
-**La Vuelta / Giro d'Italia:** rest days are not implemented for these two races at all — there's no rest-day data source wired up, so their `stages[]` arrays only ever contain numbered stages. This isn't a freshness issue like the points-earned caveat above; it needs backend work before it can appear.
+### Where the rest days come from (source differs by race, no client impact)
+
+- **Tour de France:** sourced from an explicit data feed that names each rest day directly.
+- **La Vuelta and Giro d'Italia:** derived automatically by detecting single-day gaps in the schedule between consecutive numbered stages — there's no explicit rest-day feed for these two races, so a gap in the dates is treated as a rest day. This is why Giro shows 3 rest days and Vuelta shows 2, matching each race's real published schedule.
+
+Both sourcing methods produce the exact same shape shown above, so there's nothing race-specific to handle client-side — `is_rest_day` and the rest of the `stage` object are consistent across all three.
 
 ## Minimal SPv6 example
 
 ```ts
-// Tour de France: rest days + points earned
-const tdf = await fetch(`/api/v1/cycling/tour-de-france/2026`).then(r => r.json());
+// Same shape for all three races: rest days + points earned
+async function loadCyclingBundle(race: "tour-de-france" | "la-vuelta" | "giro-d-italia") {
+  const bundle = await fetch(`/api/v1/cycling/${race}/2026`).then(r => r.json());
 
-const stageList = tdf.stages.filter((s) => !s.stage.is_rest_day);
-const restDays = tdf.stages.filter((s) => s.stage.is_rest_day);
+  const stageList = bundle.stages.filter((s) => !s.stage.is_rest_day);
+  const restDays = bundle.stages.filter((s) => s.stage.is_rest_day);
 
+  return { bundle, stageList, restDays };
+}
+
+const { bundle: tdf } = await loadCyclingBundle("tour-de-france");
 const stage = tdf.stages.find((s) => s.stage.stage_number === 4);
 const pointsBoard = (stage?.classification_rows ?? []).filter(
   (row) => row.classification_type === "points"
 );
 const leaderEarnedToday = pointsBoard[0]?.points_earned ?? 0;
 
-// La Vuelta / Giro d'Italia: same points_earned field, no rest days
-const vuelta = await fetch(`/api/v1/cycling/la-vuelta/2026`).then(r => r.json());
+const { bundle: vuelta } = await loadCyclingBundle("la-vuelta");
 const vueltaStage = vuelta.stages.find((s) => s.stage.stage_number === 4);
 const vueltaKomToday = (vueltaStage?.classification_rows ?? [])
   .filter((row) => row.classification_type === "kom")[0]?.points_earned ?? 0;
@@ -99,5 +110,5 @@ const vueltaKomToday = (vueltaStage?.classification_rows ?? [])
 
 ## Practical rule
 
-Use `points_earned` for "today's gain" badges on KOM/points boards across all three races — never derive it yourself by diffing `points` client-side, since Giro's number isn't a diffable cumulative value. For the Tour de France only, also render the stage list in date order including rest days (they're already sorted in) and skip results rendering for `is_rest_day` entries.
+Render the stage list in date order including rest days (they're already sorted in) and skip results rendering for `is_rest_day` entries — this applies identically across all three races. Use `points_earned` for "today's gain" badges on KOM/points boards — never derive it yourself by diffing `points` client-side, since Giro's number isn't a diffable cumulative value.
 
