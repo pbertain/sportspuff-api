@@ -11,34 +11,68 @@ assert SPEC and SPEC.loader
 SPEC.loader.exec_module(builder)
 
 
-def test_normalize_rider_table_repairs_shifted_rankings_layout():
-    df = pd.DataFrame(
-        [
-            {
-                "Rank": 1,
-                "Rider": "J. PHILIPSEN",
-                "Rider No.": 1,
-                "Team": 71,
-                "Times": "ALPECIN-DECEUNINCK",
-                "Gap": "04h 09' 12''",
-                "B": "-",
-                "P": "B : 10''",
-                "Unnamed: 8": "-",
-            }
-        ]
-    )
+def test_parse_classification_rows_repairs_shifted_rankings_layout():
+    html = """
+    <table>
+      <thead>
+        <tr><th>Rank</th><th>Rider</th><th>Rider No.</th><th>Team</th><th>Times</th><th>Gap</th><th>B</th><th>P</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><a href="/en/rider/71/alpecin-deceuninck/jasper-philipsen">J. PHILIPSEN</a></td>
+          <td>1</td>
+          <td>71</td>
+          <td><a href="/en/team/APD/alpecin-deceuninck">ALPECIN-DECEUNINCK</a></td>
+          <td>04h 09' 12''</td>
+          <td>-</td>
+          <td>B : 10''</td>
+          <td>-</td>
+        </tr>
+      </tbody>
+    </table>
+    """
 
-    rows = builder.normalize_rider_table(df, 1, "https://www.lavuelta.es/en/rankings/stage-1", "stage")
+    rows = builder.parse_classification_rows(html, 1, "https://www.lavuelta.es/en/rankings/stage-1", "points")
 
-    row = rows.iloc[0].to_dict()
-    assert row["rank"] == 1
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["rank"] == "1"
     assert row["rider_name"] == "J. PHILIPSEN"
-    assert row["bib"] == 71
+    assert row["rider_slug"] == "jasper-philipsen"
+    assert row["bib"] == "71"
     assert row["team_name"] == "ALPECIN-DECEUNINCK"
     assert row["time"] == "04h 09' 12''"
     assert row["gap"] == "-"
     assert row["bonus"] == "B : 10''"
     assert row["points"] == "-"
+
+
+def test_parse_classification_rows_handles_team_table_without_shift():
+    html = """
+    <table>
+      <thead>
+        <tr><th>Rank</th><th>Team</th><th>Times</th><th>Gap</th><th>P</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>1</td>
+          <td><a href="/en/team/TVL/team-visma-lease-a-bike">TEAM VISMA | LEASE A BIKE</a></td>
+          <td>32h 47' 34''</td>
+          <td>-</td>
+          <td>-</td>
+        </tr>
+      </tbody>
+    </table>
+    """
+
+    rows = builder.parse_classification_rows(html, 3, "https://www.lavuelta.es/en/rankings/stage-3", "teams")
+
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["team_name"] == "TEAM VISMA | LEASE A BIKE"
+    assert row["team_slug"] == "team-visma-lease-a-bike"
+    assert row["time"] == "32h 47' 34''"
 
 
 def test_parse_route_calendar_reads_full_stage_list():

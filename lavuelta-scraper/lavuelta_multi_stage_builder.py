@@ -18,6 +18,17 @@ TEAM_RE = re.compile(r"/en/team/[^\"'#?]+")
 RIDER_RE = re.compile(r"/en/rider/[^\"'#?]+")
 COUNTRY_CODE_RE = re.compile(r"flag--([a-z]{2,3})", re.IGNORECASE)
 
+CLASSIFICATION_TYPE_BY_TAB = {
+    'ite': 'stage',
+    'itg': 'gc',
+    'ipg': 'points',
+    'img': 'kom',
+    'ijg': 'youth',
+    'etg': 'teams',
+    'icg': 'combative',
+}
+TAB_CODE_BY_CLASSIFICATION_TYPE = {value: key.upper() for key, value in CLASSIFICATION_TYPE_BY_TAB.items()}
+
 
 def fetch_html(path: str):
     url = path if path.startswith('http') else urljoin(BASE, path)
@@ -229,11 +240,6 @@ def norm(s):
     return ' '.join(str(s).split()).strip().lower()
 
 
-def looks_time_value(value) -> bool:
-    text = ' '.join(str(value or '').split()).strip()
-    return bool(re.search(r"\d{1,2}h\s+\d{2}'\s+\d{2}''", text))
-
-
 def _backfill_classification_rider_countries(classifications: pd.DataFrame, riders: pd.DataFrame) -> pd.DataFrame:
     if classifications.empty or 'rider_url' not in classifications.columns:
         return classifications
@@ -293,67 +299,155 @@ def parse_stage_schedule(text: str):
     return schedule
 
 
-def detect_classification_type(df: pd.DataFrame, idx: int) -> str:
-    cols = [str(c).strip().lower() for c in df.columns]
-    joined = ' | '.join(cols)
-    if 'teams' in joined or joined.strip() == 'team':
-        return 'teams'
-    if 'young' in joined or 'best young' in joined or 'white' in joined:
-        return 'youth'
-    if 'mountain' in joined or 'kom' in joined or 'climber' in joined or 'polka' in joined:
-        return 'kom'
-    if 'points' in joined or 'green' in joined:
+def extract_ranking_tab_urls(rankings_html: str):
+    soup = BeautifulSoup(rankings_html, 'html.parser')
+    urls = {}
+    for span in soup.select('.js-tabs-ranking[data-ajax-stack]'):
+        raw = span.get('data-ajax-stack')
+        if not raw:
+            continue
+        try:
+            stack = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        for tab_code, path in stack.items():
+            tab_code = _clean(tab_code).lower()
+            if tab_code in CLASSIFICATION_TYPE_BY_TAB and path:
+                urls[tab_code] = urljoin(BASE, path)
+    for span in soup.select('.js-tabs-ranking-nested[data-tabs-ajax][data-type]'):
+        tab_code = _clean(span.get('data-type')).lower()
+        if tab_code not in CLASSIFICATION_TYPE_BY_TAB:
+            continue
+        urls[tab_code] = urljoin(BASE, span.get('data-tabs-ajax'))
+    return urls
+
+
+def _header_key(header: str):
+    text = norm(header)
+    if text == 'rank':
+        return 'rank'
+    if text in {'rider', 'team'}:
+        return text
+    if 'rider no' in text:
+        return 'bib'
+    if text.startswith('time'):
+        return 'time'
+    if text == 'gap':
+        return 'gap'
+    if text == 'points':
         return 'points'
-    if 'general' in joined or 'overall' in joined or 'gc' in joined or 'red' in joined:
-        return 'gc'
-    return 'stage' if idx == 0 else f'classification_{idx+1}'
+    if text == 'b':
+        return 'bonus'
+    if text == 'p':
+        return 'points_secondary'
+    return text.replace(' ', '_')
 
 
-def normalize_rider_table(df: pd.DataFrame, stage_number: int, source_url: str, classification_type: str):
-    df = df.copy()
-    df.columns = [str(c).strip().replace('\n', ' ') for c in df.columns]
-    cols = list(df.columns)
+def _table_headers(table):
+    headers = []
+    for th in table.select('thead th'):
+        header = _clean(th.get_text(' ', strip=True))
+        if not header:
+            header = f'column_{len(headers) + 1}'
+        headers.append(_header_key(header))
+    return headers
+
+
+def _select_classification_table(soup: BeautifulSoup, classification_type: str):
+    tables = soup.select('table')
+    if not tables:
+        return None
+
+    expected_tab_code = TAB_CODE_BY_CLASSIFICATION_TYPE.get(classification_type)
+    if not expected_tab_code:
+        return tables[0]
+
+    for table in tables:
+        for anchor in table.select('a[data-xtclick]'):
+            xtclick = _clean(anchor.get('data-xtclick'))
+            if xtclick.upper().endswith(f'::{expected_tab_code}'):
+                return table
+
+    return tables[0]
+
+
+def parse_classification_rows(html: str, stage_number: int, source_url: str, classification_type: str):
+    soup = BeautifulSoup(html, 'html.parser')
+    table = _select_classification_table(soup, classification_type)
+    if table is None:
+        return []
+
+    headers = _table_headers(table)
     rows = []
-    for _, row in df.iterrows():
-        rank = row[cols[0]] if len(cols) > 0 else None
-        rider_name = row[cols[1]] if len(cols) > 1 else None
-        bib = row[cols[2]] if len(cols) > 2 else None
-        team_name = row[cols[3]] if len(cols) > 3 else None
-        time_value = row[cols[4]] if len(cols) > 4 else None
-        gap = row[cols[5]] if len(cols) > 5 else None
-        points = row[cols[6]] if len(cols) > 6 else None
-        bonus = row[cols[7]] if len(cols) > 7 else None
+    for tr in table.select('tbody tr'):
+        cells = tr.find_all('td')
+        if not cells:
+            continue
+        row_headers = headers
+        # Individual-rider tables render an extra unlabeled cell (rank-trend
+        # indicator) right after the Rider column, shifting every later cell.
+        if len(cells) == len(headers) + 1 and 'rider' in headers:
+            rider_idx = headers.index('rider')
+            row_headers = headers[:rider_idx + 1] + ['_trend'] + headers[rider_idx + 1:]
+        values = {}
+        for idx, cell in enumerate(cells):
+            key = row_headers[idx] if idx < len(row_headers) else f'column_{idx + 1}'
+            values[key] = _clean(cell.get_text(' ', strip=True))
 
-        # The rankings table currently includes an extra parsed column after the
-        # rider cell, which shifts the remaining values one position right.
-        if (
-            pd.notna(team_name)
-            and str(team_name).strip().isdigit()
-            and pd.notna(time_value)
-            and not looks_time_value(time_value)
-            and looks_time_value(gap)
-        ):
-            bib = team_name
-            team_name = time_value
-            time_value = gap
-            gap = points
-            bonus = row[cols[7]] if len(cols) > 7 else None
-            points = row[cols[8]] if len(cols) > 8 else None
-
-        rows.append({
+        rider_anchor = tr.find('a', href=RIDER_RE)
+        team_anchor = tr.find('a', href=TEAM_RE)
+        row = {
             'race': 'La Vuelta',
             'stage_number': stage_number,
             'classification_type': classification_type,
-            'rank': rank,
-            'rider_name': rider_name,
-            'bib': bib,
-            'team_name': team_name,
-            'time': time_value,
-            'gap': gap,
-            'points': points,
-            'bonus': bonus,
+            'rank': values.get('rank'),
+            'rider_name': values.get('rider'),
+            'rider_slug': None,
+            'rider_url': None,
+            'bib': values.get('bib'),
+            'team_name': values.get('team'),
+            'team_slug': None,
+            'team_url': None,
+            'time': values.get('time'),
+            'gap': values.get('gap'),
+            'points': values.get('points') or values.get('points_secondary'),
+            'bonus': values.get('bonus'),
             'source_url': source_url,
-        })
+        }
+
+        if rider_anchor is not None:
+            rider_href = rider_anchor.get('href', '')
+            row['rider_name'] = _clean(rider_anchor.get_text(' ', strip=True)) or row['rider_name']
+            row['rider_slug'] = rider_href.rstrip('/').split('/')[-1]
+            row['rider_url'] = urljoin(BASE, rider_href)
+
+        if team_anchor is not None:
+            team_href = team_anchor.get('href', '')
+            row['team_name'] = _clean(team_anchor.get_text(' ', strip=True)) or row['team_name']
+            row['team_slug'] = team_href.rstrip('/').split('/')[-1]
+            row['team_url'] = urljoin(BASE, team_href)
+
+        rows.append(row)
+    return rows
+
+
+def build_stage_classifications(stage_number: int, rankings_url: str, rankings_html: str):
+    ranking_tabs = extract_ranking_tab_urls(rankings_html)
+    rows = []
+    visible_stage_rows = parse_classification_rows(rankings_html, stage_number, rankings_url, 'stage')
+    if visible_stage_rows:
+        rows.extend(visible_stage_rows)
+    elif ranking_tabs.get('ite'):
+        source_url, html = fetch_html(ranking_tabs['ite'])
+        rows.extend(parse_classification_rows(html, stage_number, source_url, 'stage'))
+    for tab_code, classification_type in CLASSIFICATION_TYPE_BY_TAB.items():
+        if classification_type == 'stage':
+            continue
+        ajax_url = ranking_tabs.get(tab_code)
+        if not ajax_url:
+            continue
+        source_url, html = fetch_html(ajax_url)
+        rows.extend(parse_classification_rows(html, stage_number, source_url, classification_type))
     return pd.DataFrame(rows)
 
 
@@ -405,7 +499,7 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
 
     rankings_url = route_row.get('rankings_url') or f'{BASE}{rankings_path}'
     rankings_title = route_row.get('rankings_page_title') or f'Official classifications of La Vuelta - Stage {stage_number}'
-    ranking_tables = []
+    rankings_html = ''
     teams = teams_stage
     riders = riders_stage
 
@@ -435,18 +529,13 @@ def build_for_stage(stage_number: int, year: int, route_row: dict | None = None)
     if stage_status != 'scheduled':
         rankings_url, rankings_html = fetch_html(rankings_path)
         rankings_title = validate_stage_page(rankings_html, stage_number, year)
-        ranking_tables = extract_tables(rankings_html)
         teams_rank, riders_rank = extract_links(rankings_html)
         teams = pd.concat([teams_stage, teams_rank], ignore_index=True).drop_duplicates(subset=['team_url'])
         riders = pd.concat([riders_stage, riders_rank], ignore_index=True).drop_duplicates(subset=['rider_url'])
         stage_row['rankings_url'] = rankings_url
         stage_row['rankings_page_title'] = rankings_title
 
-    class_frames = []
-    for idx, df in enumerate(ranking_tables):
-        ctype = detect_classification_type(df, idx)
-        class_frames.append(normalize_rider_table(df, stage_number, rankings_url, ctype))
-    classifications = pd.concat(class_frames, ignore_index=True) if class_frames else pd.DataFrame()
+    classifications = build_stage_classifications(stage_number, rankings_url, rankings_html) if rankings_html else pd.DataFrame()
 
     if not riders.empty:
         riders['norm_name'] = riders['rider_name'].map(norm)

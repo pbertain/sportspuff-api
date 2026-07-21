@@ -59,6 +59,17 @@ def _safe_int(value: Any) -> Optional[int]:
         return None
 
 
+_POINTS_RE = re.compile(r"-?\d+")
+
+
+def _points_int(value: Any) -> Optional[int]:
+    text = _clean(value)
+    if not text:
+        return None
+    match = _POINTS_RE.search(text)
+    return int(match.group()) if match else None
+
+
 def _read_csv(path: Path) -> List[Dict[str, Any]]:
     if not path.exists():
         return []
@@ -484,6 +495,40 @@ class TourDeFranceDataService:
             for ctype in ordered_types
         ]
 
+    _POINTS_EARNED_TYPES = ("kom", "points")
+
+    @staticmethod
+    def _classification_rider_key(row: Dict[str, Any]) -> Optional[Any]:
+        bib = row.get("bib")
+        if bib is not None:
+            return bib
+        return row.get("rider_slug") or row.get("rider_name") or None
+
+    def _annotate_points_earned(self, stages: List[Dict[str, Any]]) -> None:
+        ordered = sorted(
+            stages,
+            key=lambda entry: _safe_int((entry.get("stage") or {}).get("stage_number")) or 0,
+        )
+        previous_totals: Dict[str, Dict[Any, int]] = {ctype: {} for ctype in self._POINTS_EARNED_TYPES}
+        for entry in ordered:
+            current_totals: Dict[str, Dict[Any, int]] = {ctype: {} for ctype in self._POINTS_EARNED_TYPES}
+            for row in entry.get("classification_rows") or []:
+                ctype = row.get("classification_type")
+                if ctype not in self._POINTS_EARNED_TYPES:
+                    continue
+                key = self._classification_rider_key(row)
+                cumulative = _points_int(row.get("points"))
+                if key is None or cumulative is None:
+                    continue
+                current_totals[ctype][key] = cumulative
+                preset_earned = row.get("points_earned")
+                if preset_earned not in (None, ""):
+                    row["points_earned"] = _points_int(preset_earned)
+                    continue
+                row["points_earned"] = cumulative - previous_totals[ctype].get(key, 0)
+            for ctype in self._POINTS_EARNED_TYPES:
+                previous_totals[ctype].update(current_totals[ctype])
+
     def _latest_classifications(self, stages: List[Dict[str, Any]]) -> Dict[str, List[Dict[str, Any]]]:
         latest: Dict[str, Dict[str, Any]] = {}
         for entry in stages:
@@ -571,6 +616,7 @@ class TourDeFranceDataService:
             })
 
         current_stage = self._current_stage(normalized_stages, year)
+        self._annotate_points_earned(normalized_stages)
         latest_classifications = self._latest_classifications(normalized_stages)
         bundle = {
             "race": payload.get("race") or self.default_race,

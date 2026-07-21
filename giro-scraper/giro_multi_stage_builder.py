@@ -322,6 +322,7 @@ def _parse_ranking_rows(section, *, classification_type: str, stage_number: int 
         time_cell = next((cell for cell in cells if "tempo" in (cell.get("class") or [])), None)
         bonus_cell = next((cell for cell in cells if "abbuono" in (cell.get("class") or [])), None)
         gap_cell = next((cell for cell in cells if "distacco" in (cell.get("class") or [])), None)
+        points_cell = next((cell for cell in cells if "punti" in (cell.get("class") or [])), None)
         rank_text = _clean(rider_cell.get_text(" ", strip=True)) if rider_cell else ""
         m = re.match(r"(\d+)\s+(.*)", rank_text)
         rank = _safe_int(m.group(1)) if m else _safe_int(rank_text.split()[0] if rank_text.split() else None)
@@ -344,12 +345,63 @@ def _parse_ranking_rows(section, *, classification_type: str, stage_number: int 
                 "team_url": team_url,
                 "time": _clean(time_cell.get_text(" ", strip=True)) if time_cell else None,
                 "gap": _clean(gap_cell.get_text(" ", strip=True)) if gap_cell else None,
-                "points": None,
+                "points": _clean(points_cell.get_text(" ", strip=True)) if points_cell else None,
                 "bonus": _clean(bonus_cell.get_text(" ", strip=True)) if bonus_cell else None,
                 "source_url": source_url,
             }
         )
     return pd.DataFrame(rows)
+
+
+def _stage_earned_rows(rankings_soup: BeautifulSoup, stage_number: int, rankings_url: str) -> pd.DataFrame:
+    """Points/KOM earned in this specific stage, from the per-stage classifiche page.
+
+    Unlike the overall CLPUNGEN/CLGPMGEN pages (which only ever show current
+    standings, not a historical snapshot as of a past stage), CLPUN and
+    CLGPM-N are genuinely scoped to this stage, so their values are the
+    points a rider scored that day, not a cumulative total.
+    """
+    frames = []
+
+    points_section = rankings_soup.select_one(".js-tab-classifica-CLPUN")
+    points_rows = _parse_ranking_rows(
+        points_section, classification_type="points", stage_number=stage_number, source_url=rankings_url
+    )
+    if not points_rows.empty:
+        points_rows["points_earned"] = points_rows["points"].map(_safe_int)
+        frames.append(points_rows)
+
+    kom_sections = [
+        div for div in rankings_soup.find_all("div", class_=True)
+        if any(cls.startswith("js-tab-classifica-CLGPM") for cls in div.get("class") or [])
+    ]
+    kom_frames = [
+        _parse_ranking_rows(section, classification_type="kom", stage_number=stage_number, source_url=rankings_url)
+        for section in kom_sections
+    ]
+    kom_rows = pd.concat([f for f in kom_frames if not f.empty], ignore_index=True) if kom_frames else pd.DataFrame()
+    if not kom_rows.empty:
+        kom_rows["points_numeric"] = kom_rows["points"].map(_safe_int).fillna(0)
+        combined = kom_rows.groupby(
+            ["rider_name", "rider_url", "team_name", "team_url"], dropna=False, as_index=False
+        ).agg(points_numeric=("points_numeric", "sum"))
+        combined = combined.sort_values("points_numeric", ascending=False).reset_index(drop=True)
+        combined["rank"] = combined.index + 1
+        combined["points"] = combined["points_numeric"].map(lambda v: str(int(v)))
+        combined["points_earned"] = combined["points_numeric"].map(int)
+        combined["race"] = "Giro d'Italia"
+        combined["stage_number"] = stage_number
+        combined["classification_type"] = "kom"
+        combined["rider_slug"] = None
+        combined["team_slug"] = None
+        combined["time"] = None
+        combined["gap"] = None
+        combined["bonus"] = None
+        combined["source_url"] = rankings_url
+        combined = combined.drop(columns=["points_numeric"])
+        frames.append(combined)
+
+    return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
 
 
 def _backfill_classification_rider_countries(classifications: pd.DataFrame, riders: pd.DataFrame) -> pd.DataFrame:
@@ -609,6 +661,9 @@ def main():
             riders_all.append(stage_riders)
             if not stage_results.empty:
                 stage_rows.append(stage_results)
+            earned_rows = _stage_earned_rows(rankings_soup, stage_number, rankings_url)
+            if not earned_rows.empty:
+                stage_rows.append(earned_rows)
         if latest_completed_stage is not None and stage_number == latest_completed_stage and not overall_gc_rows.empty:
             stage_rows.append(overall_gc_rows)
         class_df = pd.concat(stage_rows, ignore_index=True) if stage_rows else pd.DataFrame(columns=["race", "stage_number", "classification_type", "rank", "rider_name", "rider_slug", "rider_url", "bib", "team_name", "team_slug", "team_url", "time", "gap", "points", "bonus", "source_url"])

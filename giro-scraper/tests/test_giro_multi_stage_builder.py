@@ -266,3 +266,77 @@ def test_backfill_classification_rider_countries_uses_rider_url(monkeypatch):
 
     assert enriched.iloc[0]["rider_country_code"] == "ESP"
     assert enriched.iloc[0]["rider_country_flag"] == "esp"
+
+
+def test_parse_ranking_rows_reads_points_cell_for_jersey_tables():
+    html = """
+    <div class="single-tab js-tab-classifica-CLPUN">
+      <div class="table type-2">
+        <div class="line-table">
+          <div class="corridore p-3"><a href="https://www.giroditalia.it/en/atleti/magnier-paul/">1 Paul MAGNIER</a></div>
+          <div class="team p-3">SOUDAL QUICK-STEP</div>
+          <div class="punti p-3 is-text-right">50</div>
+        </div>
+      </div>
+    </div>
+    """
+
+    soup = BeautifulSoup(html, "html.parser")
+    rows = _parse_ranking_rows(
+        soup.select_one(".js-tab-classifica-CLPUN"),
+        classification_type="points",
+        stage_number=3,
+        source_url="https://www.giroditalia.it/en/classifiche/di-tappa/3/",
+    ).to_dict(orient="records")
+
+    assert rows[0]["rider_name"] == "Paul MAGNIER"
+    assert rows[0]["points"] == "50"
+
+
+def test_stage_earned_rows_sums_points_across_multiple_kom_climbs():
+    html = """
+    <html>
+      <body>
+        <div class="single-tab js-tab-classifica-CLPUN">
+          <div class="line-table">
+            <div class="corridore p-3"><a href="https://www.giroditalia.it/en/atleti/magnier-paul/">1 Paul MAGNIER</a></div>
+            <div class="team p-3">SOUDAL QUICK-STEP</div>
+            <div class="punti p-3 is-text-right">50</div>
+          </div>
+        </div>
+        <div class="single-tab js-tab-classifica-CLGPM-1">
+          <div class="line-table">
+            <div class="corridore p-3"><a href="https://www.giroditalia.it/en/atleti/eulalio-afonso/">1 Afonso EULALIO</a></div>
+            <div class="team p-3">BAHRAIN VICTORIOUS</div>
+            <div class="punti p-3 is-text-right">2</div>
+          </div>
+        </div>
+        <div class="single-tab js-tab-classifica-CLGPM-2">
+          <div class="line-table">
+            <div class="corridore p-3"><a href="https://www.giroditalia.it/en/atleti/eulalio-afonso/">1 Afonso EULALIO</a></div>
+            <div class="team p-3">BAHRAIN VICTORIOUS</div>
+            <div class="punti p-3 is-text-right">8</div>
+          </div>
+          <div class="line-table">
+            <div class="corridore p-3"><a href="https://www.giroditalia.it/en/atleti/rubio-einer/">2 Einer RUBIO</a></div>
+            <div class="team p-3">MOVISTAR TEAM</div>
+            <div class="punti p-3 is-text-right">9</div>
+          </div>
+        </div>
+      </body>
+    </html>
+    """
+
+    soup = BeautifulSoup(html, "html.parser")
+    earned = builder._stage_earned_rows(soup, 5, "https://www.giroditalia.it/en/classifiche/di-tappa/5/")
+
+    points_rows = earned[earned["classification_type"] == "points"].to_dict(orient="records")
+    assert points_rows[0]["rider_name"] == "Paul MAGNIER"
+    assert points_rows[0]["points_earned"] == 50
+
+    kom_rows = earned[earned["classification_type"] == "kom"].sort_values("rank").to_dict(orient="records")
+    assert kom_rows[0]["rider_name"] == "Afonso EULALIO"
+    assert kom_rows[0]["points_earned"] == 10
+    assert kom_rows[1]["rider_name"] == "Einer RUBIO"
+    assert kom_rows[1]["points_earned"] == 9
+
